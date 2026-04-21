@@ -266,7 +266,7 @@ PYEOF
     }
 
     add_mcp "codex-mcp" "claude mcp add codex-mcp -- codex-mcp" "codex-mcp"
-    add_mcp "gemini-mcp" "claude mcp add gemini-mcp -- gemini-mcp" "gemini-mcp"
+    add_mcp "gemini-mcp" "claude mcp add gemini-mcp -e MCP_GEMINI_DEFAULT_MODEL=gemini-3.1-pro-preview -- gemini-mcp" "gemini-mcp"
     add_mcp "serena" "claude mcp add serena -- uvx --from 'git+https://github.com/oraios/serena' serena start-mcp-server" ""
     add_mcp "supermemory" "claude mcp add --transport http supermemory https://mcp.supermemory.ai/mcp" ""
   fi
