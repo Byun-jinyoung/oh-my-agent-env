@@ -231,6 +231,7 @@ PYEOF
     install_plugin "ouroboros" "ouroboros@ouroboros" "Q00/ouroboros" "ouroboros@ouroboros"
     install_plugin "document-skills" "document-skills@anthropic" "anthropics/skills" "document-skills@anthropic-agent-skills"
     install_plugin "oh-my-claudecode" "oh-my-claudecode" "https://github.com/Yeachan-Heo/oh-my-claudecode" "oh-my-claudecode"
+    install_plugin "context-mode" "context-mode@context-mode" "mksglu/context-mode" "context-mode@context-mode"
   else
     log_and_print "    [SKIP] Claude Code not found"
   fi
@@ -267,6 +268,7 @@ PYEOF
     add_mcp "codex-mcp" "claude mcp add codex-mcp -- codex-mcp" "codex-mcp"
     add_mcp "gemini-mcp" "claude mcp add gemini-mcp -- gemini-mcp" "gemini-mcp"
     add_mcp "serena" "claude mcp add serena -- uvx --from 'git+https://github.com/oraios/serena' serena start-mcp-server" ""
+    add_mcp "supermemory" "claude mcp add --transport http supermemory https://mcp.supermemory.ai/mcp" ""
   fi
 
   # [10] Frameworks (GSD + RTK)
@@ -329,7 +331,7 @@ cmd_doctor() {
   echo ""
   echo "[ Plugins ]"
   if command -v claude &>/dev/null; then
-    for p in "octo@nyldn" "claude-mem@thedotmack" "ouroboros@ouroboros" "document-skills@anthropic" "oh-my-claudecode"; do
+    for p in "octo@nyldn" "claude-mem@thedotmack" "ouroboros@ouroboros" "document-skills@anthropic" "oh-my-claudecode" "context-mode@context-mode"; do
       if claude plugin list 2>/dev/null | grep -q "$p"; then echo "  [OK] $p"
       else echo "  [MISS] $p"; WARNINGS=$((WARNINGS+1)); fi
     done
@@ -338,7 +340,7 @@ cmd_doctor() {
   echo ""
   echo "[ MCP servers ]"
   if command -v claude &>/dev/null; then
-    for m in codex-mcp gemini-mcp serena slack-server; do
+    for m in codex-mcp gemini-mcp serena supermemory slack-server; do
       if claude mcp list 2>/dev/null | grep -q "$m.*Connected"; then echo "  [OK] $m"
       else echo "  [MISS] $m"; WARNINGS=$((WARNINGS+1)); fi
     done
