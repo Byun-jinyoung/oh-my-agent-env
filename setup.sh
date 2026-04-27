@@ -271,6 +271,87 @@ PYEOF
     add_mcp "supermemory" "claude mcp add --transport http supermemory https://mcp.supermemory.ai/mcp" ""
   fi
 
+  # [9b] Codex / Gemini MCP registration (for triangle-review + codebase-scan)
+  # serena와 code-review-graph는 ~/.codex/config.toml과 ~/.gemini/settings.json에
+  # 별도 등록되어야 함 (claude mcp add는 Claude Code에만 등록됨)
+  log_and_print "[9b] Codex/Gemini MCP entries"
+  if command -v python3 &>/dev/null; then
+    python3 - "$CODEX_DIR" "$GEMINI_DIR" << 'PYEOF' | sed 's/^/    /'
+import json, os, sys
+from pathlib import Path
+
+codex_dir, gemini_dir = sys.argv[1], sys.argv[2]
+
+# External MCPs needed by triangle-review + codebase-scan
+WANTED = {
+    "serena": {
+        "command": "uvx",
+        "args": ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server"],
+    },
+    "code-review-graph": {
+        "command": "code-review-graph",
+        "args": ["serve"],
+    },
+}
+
+# --- Codex (TOML, ~/.codex/config.toml) ---
+codex_cfg = Path(codex_dir) / "config.toml"
+codex_cfg.parent.mkdir(parents=True, exist_ok=True)
+if not codex_cfg.exists():
+    codex_cfg.write_text("")
+    print(f"[CREATE] {codex_cfg}")
+content = codex_cfg.read_text()
+
+def has_codex_section(name):
+    return f"[mcp_servers.{name}]" in content
+
+added_codex = []
+for name, spec in WANTED.items():
+    if has_codex_section(name):
+        continue
+    block = [f"\n[mcp_servers.{name}]",
+             f'command = "{spec["command"]}"',
+             "args = [" + ", ".join(f'"{a}"' for a in spec["args"]) + "]",
+             ""]
+    content += "\n".join(block)
+    added_codex.append(name)
+
+if added_codex:
+    codex_cfg.write_text(content)
+    print(f"[OK] Codex: added {', '.join(added_codex)} to {codex_cfg.name}")
+else:
+    print(f"[OK] Codex: serena + code-review-graph already in {codex_cfg.name}")
+
+# --- Gemini (JSON, ~/.gemini/settings.json) ---
+gemini_cfg = Path(gemini_dir) / "settings.json"
+gemini_cfg.parent.mkdir(parents=True, exist_ok=True)
+if gemini_cfg.exists():
+    try:
+        data = json.loads(gemini_cfg.read_text())
+    except json.JSONDecodeError:
+        print(f"[WARN] {gemini_cfg} unparseable — skipping (back up + edit manually)")
+        sys.exit(0)
+else:
+    data = {}
+
+mcp_servers = data.setdefault("mcpServers", {})
+added_gemini = []
+for name, spec in WANTED.items():
+    if name in mcp_servers:
+        continue
+    mcp_servers[name] = spec
+    added_gemini.append(name)
+
+if added_gemini:
+    gemini_cfg.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    print(f"[OK] Gemini: added {', '.join(added_gemini)} to {gemini_cfg.name}")
+else:
+    print(f"[OK] Gemini: serena + code-review-graph already in {gemini_cfg.name}")
+PYEOF
+  else
+    log_and_print "    [SKIP] python3 not available"
+  fi
+
   # [10] Frameworks (GSD + RTK)
   log_and_print "[10] Frameworks"
   # GSD
@@ -338,13 +419,52 @@ cmd_doctor() {
   fi
 
   echo ""
-  echo "[ MCP servers ]"
+  echo "[ MCP servers (Claude) ]"
   if command -v claude &>/dev/null; then
     for m in codex-mcp gemini-mcp serena supermemory slack-server; do
       if claude mcp list 2>/dev/null | grep -q "$m.*Connected"; then echo "  [OK] $m"
       else echo "  [MISS] $m"; WARNINGS=$((WARNINGS+1)); fi
     done
   fi
+
+  echo ""
+  echo "[ MCP servers (Codex/Gemini for triangle-review) ]"
+  for entry in "$CODEX_DIR/config.toml:[mcp_servers.serena]:codex serena" \
+               "$CODEX_DIR/config.toml:[mcp_servers.code-review-graph]:codex code-review-graph"; do
+    file="${entry%%:*}"
+    rest="${entry#*:}"
+    pat="${rest%%:*}"
+    label="${rest#*:}"
+    if [ -f "$file" ] && grep -qF "$pat" "$file"; then echo "  [OK] $label"
+    else echo "  [MISS] $label (run setup.sh sync)"; WARNINGS=$((WARNINGS+1)); fi
+  done
+  if [ -f "$GEMINI_DIR/settings.json" ] && command -v python3 &>/dev/null; then
+    python3 - "$GEMINI_DIR/settings.json" << 'PYEOF'
+import json, sys
+try:
+    d = json.loads(open(sys.argv[1]).read())
+    servers = d.get("mcpServers", {})
+    for name in ("serena", "code-review-graph"):
+        if name in servers: print(f"  [OK] gemini {name}")
+        else: print(f"  [MISS] gemini {name}")
+except Exception as e:
+    print(f"  [WARN] gemini settings.json unparseable: {e}")
+PYEOF
+  else
+    echo "  [MISS] gemini settings.json"; WARNINGS=$((WARNINGS+1))
+  fi
+
+  echo ""
+  echo "[ Triangle Review skills ]"
+  for sk in triangle-review codebase-scan; do
+    src="$SCRIPT_DIR/skills/$sk"
+    dst="$CONFIG_DIR/skills/$sk"
+    if [ -L "$dst" ] && [ -e "$dst" ]; then echo "  [OK] $sk symlink"
+    elif [ -e "$dst" ]; then echo "  [WARN] $sk exists but not symlinked from cc-bootstrap"
+    else echo "  [MISS] $sk"; WARNINGS=$((WARNINGS+1)); fi
+  done
+  if command -v code-review-graph &>/dev/null; then echo "  [OK] code-review-graph CLI"
+  else echo "  [MISS] code-review-graph CLI (pip install code-review-graph)"; WARNINGS=$((WARNINGS+1)); fi
 
   echo ""
   echo "[ Frameworks ]"

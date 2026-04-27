@@ -7,3 +7,21 @@ paper-analyzer:
   deps:
     python: [pdfplumber, pdf2image]
     system: [poppler]
+
+# Triangle Review — Claude orchestrator only
+# (Codex/Gemini는 ask_codex / call_gemini.sh로 spawn되므로 skill 등록 불필요)
+triangle-review:
+  path: skills/triangle-review
+  runtimes: [claude]
+  deps:
+    python: [pyyaml]
+    external_mcp: [serena, code-review-graph]   # codex/gemini config에 자동 등록됨
+
+# Codebase-scan — 3 runtime이 공유하는 evidence baseline
+# (claude/codex/gemini가 같은 L1-facts.md를 보고 리뷰 → false disagreement 차단)
+codebase-scan:
+  path: skills/codebase-scan
+  runtimes: [claude, codex, gemini]
+  deps:
+    python: [code-review-graph]
+    external_mcp: [serena, code-review-graph]
