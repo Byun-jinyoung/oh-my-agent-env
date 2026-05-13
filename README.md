@@ -47,24 +47,6 @@ cc-bootstrap/
 - (Optional) Gemini CLI: `npm install -g @google/gemini-cli`
 - (Optional) Codex CLI: `npm install -g @openai/codex`
 
-## Slack MCP (for `/update-feeds`)
-
-`/update-feeds` reads `#ai-feed` via the local `slack-mcp-server` daemon.
-
-```bash
-# 1. copy secrets template, fill SLACK_USER_TOKEN (xoxp-...)
-cp .env.example .env
-$EDITOR .env
-
-# 2. sync — auto-installs slack-mcp-server (pip) and registers HTTP MCP
-bash setup.sh sync
-
-# 3. start the daemon (foreground; use launchd/tmux/nohup for persistence)
-slack-mcp-server --port 8000
-```
-
-`.env` is gitignored — never commit the token. Setup skips slack-server registration cleanly when `SLACK_USER_TOKEN` is empty.
-
 ## After OMC Updates
 
 Re-apply patches:

@@ -24,14 +24,13 @@ SKIP_NETWORK=false
 SUBCMD="${1:-sync}"
 SUBCMD_ARG="${2:-}"
 
-# Load secrets from .env if present (gitignored). Provides SLACK_USER_TOKEN etc.
+# Load secrets from .env if present (gitignored).
 if [ -f "$SCRIPT_DIR/.env" ]; then
   set -a
   # shellcheck disable=SC1091
   . "$SCRIPT_DIR/.env"
   set +a
 fi
-SLACK_MCP_URL="${SLACK_MCP_URL:-http://localhost:8000/mcp}"
 
 # Parse flags
 for arg in "$@"; do
@@ -318,38 +317,6 @@ PYEOF
     add_mcp "gemini-mcp" "claude mcp add gemini-mcp -e MCP_GEMINI_DEFAULT_MODEL=gemini-3.1-pro-preview -- gemini-mcp" "gemini-mcp"
     add_mcp "serena" "claude mcp add serena -- uvx --from 'git+https://github.com/oraios/serena' serena start-mcp-server" ""
     add_mcp "supermemory" "claude mcp add --transport http supermemory https://mcp.supermemory.ai/mcp" ""
-
-    # slack-server (used by /update-feeds). Requires:
-    #   1. slack-mcp-server pip package (auto-installed below)
-    #   2. SLACK_USER_TOKEN in .env
-    #   3. daemon running:  slack-mcp-server --port 8000  (manual or launchd)
-    if [ -n "$SLACK_USER_TOKEN" ] && ! command -v slack-mcp-server &>/dev/null; then
-      log_and_print "    [slack-mcp-server] not found — installing via pip..."
-      if command -v pip &>/dev/null; then
-        if run_with_timeout "pip install slack-mcp-server" "pip install --quiet slack-mcp-server" >/dev/null 2>&1; then
-          log_and_print "    [slack-mcp-server] installed"
-        else
-          log_and_print "    [slack-mcp-server] pip install failed — see $LOG_FILE"
-        fi
-      else
-        log_and_print "    [slack-mcp-server] SKIP — pip not found, install Python first"
-      fi
-    fi
-    if [ -n "$SLACK_USER_TOKEN" ]; then
-      if echo "$mcp_list" | grep -q "slack-server"; then
-        log_and_print "    [slack-server] OK — already registered"
-      else
-        slack_cmd="claude mcp add --transport http slack-server $SLACK_MCP_URL -H 'Authorization: Bearer $SLACK_USER_TOKEN'"
-        log_and_print "    [slack-server] registering..."
-        if run_with_timeout "slack-server mcp add" "$slack_cmd < /dev/null" >/dev/null 2>&1; then
-          log_and_print "    [slack-server] registered successfully"
-        else
-          log_and_print "    [slack-server] registration failed — see $LOG_FILE"
-        fi
-      fi
-    else
-      log_and_print "    [slack-server] SKIP — SLACK_USER_TOKEN not set in .env (see .env.example)"
-    fi
   fi
 
   # [9b] Codex / Gemini MCP registration (for triangle-review + codebase-scan)
@@ -568,7 +535,7 @@ cmd_doctor() {
 
   echo ""
   echo "[ Symlinks ]"
-  for f in "$CONFIG_DIR/commands/analyze-paper.md" "$CONFIG_DIR/commands/update-feeds.md" \
+  for f in "$CONFIG_DIR/commands/analyze-paper.md" \
     "$CODEX_DIR/instructions.md" "$GEMINI_DIR/GEMINI.md"; do
     if [ -L "$f" ] || [ -f "$f" ]; then echo "  [OK] $(basename "$f")"
     else echo "  [MISS] $f"; WARNINGS=$((WARNINGS+1)); fi
@@ -586,13 +553,8 @@ cmd_doctor() {
   echo ""
   echo "[ MCP servers (Claude) ]"
   if command -v claude &>/dev/null; then
-    for m in codex-mcp gemini-mcp serena supermemory slack-server; do
-      if claude mcp list 2>/dev/null | grep -q "$m.*Connected"; then echo "  [OK] $m"
-      elif [ "$m" = "slack-server" ] && [ -z "$SLACK_USER_TOKEN" ]; then
-        echo "  [SKIP] slack-server (SLACK_USER_TOKEN not set in .env)"
-      elif [ "$m" = "slack-server" ] && ! lsof -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-        echo "  [WARN] slack-server registered but daemon not running on :8000 — run 'slack-mcp-server --port 8000'"
-        WARNINGS=$((WARNINGS+1))
+    for m in codex-mcp gemini-mcp serena supermemory; do
+      if claude mcp list 2>/dev/null | grep -qE "$m.*(Connected|Needs authentication)"; then echo "  [OK] $m"
       else echo "  [MISS] $m"; WARNINGS=$((WARNINGS+1)); fi
     done
   fi
