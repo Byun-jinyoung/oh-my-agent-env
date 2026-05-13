@@ -467,27 +467,25 @@ PYEOF
     fi
   fi
   # RTK hook integrity (independent of binary install).
-  # Past failure modes:
-  #   1. Binary present but `rtk init -g` never run → 0 token savings, broken auto-rewrite.
-  #   2. RTK 0.31.0 doesn't support --auto-patch → exits 0 silently, no patch applied.
-  # Strategy: try `rtk init -g --auto-patch` first (modern RTK + side effects: RTK.md,
-  # CLAUDE.md ref). If hook still absent → direct JSON merge via python3 (version-agnostic,
-  # idempotent). Probe: grep settings.json for "rtk hook claude" — not `rtk discover`
-  # (its warning is flipped by rtk-internal state, false negative after no-op init).
+  # Two artifacts must exist:
+  #   (a) $CONFIG_DIR/hooks/rtk-rewrite.sh — the shell hook script (created by `rtk init -g`,
+  #       header: `# rtk-hook-version: 2`, delegates to `rtk rewrite` Rust binary).
+  #   (b) settings.json PreToolUse[matcher=Bash] entry whose command is the (a) path.
+  # Past mistake (fixed here): previous versions injected `"command": "rtk hook claude"` as the
+  # entry, but that subcommand does NOT exist in rtk ≥ 0.30 (only `rtk hook gemini`/`copilot`).
+  # It silently failed with exit 127 on every Bash call. The correct command is the (a) path.
+  # `rtk init -g --auto-patch` is best-effort but unreliable in 0.31.0 — we always finish the
+  # wiring via direct JSON merge, idempotent + legacy-entry-stripping.
   if command -v rtk &>/dev/null; then
-    if grep -q 'rtk hook claude' "$CONFIG_DIR/settings.json" 2>/dev/null; then
-      log_and_print "    [OK] RTK hook already active in settings.json"
-    else
-      log_and_print "    RTK hook missing — running 'rtk init -g --auto-patch'..."
+    if [ ! -f "$CONFIG_DIR/hooks/rtk-rewrite.sh" ]; then
+      log_and_print "    rtk-rewrite.sh missing — running 'rtk init -g'..."
       run_with_timeout "RTK init -g" "rtk init -g --auto-patch < /dev/null" | tail -3 || true
-      # Fallback: direct JSON merge (covers --auto-patch unsupported / silent-skip).
-      if ! grep -q 'rtk hook claude' "$CONFIG_DIR/settings.json" 2>/dev/null; then
-        if command -v python3 &>/dev/null; then
-          log_and_print "    rtk init didn't patch settings.json — direct JSON merge..."
-          python3 - "$CONFIG_DIR/settings.json" << 'PYEOF' | sed 's/^/    /'
+    fi
+    if [ -f "$CONFIG_DIR/hooks/rtk-rewrite.sh" ] && command -v python3 &>/dev/null; then
+      python3 - "$CONFIG_DIR/settings.json" "$CONFIG_DIR/hooks/rtk-rewrite.sh" << 'PYEOF' | sed 's/^/    /'
 import json, sys
 from pathlib import Path
-p = Path(sys.argv[1])
+p, hook_path = Path(sys.argv[1]), sys.argv[2]
 data = {}
 if p.exists():
     try:
@@ -497,32 +495,41 @@ if p.exists():
         sys.exit(0)
 hooks = data.setdefault("hooks", {})
 pre = hooks.setdefault("PreToolUse", [])
+# Strip legacy `rtk hook claude` entries (subcommand never existed; injected by older setup.sh).
+before = len(pre)
+pre[:] = [
+    e for e in pre
+    if not (
+        isinstance(e, dict) and e.get("matcher") == "Bash" and any(
+            isinstance(h, dict) and h.get("command") == "rtk hook claude"
+            for h in e.get("hooks", [])
+        )
+    )
+]
+removed = before - len(pre)
 already = any(
     isinstance(e, dict) and e.get("matcher") == "Bash" and any(
-        isinstance(h, dict) and h.get("command") == "rtk hook claude"
+        isinstance(h, dict) and h.get("command") == hook_path
         for h in e.get("hooks", [])
     ) for e in pre
 )
-if already:
-    print("[OK] RTK hook already present (no change)")
-else:
-    pre.append({
-        "matcher": "Bash",
-        "hooks": [{"type": "command", "command": "rtk hook claude"}],
-    })
+if not already:
+    pre.append({"matcher": "Bash", "hooks": [{"type": "command", "command": hook_path}]})
+if (not already) or removed:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(data, indent=2))
-    print("[OK] RTK hook merged into settings.json")
+msg = "[OK] RTK hook already wired" if already and not removed else f"[OK] RTK hook wired -> {hook_path}"
+if removed:
+    msg += f" (stripped {removed} legacy 'rtk hook claude' entr{'y' if removed==1 else 'ies'})"
+print(msg)
 PYEOF
-        else
-          log_and_print "    [WARN] python3 missing — cannot fallback-patch RTK hook"
-        fi
-      fi
-      if grep -q 'rtk hook claude' "$CONFIG_DIR/settings.json" 2>/dev/null; then
+      if grep -q 'rtk-rewrite.sh' "$CONFIG_DIR/settings.json" 2>/dev/null; then
         log_and_print "    [OK] RTK hook installed (token rewrite active)"
       else
         log_and_print "    [WARN] RTK hook still missing — manual patch required (see $LOG_FILE)"
       fi
+    else
+      log_and_print "    [WARN] rtk-rewrite.sh hook file missing or python3 unavailable — skipping wire"
     fi
   fi
   # code-review-graph (CRG) — required by triangle-review + codebase-scan
@@ -655,10 +662,14 @@ PYEOF
   else echo "  [MISS] GSD"; WARNINGS=$((WARNINGS+1)); fi
   if command -v rtk &>/dev/null; then
     echo "  [OK] RTK $(rtk --version 2>/dev/null)"
-    if grep -q 'rtk hook claude' "$CONFIG_DIR/settings.json" 2>/dev/null; then
+    if grep -q 'rtk-rewrite.sh' "$CONFIG_DIR/settings.json" 2>/dev/null; then
       echo "  [OK] RTK hook active in settings.json"
+      if grep -q 'rtk hook claude' "$CONFIG_DIR/settings.json" 2>/dev/null; then
+        echo "  [WARN] legacy 'rtk hook claude' entry also present — run 'setup.sh sync' to strip"
+        WARNINGS=$((WARNINGS+1))
+      fi
     else
-      echo "  [FAIL] RTK hook NOT in settings.json — run 'setup.sh sync' or 'rtk init -g --auto-patch'"
+      echo "  [FAIL] RTK hook NOT in settings.json — run 'setup.sh sync'"
       WARNINGS=$((WARNINGS+1))
     fi
   else
