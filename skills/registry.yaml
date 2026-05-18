@@ -35,3 +35,22 @@ graphify:
   deps:
     python: [graphifyy]
     cli: [graphify]
+
+# oh-my-setting custom skills (eightmm/oh-my-setting) — code-project workflow.
+# slurm-hpc reads skills/slurm-hpc/references/cluster.generated.md when present
+# (generated per-machine by scripts/generate-slurm-skill.sh, gitignored).
+slurm-hpc:
+  path: skills/slurm-hpc
+  runtimes: [claude, codex, gemini, agents]
+
+spec-interview:
+  path: skills/spec-interview
+  runtimes: [claude, codex, gemini, agents]
+
+git-cli-workflow:
+  path: skills/git-cli-workflow
+  runtimes: [claude, codex, gemini, agents]
+
+multi-agent-review:
+  path: skills/multi-agent-review
+  runtimes: [claude, codex, gemini, agents]

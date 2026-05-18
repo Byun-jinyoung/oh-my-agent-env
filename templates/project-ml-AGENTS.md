@@ -12,7 +12,7 @@
 ## ML Startup Workflow
 
 1. Read `PROJECT.md` if present. If absent or `State: draft`, run `/spec-interview`.
-2. Read machine snapshot at `~/.claude/local/machine.md` when compute, GPU/CUDA, Slurm,
+2. Read machine snapshot at `~/.cc-bootstrap/local/machine.md` when compute, GPU/CUDA, Slurm,
    memory, or environment details affect the task.
 3. Confirm data paths, splits, and metric before writing any training code.
 4. Run smoke check (small batch, 1 step) before full training.
@@ -53,7 +53,7 @@
 
 - Use `uv` for Python envs: `uv sync`, `uv add`, `uv run`.
 - Keep project env local at `.venv`; do not use global Python/pip unless confirmed.
-- Read machine specs from `~/.claude/local/machine.md` when compute affects behavior.
+- Read machine specs from `~/.cc-bootstrap/local/machine.md` when compute affects behavior.
 - Do not duplicate full machine specs into project docs; record only project-specific compute constraints.
 - Update machine snapshot when GPU, driver/CUDA, RAM, storage, Slurm partition, or Python base changes.
 

@@ -21,12 +21,18 @@ user-invocable: true
 
 ## Local Cluster Reference
 
-If present, read `.claude/skills/slurm-hpc/references/cluster.generated.md` before
-suggesting partitions, nodes, GPU types, limits, or default Slurm resources.
+If present, read `references/cluster.generated.md` (relative to this skill
+directory) before suggesting partitions, nodes, GPU types, limits, or default
+Slurm resources.
 
-If missing, ask the user to run the cluster snapshot script, or manually create
-`references/cluster.generated.md` with output from `sinfo`, `scontrol show partition`,
-and `scontrol show node <node>`.
+If missing, ask the user to run:
+
+```bash
+~/.cc-bootstrap/scripts/generate-slurm-skill.sh
+```
+
+This writes `skills/slurm-hpc/references/cluster.generated.md` (gitignored,
+machine-specific). The reference is regenerated per machine.
 
 ## Useful Commands
 
