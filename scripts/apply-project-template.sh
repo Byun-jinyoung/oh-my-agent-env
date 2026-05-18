@@ -197,8 +197,8 @@ apply_one() {
   local template="$3"
   local target="$PROJECT_DIR/$rel"
   local dir
-  local begin="<!-- oh-my-setting:${style}:begin -->"
-  local end="<!-- oh-my-setting:${style}:end -->"
+  local begin="<!-- cc-bootstrap:${style}:begin -->"
+  local end="<!-- cc-bootstrap:${style}:end -->"
   dir="$(dirname "$target")"
 
   mkdir -p "$dir"
@@ -209,11 +209,25 @@ apply_one() {
   tmp="$(mktemp)"
 
   if [ -f "$target" ]; then
+    # Strip the existing managed block. Blank lines immediately before a
+    # begin marker are dropped (held in a buffer and discarded) so the
+    # script alone controls the single separator blank line — re-applying
+    # never accumulates blank lines, even with multiple blocks per file.
     awk -v begin="$begin" -v end="$end" '
-      $0 == begin { skip = 1; next }
+      $0 == begin { skip = 1; hold = 0; next }
       $0 == end { skip = 0; next }
-      !skip { print }
+      skip { next }
+      /^[ \t]*$/ { hold++; next }
+      { while (hold-- > 0) print ""; hold = 0; print }
+      END { while (hold-- > 0) print "" }
     ' "$target" > "$tmp"
+  fi
+
+  # Drop trailing blank lines left after stripping the old block, so that
+  # re-applying does not accumulate an extra blank line each run (idempotent).
+  if [ -s "$tmp" ]; then
+    awk 'NF { last = NR } { line[NR] = $0 } END { for (i = 1; i <= last; i++) print line[i] }' \
+      "$tmp" > "$tmp.trim" && mv "$tmp.trim" "$tmp"
   fi
 
   if [ -s "$tmp" ]; then

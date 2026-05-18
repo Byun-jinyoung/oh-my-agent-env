@@ -28,8 +28,8 @@ fi
 remove_one_style() {
   local file="$1"
   local style="$2"
-  local begin="<!-- oh-my-setting:${style}:begin -->"
-  local end="<!-- oh-my-setting:${style}:end -->"
+  local begin="<!-- cc-bootstrap:${style}:begin -->"
+  local end="<!-- cc-bootstrap:${style}:end -->"
   local tmp
   tmp="$(mktemp)"
 
