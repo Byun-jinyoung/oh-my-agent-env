@@ -36,21 +36,24 @@ graphify:
     python: [graphifyy]
     cli: [graphify]
 
-# oh-my-setting custom skills (eightmm/oh-my-setting) — code-project workflow.
+# Shared agent skills — code-project workflow.
+# runtime `agents` -> ~/.agents/skills, which BOTH codex and gemini scan.
+# Do NOT also list codex/gemini here: those add ~/.codex/skills and
+# ~/.gemini/skills links, which the same CLIs double-load -> skill conflict.
 # slurm-hpc reads skills/slurm-hpc/references/cluster.generated.md when present
 # (generated per-machine by scripts/generate-slurm-skill.sh, gitignored).
 slurm-hpc:
   path: skills/slurm-hpc
-  runtimes: [claude, codex, gemini, agents]
+  runtimes: [claude, agents]
 
 spec-interview:
   path: skills/spec-interview
-  runtimes: [claude, codex, gemini, agents]
+  runtimes: [claude, agents]
 
 git-cli-workflow:
   path: skills/git-cli-workflow
-  runtimes: [claude, codex, gemini, agents]
+  runtimes: [claude, agents]
 
 multi-agent-review:
   path: skills/multi-agent-review
-  runtimes: [claude, codex, gemini, agents]
+  runtimes: [claude, agents]

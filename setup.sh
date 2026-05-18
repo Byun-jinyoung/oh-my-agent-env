@@ -471,6 +471,22 @@ for name, info in reg.items():
         elif os.path.exists(dst): os.rename(dst, dst+".bak")
         os.symlink(src, dst)
         print(f"    [LINK] {rt}/{name} → {src}")
+
+# Prune stale cc-bootstrap symlinks no longer in the registry, so that
+# dropping a runtime from registry.yaml self-cleans on every machine.
+# Only cc-bootstrap-managed symlinks are removed; real dirs / foreign
+# links are left untouched.
+skills_root = os.path.realpath(os.path.join("$SCRIPT_DIR", "skills"))
+desired = {(rt, name) for name, info in reg.items()
+           for rt in info.get("runtimes", []) if rt in dirs}
+for rt, d in dirs.items():
+    if not os.path.isdir(d): continue
+    for entry in os.listdir(d):
+        p = os.path.join(d, entry)
+        if not os.path.islink(p): continue
+        if os.path.realpath(p).startswith(skills_root) and (rt, entry) not in desired:
+            os.remove(p)
+            print(f"    [PRUNE] {rt}/{entry} (stale)")
 PYEOF
   fi
 
