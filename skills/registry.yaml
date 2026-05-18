@@ -25,3 +25,13 @@ codebase-scan:
   deps:
     python: [code-review-graph]
     external_mcp: [serena, code-review-graph]
+
+# Graphify — knowledge graph builder for code/docs/papers/images.
+# Package name is graphifyy; installed CLI is graphify.
+# Codex uses ~/.agents/skills for this upstream skill, not ~/.codex/skills.
+graphify:
+  path: skills/graphify
+  runtimes: [claude, agents]
+  deps:
+    python: [graphifyy]
+    cli: [graphify]

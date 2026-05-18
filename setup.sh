@@ -16,6 +16,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 CODEX_DIR="$HOME/.codex"
+AGENTS_DIR="$HOME/.agents"
 GEMINI_DIR="$HOME/.gemini"
 WARNINGS=0
 ERRORS=0
@@ -56,14 +57,23 @@ log_and_print() {
   log "$msg"
 }
 
-# Run command with timeout and logging
+# Run command with timeout (if available) and logging
 run_with_timeout() {
   local label="$1"
   shift
   log "START: $label — cmd: $*"
   local start_time=$(date +%s)
   local output
-  if output=$(timeout "$STEP_TIMEOUT" bash -c "$*" 2>&1); then
+  
+  # Check for timeout or gtimeout
+  local timeout_cmd=""
+  if command -v timeout &>/dev/null; then
+    timeout_cmd="timeout $STEP_TIMEOUT"
+  elif command -v gtimeout &>/dev/null; then
+    timeout_cmd="gtimeout $STEP_TIMEOUT"
+  fi
+
+  if output=$($timeout_cmd bash -c "$*" 2>&1); then
     local elapsed=$(( $(date +%s) - start_time ))
     log "OK: $label (${elapsed}s)"
     echo "$output"
@@ -126,6 +136,240 @@ mcp_spawn_check() {
   timeout 3 "$bin" </dev/null 2>&1 | head -1 | grep -q 'started on stdio'
 }
 
+append_section_if_missing() {
+  local file="$1" marker="$2" section="$3"
+  mkdir -p "$(dirname "$file")"
+  if [ -f "$file" ] && grep -qF "$marker" "$file"; then
+    echo "    [OK] $(basename "$file") already has graphify"
+  elif [ -f "$file" ]; then
+    printf '\n%s\n' "$section" >> "$file"
+    echo "    [OK] Added graphify section to $file"
+  else
+    printf '%s\n' "$section" > "$file"
+    echo "    [OK] Created $file with graphify section"
+  fi
+}
+
+ensure_line_in_file() {
+  local file="$1" line="$2"
+  mkdir -p "$(dirname "$file")"
+  if [ -f "$file" ] && grep -qxF "$line" "$file"; then
+    echo "    [OK] $line already in $file"
+  else
+    printf '%s\n' "$line" >> "$file"
+    echo "    [OK] Added $line to $file"
+  fi
+}
+
+ensure_codex_multi_agent() {
+  if ! command -v python3 &>/dev/null; then
+    log_and_print "    [SKIP] python3 not available"
+    return
+  fi
+  python3 - "$CODEX_DIR" << 'PYEOF' | sed 's/^/    /'
+import re, sys
+from pathlib import Path
+
+codex_dir = Path(sys.argv[1])
+cfg = codex_dir / "config.toml"
+cfg.parent.mkdir(parents=True, exist_ok=True)
+content = cfg.read_text() if cfg.exists() else ""
+
+features_re = re.compile(r"(?ms)^\[features\]\n(?P<body>.*?)(?=^\[|\Z)")
+match = features_re.search(content)
+if match:
+    body = match.group("body")
+    if re.search(r"(?m)^multi_agent\s*=\s*true\s*$", body):
+        print(f"[OK] Codex: multi_agent already enabled in {cfg.name}")
+    elif re.search(r"(?m)^multi_agent\s*=", body):
+        start, end = match.span("body")
+        body = re.sub(r"(?m)^multi_agent\s*=.*$", "multi_agent = true", body)
+        content = content[:start] + body + content[end:]
+        cfg.write_text(content)
+        print(f"[OK] Codex: set multi_agent = true in {cfg.name}")
+    else:
+        insert_at = match.end("body")
+        content = content[:insert_at] + "multi_agent = true\n" + content[insert_at:]
+        cfg.write_text(content)
+        print(f"[OK] Codex: added multi_agent = true to {cfg.name}")
+else:
+    prefix = "\n" if content and not content.endswith("\n") else ""
+    content += f"{prefix}\n[features]\nmulti_agent = true\n"
+    cfg.write_text(content)
+    print(f"[OK] Codex: created [features] multi_agent in {cfg.name}")
+PYEOF
+}
+
+ensure_codex_context_mode() {
+  if ! command -v node &>/dev/null; then
+    log_and_print "    [SKIP] node not available"
+    return
+  fi
+  node << 'JSEOF' | sed 's/^/    /'
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+const codexDir = path.join(os.homedir(), ".codex");
+fs.mkdirSync(codexDir, { recursive: true });
+
+const cfg = path.join(codexDir, "config.toml");
+let content = fs.existsSync(cfg) ? fs.readFileSync(cfg, "utf8") : "";
+if (/^\[mcp_servers\.context-mode\]$/m.test(content)) {
+  console.log("[OK] Codex: context-mode MCP already in config.toml");
+} else {
+  if (content && !content.endsWith("\n")) content += "\n";
+  content += '\n[mcp_servers.context-mode]\ncommand = "context-mode"\n';
+  fs.writeFileSync(cfg, content);
+  console.log("[OK] Codex: added context-mode MCP to config.toml");
+}
+
+const hooksPath = path.join(codexDir, "hooks.json");
+let data = {};
+if (fs.existsSync(hooksPath)) {
+  try {
+    data = JSON.parse(fs.readFileSync(hooksPath, "utf8"));
+  } catch {
+    const backup = `${hooksPath}.bak.${Date.now()}`;
+    fs.copyFileSync(hooksPath, backup);
+    console.log(`[WARN] Codex: hooks.json invalid; backed up to ${backup}`);
+  }
+}
+data.hooks = data.hooks || {};
+const wanted = {
+  PreToolUse: {
+    matcher: "local_shell|shell|shell_command|exec_command|container.exec|Bash|Shell|grep_files|mcp__plugin_context-mode_context-mode__ctx_execute|mcp__plugin_context-mode_context-mode__ctx_execute_file|mcp__plugin_context-mode_context-mode__ctx_batch_execute",
+    command: "context-mode hook codex pretooluse",
+  },
+  PostToolUse: { command: "context-mode hook codex posttooluse" },
+  SessionStart: { command: "context-mode hook codex sessionstart" },
+  UserPromptSubmit: { command: "context-mode hook codex userpromptsubmit" },
+  Stop: { command: "context-mode hook codex stop" },
+};
+for (const [event, spec] of Object.entries(wanted)) {
+  const existing = Array.isArray(data.hooks[event]) ? data.hooks[event] : [];
+  const filtered = existing.filter((entry) => !JSON.stringify(entry).includes(spec.command));
+  const entry = { hooks: [{ type: "command", command: spec.command }] };
+  if (spec.matcher) entry.matcher = spec.matcher;
+  filtered.push(entry);
+  data.hooks[event] = filtered;
+}
+fs.writeFileSync(hooksPath, JSON.stringify(data, null, 2) + "\n");
+console.log("[OK] Codex: context-mode hooks installed in hooks.json");
+
+const npmRoot = (() => {
+  try {
+    return require("child_process").execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
+})();
+const routeSrc = npmRoot ? path.join(npmRoot, "context-mode", "configs", "codex", "AGENTS.md") : "";
+const routeDst = path.join(codexDir, "AGENTS.md");
+if (!routeSrc || !fs.existsSync(routeSrc)) {
+  console.log("[WARN] Codex: context-mode routing AGENTS.md not found; skipping");
+} else if (!fs.existsSync(routeDst)) {
+  fs.copyFileSync(routeSrc, routeDst);
+  console.log("[OK] Codex: copied context-mode routing instructions to ~/.codex/AGENTS.md");
+} else if (fs.readFileSync(routeDst, "utf8").includes("context-mode")) {
+  console.log("[OK] Codex: ~/.codex/AGENTS.md already has context-mode instructions");
+} else {
+  console.log("[WARN] Codex: ~/.codex/AGENTS.md exists without context-mode; left unchanged");
+}
+JSEOF
+}
+
+ensure_codex_rtk_inline() {
+  local agents_file="$CODEX_DIR/AGENTS.md"
+  local marker="## RTK - Rust Token Killer (Codex enforced)"
+  mkdir -p "$CODEX_DIR"
+  if [ -f "$agents_file" ] && grep -qF "$marker" "$agents_file"; then
+    log_and_print "    [OK] Codex: inline RTK instructions already present"
+    return
+  fi
+  cat >> "$agents_file" << 'MDEOF'
+
+## RTK - Rust Token Killer (Codex enforced)
+
+When running shell commands, prefix token-heavy or inspect-style commands with `rtk`.
+This applies even if `@RTK.md` include expansion is unavailable.
+
+Examples:
+- `ls -la path` -> `rtk ls -la path`
+- `git status` -> `rtk git status`
+- `grep pattern file` -> `rtk grep pattern file`
+- `npm run build` -> `rtk npm run build`
+
+Use raw shell only when the command must not be filtered, when debugging RTK itself,
+or when the command is a shell-only control operation such as `cd`.
+MDEOF
+  log_and_print "    [OK] Codex: added inline RTK instructions to AGENTS.md"
+}
+
+write_graphify_project_config() {
+  local project_path="$1"
+  local graphify_section='## graphify
+
+This project has a graphify knowledge graph at graphify-out/.
+
+Rules:
+- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
+- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph'\''s EXTRACTED + INFERRED edges instead of scanning files
+- After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)'
+
+  echo "[6] Graphify project integration"
+  append_section_if_missing "$project_path/AGENTS.md" "## graphify" "$graphify_section"
+  append_section_if_missing "$project_path/CLAUDE.md" "## graphify" "$graphify_section"
+
+  python3 - "$project_path" << 'PYEOF' | sed 's/^/    /'
+import json, sys
+from pathlib import Path
+
+project = Path(sys.argv[1])
+
+codex_hook = {
+    "matcher": "Bash",
+    "hooks": [{
+        "type": "command",
+        "command": "[ -f graphify-out/graph.json ] && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files.\"}}' || true",
+    }],
+}
+claude_hook = {
+    "matcher": "Bash",
+    "hooks": [{
+        "type": "command",
+        "command": "CMD=$(python3 -c \"import json,sys; d=json.load(sys.stdin); print(d.get('tool_input',d).get('command',''))\" 2>/dev/null || true); case \"$CMD\" in *grep*|*rg\\ *|*ripgrep*|*find\\ *|*fd\\ *|*ack\\ *|*ag\\ *)   [ -f graphify-out/graph.json ] &&   echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files.\"}}'   || true ;; esac",
+    }],
+}
+
+def load_json(path):
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+def install_hook(path, hook):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = load_json(path)
+    pre_tool = data.setdefault("hooks", {}).setdefault("PreToolUse", [])
+    data["hooks"]["PreToolUse"] = [h for h in pre_tool if "graphify" not in str(h)]
+    data["hooks"]["PreToolUse"].append(hook)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    print(f"[OK] {path.relative_to(project)} graphify hook installed")
+
+install_hook(project / ".codex" / "hooks.json", codex_hook)
+install_hook(project / ".claude" / "settings.json", claude_hook)
+PYEOF
+
+  echo "[7] Graphify ignore rules"
+  for line in ".git/" ".obsidian/" ".claude/" ".codex/" ".serena/" ".code-review-graph/" "graphify-out/" "node_modules/" ".DS_Store" "*.tmp" "*.log"; do
+    ensure_line_in_file "$project_path/.graphifyignore" "$line"
+  done
+}
+
 cmd_sync() {
   log "=== cc-bootstrap sync started ==="
   log "  Platform: $(uname -s) $(uname -m)"
@@ -161,6 +405,8 @@ cmd_sync() {
   mkdir -p "$CODEX_DIR"
   [ -f "$SCRIPT_DIR/runtimes/codex/instructions.md" ] && \
     make_link "$SCRIPT_DIR/runtimes/codex/instructions.md" "$CODEX_DIR/instructions.md"
+  echo "[3b] Codex feature flags"
+  ensure_codex_multi_agent
 
   # Gemini
   echo "[4] Gemini"
@@ -176,11 +422,30 @@ import sys, os
 try:
     import yaml
 except ImportError:
-    print("    [WARN] PyYAML missing. pip install pyyaml")
-    sys.exit(0)
-with open("$SCRIPT_DIR/skills/registry.yaml") as f:
-    reg = yaml.safe_load(f)
-dirs = {"claude": "$CONFIG_DIR/skills", "codex": "$CODEX_DIR/skills", "gemini": "$GEMINI_DIR/skills"}
+    yaml = None
+
+registry_path = "$SCRIPT_DIR/skills/registry.yaml"
+if yaml:
+    with open(registry_path) as f:
+        reg = yaml.safe_load(f)
+else:
+    print("    [WARN] PyYAML missing. Using minimal registry parser.")
+    reg = {}
+    current = None
+    with open(registry_path) as f:
+        for raw in f:
+            line = raw.split("#", 1)[0].rstrip()
+            if not line:
+                continue
+            if not line.startswith(" ") and line.endswith(":"):
+                current = line[:-1]
+                reg[current] = {}
+            elif current and line.strip().startswith("path:"):
+                reg[current]["path"] = line.split(":", 1)[1].strip()
+            elif current and line.strip().startswith("runtimes:"):
+                value = line.split(":", 1)[1].strip()
+                reg[current]["runtimes"] = [x.strip() for x in value.strip("[]").split(",") if x.strip()]
+dirs = {"claude": "$CONFIG_DIR/skills", "codex": "$CODEX_DIR/skills", "agents": "$AGENTS_DIR/skills", "gemini": "$GEMINI_DIR/skills"}
 for name, info in reg.items():
     for rt in info.get("runtimes", []):
         if rt not in dirs: continue
@@ -214,6 +479,14 @@ PYEOF
 
   # External tools
   log_and_print "[7] External tools"
+  # context-mode (Codex MCP + hooks)
+  if command -v context-mode &>/dev/null; then
+    log_and_print "    [OK] context-mode installed"
+  else
+    log_and_print "    Installing context-mode (npm global)..."
+    run_with_timeout "context-mode install" "npm install -g context-mode < /dev/null" \
+      | tail -3 || true
+  fi
   # codex-gemini-mcp (Byun-jinyoung fork — required for session_id resume + gemini -y)
   # Integrity check covers: binary present, exec bit set, fork features in dist.
   # Auto-repairs missing exec bit; reinstalls if fork features absent.
@@ -340,9 +613,13 @@ WANTED = {
         "command": "code-review-graph",
         "args": ["serve"],
     },
+    "context-mode": {
+        "command": "context-mode",
+    },
 }
 
 # --- Codex (TOML, ~/.codex/config.toml) ---
+# (Note: ensure_codex_context_mode handles context-mode in Codex specifically)
 codex_cfg = Path(codex_dir) / "config.toml"
 codex_cfg.parent.mkdir(parents=True, exist_ok=True)
 if not codex_cfg.exists():
@@ -355,6 +632,7 @@ def has_codex_section(name):
 
 added_codex = []
 for name, spec in WANTED.items():
+    if name == "context-mode": continue # Handled by ensure_codex_context_mode
     if has_codex_section(name):
         continue
     block = [f"\n[mcp_servers.{name}]",
@@ -382,31 +660,95 @@ if gemini_cfg.exists():
 else:
     data = {}
 
+# Dynamic path resolution for context-mode
+import subprocess, os
+def get_cm_paths():
+    try:
+        npm_root = subprocess.check_output(["npm", "root", "-g"], text=True).strip()
+        bundle_path = os.path.join(npm_root, "context-mode", "cli.bundle.mjs")
+        bin_path = subprocess.check_output(["which", "context-mode"], text=True).strip()
+        if os.path.exists(bundle_path):
+            return bundle_path, bin_path
+    except:
+        pass
+    return None, "context-mode"
+
+cm_path, cm_bin = get_cm_paths()
+
 mcp_servers = data.setdefault("mcpServers", {})
 added_gemini = []
 for name, spec in WANTED.items():
+    # Force update context-mode to ensure absolute path integrity
+    if name == "context-mode" and cm_path:
+        new_spec = {"command": "node", "args": [cm_path]}
+        if mcp_servers.get(name) != new_spec:
+            mcp_servers[name] = new_spec
+            added_gemini.append(name)
+        continue
+        
     if name in mcp_servers:
         continue
     mcp_servers[name] = spec
     added_gemini.append(name)
 
+# Gemini Hooks for context-mode
+hooks = data.setdefault("hooks", {})
+gemini_hooks = {
+    "BeforeTool": {
+        "matcher": "run_shell_command|read_file|read_many_files|grep_search|search_file_content|web_fetch|activate_skill|mcp__plugin_context-mode",
+        "command": f"{cm_bin} hook gemini-cli beforetool"
+    },
+    "AfterTool": { "command": f"{cm_bin} hook gemini-cli aftertool" },
+    "PreCompress": { "command": f"{cm_bin} hook gemini-cli precompress" },
+    "SessionStart": { "command": f"{cm_bin} hook gemini-cli sessionstart" }
+}
+
+for event, spec in gemini_hooks.items():
+    existing = hooks.setdefault(event, [])
+    # Integrity check: Ensure any existing context-mode hook uses the absolute binary path
+    updated_any = False
+    for h_wrapper in existing:
+        for h in h_wrapper.get("hooks", []):
+            if "context-mode hook gemini-cli" in h.get("command", ""):
+                cmd = h["command"]
+                if not cmd.startswith("/") and cm_bin.startswith("/"):
+                    h["command"] = cmd.replace("context-mode", cm_bin)
+                    updated_any = True
+    
+    if updated_any:
+        added_gemini.append(f"hook-fix:{event}")
+
+    if not any(spec["command"] in str(h) for h in existing):
+        h_obj = {"hooks": [{"type": "command", "command": spec["command"]}]}
+        if "matcher" in spec: h_obj["matcher"] = spec["matcher"]
+        existing.append(h_obj)
+        added_gemini.append(f"hook:{event}")
+
 if added_gemini:
     gemini_cfg.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    print(f"[OK] Gemini: added {', '.join(added_gemini)} to {gemini_cfg.name}")
+    print(f"[OK] Gemini: updated {', '.join(added_gemini)}")
 else:
-    print(f"[OK] Gemini: serena + code-review-graph already in {gemini_cfg.name}")
+    print(f"[OK] Gemini: context-mode already configured")
 PYEOF
   else
     log_and_print "    [SKIP] python3 not available"
   fi
+  if command -v context-mode &>/dev/null; then
+    ensure_codex_context_mode
+  else
+    log_and_print "    [WARN] context-mode missing. Install Node package first: npm install -g context-mode"
+  fi
 
-  # [10] Frameworks (GSD + RTK)
+  # [10] Frameworks
   log_and_print "[10] Frameworks"
+  export PATH="$HOME/.local/bin:$PATH"
+
   # GSD
   # Detect via either old commands/ path or current skills/ layout (GSD restructured upstream).
   if ls "$CONFIG_DIR/commands/gsd"* &>/dev/null 2>&1 || ls -d "$CONFIG_DIR/skills/gsd-"* &>/dev/null 2>&1; then
     log_and_print "    [OK] GSD already installed"
   else
+
     log_and_print "    Installing GSD (npx get-shit-done-cc)..."
     # GSD installs by running bin/install.js which copies .md files to ~/.claude/commands/
     # npx is the official method; --yes prevents interactive prompt; stdin from /dev/null prevents hang
@@ -419,8 +761,9 @@ PYEOF
     }
   fi
   # RTK (cross-platform: macOS + Linux)
-  if command -v rtk &>/dev/null; then
-    log_and_print "    [OK] RTK $(rtk --version 2>/dev/null)"
+  RTK_BIN="$HOME/.local/bin/rtk"
+  if [ -x "$RTK_BIN" ]; then
+    log_and_print "    [OK] RTK $($RTK_BIN --version 2>/dev/null)"
   else
     log_and_print "    Installing RTK..."
     run_with_timeout "RTK install" \
@@ -499,10 +842,31 @@ PYEOF
       log_and_print "    [WARN] rtk-rewrite.sh hook file missing or python3 unavailable — skipping wire"
     fi
   fi
+  # RTK for Codex + Gemini (Claude RTK hook wired above)
+  if [ -x "$RTK_BIN" ]; then
+    run_with_timeout "RTK init Codex" "$RTK_BIN init -g --codex < /dev/null" | tail -1 || true
+    run_with_timeout "RTK init Gemini" "$RTK_BIN init -g --gemini --auto-patch < /dev/null" | tail -1 || true
+    ensure_codex_rtk_inline
+  fi
+  # Graphify — package name is graphifyy; CLI command is graphify.
+  export PATH="$HOME/.local/bin:$PATH"
+  if command -v graphify &>/dev/null; then
+    log_and_print "    [OK] Graphify CLI installed ($(command -v graphify))"
+  elif command -v uv &>/dev/null; then
+    log_and_print "    Installing Graphify (uv tool install graphifyy)..."
+    run_with_timeout "Graphify install (uv)" "uv tool install graphifyy < /dev/null" \
+      | tail -2 || true
+    if command -v graphify &>/dev/null; then
+      log_and_print "    [OK] Graphify installed: $(command -v graphify)"
+    else
+      log_and_print "    [WARN] Graphify install via uv failed — see $LOG_FILE"
+    fi
+  else
+    log_and_print "    [WARN] Graphify missing. Install uv first, then run: uv tool install graphifyy"
+  fi
   # code-review-graph (CRG) — required by triangle-review + codebase-scan
   # CRG requires Python >=3.10. Use `uv tool install` for isolated env that works
   # regardless of system Python version. Fall back to pip3 only when uv missing.
-  export PATH="$HOME/.local/bin:$PATH"
   if command -v code-review-graph &>/dev/null; then
     log_and_print "    [OK] CRG $(code-review-graph --version 2>&1 | head -1)"
   elif command -v uv &>/dev/null; then
@@ -528,7 +892,7 @@ cmd_doctor() {
   echo "=== cc-bootstrap doctor ==="
 
   echo "[ CLI tools ]"
-  for cmd in git node npm python3 uv claude codex gemini rtk playwright; do
+  for cmd in git node npm python3 uv claude codex gemini rtk graphify context-mode playwright; do
     if command -v $cmd &>/dev/null; then echo "  [OK] $cmd"
     else echo "  [MISS] $cmd"; WARNINGS=$((WARNINGS+1)); fi
   done
@@ -580,8 +944,15 @@ cmd_doctor() {
 
   echo ""
   echo "[ MCP servers (Codex/Gemini for triangle-review) ]"
+  if [ -f "$CODEX_DIR/config.toml" ] && grep -qF "multi_agent = true" "$CODEX_DIR/config.toml"; then
+    echo "  [OK] codex multi_agent"
+  else
+    echo "  [MISS] codex multi_agent (run setup.sh sync)"
+    WARNINGS=$((WARNINGS+1))
+  fi
   for entry in "$CODEX_DIR/config.toml:[mcp_servers.serena]:codex serena" \
-               "$CODEX_DIR/config.toml:[mcp_servers.code-review-graph]:codex code-review-graph"; do
+               "$CODEX_DIR/config.toml:[mcp_servers.code-review-graph]:codex code-review-graph" \
+               "$CODEX_DIR/config.toml:[mcp_servers.context-mode]:codex context-mode"; do
     file="${entry%%:*}"
     rest="${entry#*:}"
     pat="${rest%%:*}"
@@ -604,18 +975,39 @@ PYEOF
   else
     echo "  [MISS] gemini settings.json"; WARNINGS=$((WARNINGS+1))
   fi
+  if [ -f "$CODEX_DIR/hooks.json" ] && grep -qF "context-mode hook codex pretooluse" "$CODEX_DIR/hooks.json" \
+    && grep -qF "context-mode hook codex posttooluse" "$CODEX_DIR/hooks.json" \
+    && grep -qF "context-mode hook codex sessionstart" "$CODEX_DIR/hooks.json" \
+    && grep -qF "context-mode hook codex userpromptsubmit" "$CODEX_DIR/hooks.json" \
+    && grep -qF "context-mode hook codex stop" "$CODEX_DIR/hooks.json"; then
+    echo "  [OK] codex context-mode hooks"
+  else
+    echo "  [MISS] codex context-mode hooks (run setup.sh sync)"
+    WARNINGS=$((WARNINGS+1))
+  fi
+  if [ -f "$CODEX_DIR/AGENTS.md" ] && grep -qF "context-mode" "$CODEX_DIR/AGENTS.md"; then
+    echo "  [OK] codex context-mode routing instructions"
+  else
+    echo "  [MISS] codex context-mode routing instructions (run setup.sh sync)"
+    WARNINGS=$((WARNINGS+1))
+  fi
 
   echo ""
-  echo "[ Triangle Review skills ]"
-  for sk in triangle-review codebase-scan; do
+  echo "[ Managed skills ]"
+  for sk in triangle-review codebase-scan graphify; do
     src="$SCRIPT_DIR/skills/$sk"
     dst="$CONFIG_DIR/skills/$sk"
     if [ -L "$dst" ] && [ -e "$dst" ]; then echo "  [OK] $sk symlink"
     elif [ -e "$dst" ]; then echo "  [WARN] $sk exists but not symlinked from cc-bootstrap"
     else echo "  [MISS] $sk"; WARNINGS=$((WARNINGS+1)); fi
   done
+  if [ -L "$AGENTS_DIR/skills/graphify" ] && [ -e "$AGENTS_DIR/skills/graphify" ]; then echo "  [OK] codex graphify symlink"
+  elif [ -e "$AGENTS_DIR/skills/graphify" ]; then echo "  [WARN] codex graphify exists but not symlinked from cc-bootstrap"
+  else echo "  [MISS] codex graphify"; WARNINGS=$((WARNINGS+1)); fi
   if command -v code-review-graph &>/dev/null; then echo "  [OK] code-review-graph CLI"
   else echo "  [MISS] code-review-graph CLI (pip install code-review-graph)"; WARNINGS=$((WARNINGS+1)); fi
+  if command -v graphify &>/dev/null; then echo "  [OK] graphify CLI"
+  else echo "  [MISS] graphify CLI (uv tool install graphifyy)"; WARNINGS=$((WARNINGS+1)); fi
 
   echo ""
   echo "[ Frameworks ]"
@@ -648,6 +1040,7 @@ cmd_validate() {
     [ -d "$skill_dir" ] || continue
     name="$(basename "$skill_dir")"
     found=false
+    [ -f "$skill_dir/SKILL.md" ] && found=true
     for sub in "$skill_dir"*/SKILL.md; do [ -f "$sub" ] && found=true && break; done
     $found && echo "  [OK] $name" || echo "  [FAIL] $name: no SKILL.md"
   done
@@ -673,10 +1066,15 @@ cmd_install() {
   cp "$SCRIPT_DIR/runtimes/codex/instructions.md" "$CODEX_DIR/" 2>/dev/null || true
   cp "$SCRIPT_DIR/runtimes/gemini/GEMINI.md" "$GEMINI_DIR/" 2>/dev/null || true
   cp "$SCRIPT_DIR/ui/statusline/my-statusline.mjs" "$CONFIG_DIR/hud/" 2>/dev/null || true
-  for rt in codex gemini; do
+  for rt in claude codex agents gemini; do
     for sd in "$SCRIPT_DIR/skills/"*/; do
-      [ -d "$sd/$rt" ] && mkdir -p "$HOME/.$rt/skills/$(basename "$sd")" && \
-        cp "$sd/$rt/"* "$HOME/.$rt/skills/$(basename "$sd")/" 2>/dev/null
+      dst_base="$HOME/.$rt/skills"
+      [ "$rt" = "claude" ] && dst_base="$CONFIG_DIR/skills"
+      if [ -d "$sd/$rt" ]; then
+        mkdir -p "$dst_base/$(basename "$sd")" && cp "$sd/$rt/"* "$dst_base/$(basename "$sd")/" 2>/dev/null
+      elif [ -f "$sd/SKILL.md" ] && { [ "$rt" = "claude" ] || [ "$rt" = "agents" ]; }; then
+        mkdir -p "$dst_base/$(basename "$sd")" && cp "$sd/SKILL.md" "$dst_base/$(basename "$sd")/SKILL.md" 2>/dev/null
+      fi
     done
   done
   echo "  Legacy install complete."
@@ -798,6 +1196,8 @@ MDEOF
     echo ".serena/" > "$project_path/.gitignore"
     echo "    [OK] Created .gitignore with .serena/"
   fi
+
+  write_graphify_project_config "$project_path"
 
   echo ""
   echo "=== init-project complete: $project_name ==="

@@ -21,6 +21,7 @@ bash setup.sh
 | **GEMINI.md** | Global reliability rules for Gemini CLI |
 | **instructions.md** | Global reliability rules for Codex CLI |
 | **OMC patches** | Model-first display order in OMC HUD |
+| **Graphify** | Knowledge graph CLI (`graphifyy` package, `graphify` command), Claude/Codex skills, and project hooks |
 
 ## Directory Structure
 
@@ -46,6 +47,18 @@ cc-bootstrap/
 - Claude Code CLI
 - (Optional) Gemini CLI: `npm install -g @google/gemini-cli`
 - (Optional) Codex CLI: `npm install -g @openai/codex`
+
+## Project Graphify Setup
+
+`setup.sh sync` installs the global Graphify CLI and links the managed skill into Claude Code and Codex-compatible `~/.agents/skills`.
+
+For each project, run:
+
+```bash
+bash setup.sh init-project /path/to/project
+```
+
+This appends the Graphify guidance section to `AGENTS.md` and `CLAUDE.md`, installs `.codex/hooks.json` and `.claude/settings.json` hooks, and creates `.graphifyignore` defaults.
 
 ## After OMC Updates
 

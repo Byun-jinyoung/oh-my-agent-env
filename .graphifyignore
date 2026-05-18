@@ -1,0 +1,11 @@
+.git/
+.obsidian/
+.claude/
+.codex/
+.serena/
+.code-review-graph/
+graphify-out/
+node_modules/
+.DS_Store
+*.tmp
+*.log

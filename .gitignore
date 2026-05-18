@@ -2,3 +2,7 @@ node_modules/
 .DS_Store
 *.log
 .env
+.serena/
+.code-review-graph/
+graphify-out/
+.claude/settings.local.json
