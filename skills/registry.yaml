@@ -26,15 +26,13 @@ codebase-scan:
     python: [code-review-graph]
     external_mcp: [serena, code-review-graph]
 
-# Graphify — knowledge graph builder for code/docs/papers/images.
-# Package name is graphifyy; installed CLI is graphify.
-# Codex uses ~/.agents/skills for this upstream skill, not ~/.codex/skills.
-graphify:
-  path: skills/graphify
-  runtimes: [claude, agents]
-  deps:
-    python: [graphifyy]
-    cli: [graphify]
+# Graphify — managed by the graphify CLI itself, NOT by cc-bootstrap.
+# `graphify install --platform claude` writes ~/.claude/skills/graphify/SKILL.md
+# (real directory, not a symlink). setup.sh's [10] Frameworks step invokes it
+# after `uv tool install graphifyy`. ~/.agents/skills/graphify is then created
+# as a symlink to ~/.claude/skills/graphify so codex/gemini share the same
+# SKILL. Reason: each machine's graphifyy package version differs, so a
+# repo-level SKILL.md cannot be the source of truth — the CLI is.
 
 # Shared agent skills — code-project workflow.
 # runtime `agents` -> ~/.agents/skills, which BOTH codex and gemini scan.

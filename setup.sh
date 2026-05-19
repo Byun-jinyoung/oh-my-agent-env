@@ -651,23 +651,37 @@ PYEOF
       log_and_print "    [$name] checking..."
       if echo "$mcp_list" | grep -q "$name"; then
         log_and_print "    [$name] OK — already registered"
+        # Detect local-scope shadow: setup.sh registers at -s user, but earlier
+        # versions defaulted to local. If a local-scope entry exists, OAuth /
+        # env auth diverges per scope and silently breaks one of them. Flag
+        # for the user to clean up — env vars may need preserving, so we
+        # don't auto-remove.
+        if maybe_timeout 10 claude mcp get "$name" </dev/null 2>/dev/null \
+             | grep -q 'Scope: Local'; then
+          log_and_print "    [$name] [WARN] registered at LOCAL scope (private to cwd)."
+          log_and_print "             To migrate to user scope (recommended):"
+          log_and_print "               claude mcp remove $name -s local"
+          log_and_print "               # then re-run ./setup.sh sync"
+        fi
       elif [ -n "$binary" ] && ! command -v "$binary" &>/dev/null; then
         log_and_print "    [$name] SKIP — $binary binary not found"
       else
         log_and_print "    [$name] registering..."
         local result
         if result=$(run_with_timeout "$name mcp add" "$cmd < /dev/null" 2>&1); then
-          log_and_print "    [$name] registered successfully"
+          log_and_print "    [$name] registered successfully (user scope)"
         else
           log_and_print "    [$name] registration failed — see $LOG_FILE"
         fi
       fi
     }
 
-    add_mcp "codex-mcp" "claude mcp add codex-mcp -- codex-mcp" "codex-mcp"
-    add_mcp "gemini-mcp" "claude mcp add gemini-mcp -e MCP_GEMINI_DEFAULT_MODEL=gemini-3.1-pro-preview -- gemini-mcp" "gemini-mcp"
-    add_mcp "serena" "claude mcp add serena -- uvx --from 'git+https://github.com/oraios/serena' serena start-mcp-server" ""
-    add_mcp "supermemory" "claude mcp add --transport http supermemory https://mcp.supermemory.ai/mcp" ""
+    # All MCPs registered at -s user (Claude default is local — was creating
+    # cwd-bound entries that silently shadowed any user-level OAuth/auth state).
+    add_mcp "codex-mcp" "claude mcp add -s user codex-mcp -- codex-mcp" "codex-mcp"
+    add_mcp "gemini-mcp" "claude mcp add -s user gemini-mcp -e MCP_GEMINI_DEFAULT_MODEL=gemini-3.1-pro-preview -- gemini-mcp" "gemini-mcp"
+    add_mcp "serena" "claude mcp add -s user serena -- uvx --from 'git+https://github.com/oraios/serena' serena start-mcp-server" ""
+    add_mcp "supermemory" "claude mcp add -s user --transport http supermemory https://mcp.supermemory.ai/mcp" ""
   fi
 
   # [9b] Codex / Gemini MCP registration (for triangle-review + codebase-scan)
@@ -901,6 +915,8 @@ PYEOF
     assemble_global_rules
   fi
   # Graphify — package name is graphifyy; CLI command is graphify.
+  # The graphify CLI is the source of truth for ~/.claude/skills/graphify/SKILL.md
+  # (each machine's graphifyy version differs — repo-level SKILL.md would drift).
   export PATH="$HOME/.local/bin:$PATH"
   if command -v graphify &>/dev/null; then
     log_and_print "    [OK] Graphify CLI installed ($(command -v graphify))"
@@ -915,6 +931,23 @@ PYEOF
     fi
   else
     log_and_print "    [WARN] Graphify missing. Install uv first, then run: uv tool install graphifyy"
+  fi
+  # Sync the Claude skill from the freshly installed graphify, so the SKILL.md
+  # always matches the graphifyy package version on this machine (fixes the
+  # "skill 0.5.2 vs package 0.8.11" mismatch warning that fires on every call).
+  if command -v graphify &>/dev/null; then
+    run_with_timeout "graphify install (claude)" "graphify install --platform claude < /dev/null" \
+      | sed 's/^/    /' || true
+    # Mirror into ~/.agents/skills so codex/gemini see the same SKILL via their
+    # shared agents-skills scan. Replace any prior cc-bootstrap symlink.
+    if [ -d "$HOME/.claude/skills/graphify" ]; then
+      mkdir -p "$AGENTS_DIR/skills"
+      if [ -L "$AGENTS_DIR/skills/graphify" ] || [ -e "$AGENTS_DIR/skills/graphify" ]; then
+        rm -rf "$AGENTS_DIR/skills/graphify"
+      fi
+      ln -s "$HOME/.claude/skills/graphify" "$AGENTS_DIR/skills/graphify"
+      log_and_print "    [OK] graphify mirrored to $AGENTS_DIR/skills/graphify"
+    fi
   fi
   # code-review-graph (CRG) — required by triangle-review + codebase-scan
   # CRG requires Python >=3.10. Use `uv tool install` for isolated env that works
@@ -1053,9 +1086,14 @@ PYEOF
     elif [ -e "$dst" ]; then echo "  [WARN] $sk exists but not symlinked from cc-bootstrap"
     else echo "  [MISS] $sk"; WARNINGS=$((WARNINGS+1)); fi
   done
-  if [ -L "$AGENTS_DIR/skills/graphify" ] && [ -e "$AGENTS_DIR/skills/graphify" ]; then echo "  [OK] codex graphify symlink"
-  elif [ -e "$AGENTS_DIR/skills/graphify" ]; then echo "  [WARN] codex graphify exists but not symlinked from cc-bootstrap"
-  else echo "  [MISS] codex graphify"; WARNINGS=$((WARNINGS+1)); fi
+  # graphify is managed by the graphify CLI itself (not cc-bootstrap).
+  # claude side = real dir with SKILL.md; agents side = symlink to it.
+  if [ -f "$CONFIG_DIR/skills/graphify/SKILL.md" ]; then echo "  [OK] graphify claude SKILL"
+  else echo "  [MISS] graphify claude SKILL (run: graphify install --platform claude)"; WARNINGS=$((WARNINGS+1)); fi
+  if [ -L "$AGENTS_DIR/skills/graphify" ] \
+     && [ "$(readlink "$AGENTS_DIR/skills/graphify")" = "$CONFIG_DIR/skills/graphify" ]; then
+    echo "  [OK] graphify agents mirror"
+  else echo "  [WARN] graphify agents mirror missing (rerun setup.sh sync)"; WARNINGS=$((WARNINGS+1)); fi
   if command -v code-review-graph &>/dev/null; then echo "  [OK] code-review-graph CLI"
   else echo "  [MISS] code-review-graph CLI (pip install code-review-graph)"; WARNINGS=$((WARNINGS+1)); fi
   if command -v graphify &>/dev/null; then echo "  [OK] graphify CLI"
