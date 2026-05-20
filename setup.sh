@@ -891,6 +891,44 @@ PYEOF
     log_and_print "    [WARN] context-mode missing. Install Node package first: npm install -g context-mode"
   fi
 
+  # [9c] Serena hardening — disable browser auto-launch on MCP start
+  # Dashboard stays enabled (useful for debugging via http://localhost:24282/dashboard/),
+  # but no browser tab is auto-opened each time serena MCP boots.
+  log_and_print "[9c] Serena hardening (web_dashboard_open_on_launch=false)"
+  if [ -f "$SERENA_CONFIG" ] && command -v python3 &>/dev/null; then
+    python3 - "$SERENA_CONFIG" << 'PYEOF' | sed 's/^/    /'
+import sys
+from pathlib import Path
+try:
+    import yaml
+except ImportError:
+    print("[WARN] PyYAML missing — skipping. pip install pyyaml")
+    sys.exit(0)
+
+path = Path(sys.argv[1])
+config = yaml.safe_load(path.read_text()) or {}
+if config.get("web_dashboard_open_on_launch") is False:
+    print("[OK] web_dashboard_open_on_launch already false")
+else:
+    # Preserve comments by doing a targeted line edit instead of full yaml.dump
+    text = path.read_text()
+    if "web_dashboard_open_on_launch:" in text:
+        new = []
+        for line in text.splitlines():
+            if line.startswith("web_dashboard_open_on_launch:"):
+                new.append("web_dashboard_open_on_launch: false")
+            else:
+                new.append(line)
+        path.write_text("\n".join(new) + ("\n" if text.endswith("\n") else ""))
+    else:
+        with path.open("a") as f:
+            f.write("\nweb_dashboard_open_on_launch: false\n")
+    print("[OK] Set web_dashboard_open_on_launch: false")
+PYEOF
+  else
+    log_and_print "    [SKIP] $SERENA_CONFIG not found or python3 missing"
+  fi
+
   # [10] Frameworks
   log_and_print "[10] Frameworks"
   export PATH="$HOME/.local/bin:$PATH"
