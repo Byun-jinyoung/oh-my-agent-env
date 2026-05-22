@@ -259,7 +259,7 @@ def main() -> int:
     ap.add_argument("--out", help="output path (default: <in>.anchored)")
     ap.add_argument(
         "--run-dir",
-        help="process all {claude,codex,gemini}.json in this directory in place",
+        help="process all {claude,codex,antigravity}.json in this directory in place",
     )
     args = ap.parse_args()
 
@@ -271,7 +271,7 @@ def main() -> int:
     if args.run_dir:
         run_dir = Path(args.run_dir)
         results = []
-        for name in ("claude.json", "codex.json", "gemini.json"):
+        for name in ("claude.json", "codex.json", "antigravity.json"):
             p = run_dir / name
             if p.is_file():
                 stats = process_file(p, p, repo_root)

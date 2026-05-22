@@ -9,7 +9,7 @@ Two subcommands:
               <run_dir>/debate/round2_prompt.txt(prompt template)
 
   merge     Read three Round 2 verdict files
-              <run_dir>/debate/{claude,codex,gemini}_round2.json
+              <run_dir>/debate/{claude,codex,antigravity}_round2.json
             and fold verdicts back into the cluster set, recomputing severity
             with the same Q-A hybrid rule. Writes:
               <run_dir>/CODE-REVIEW.md          (regenerated with debate annotations)
@@ -51,7 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from anchor_lines import anchor_finding  # type: ignore
 import diff_findings  # type: ignore
 
-REVIEWERS = ("claude", "codex", "gemini")
+REVIEWERS = ("claude", "codex", "antigravity")
 SEV_RANK = {"info": 0, "minor": 1, "major": 2, "critical": 3}
 SEV_BY_RANK = {v: k for k, v in SEV_RANK.items()}
 

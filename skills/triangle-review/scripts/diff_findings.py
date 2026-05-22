@@ -2,7 +2,7 @@
 """
 diff_findings.py — Triangle Review consensus engine.
 
-Reads claude.json / codex.json / gemini.json from --run-dir, clusters findings
+Reads claude.json / codex.json / antigravity.json from --run-dir, clusters findings
 by (file, line-overlap±tol, category), applies Q-A hybrid severity rule, and
 emits CODE-REVIEW.md.
 
@@ -24,7 +24,7 @@ except ImportError:
 
 SEV_RANK = {"info": 0, "minor": 1, "major": 2, "critical": 3}
 SEV_BY_RANK = {v: k for k, v in SEV_RANK.items()}
-REVIEWERS = ("claude", "codex", "gemini")
+REVIEWERS = ("claude", "codex", "antigravity")
 
 
 def load_reviewer(run_dir: Path, reviewer: str):

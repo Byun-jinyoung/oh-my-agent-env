@@ -1,6 +1,8 @@
 # Triangle Review — End-to-End Pipeline
 
-3-way AI peer review (Claude + Codex + Gemini) with mechanical consensus + selective multi-turn debate.
+3-way AI peer review (Claude + Codex + Antigravity) with mechanical consensus + selective multi-turn debate.
+
+> **Migration note (2026-06-18)**: Gemini CLI 지원 종료에 따라 3rd peer 가 Gemini → Antigravity (`agy`) 로 교체. 산출물 파일명도 `gemini.json` → `antigravity.json`.
 
 ## 전체 파이프라인
 
@@ -22,22 +24,22 @@ flowchart TD
         direction LR
         Claude["Claude (orchestrator)<br/>serena MCP<br/>code-review-graph MCP"]:::peer
         Codex["Codex<br/>mcp codex-mcp ask_codex<br/>bg job, reasoning_effort=medium"]:::peer
-        Gemini["Gemini<br/>call_gemini.sh<br/>--yolo + --allowed-mcp-server-names"]:::peer
+        Antigravity["Antigravity<br/>mcp antigravity-mcp ask_antigravity<br/>or call_antigravity.sh"]:::peer
     end
 
     L1 --> Claude
     L1 --> Codex
-    L1 --> Gemini
+    L1 --> Antigravity
     Target --> Claude
     Target --> Codex
-    Target --> Gemini
+    Target --> Antigravity
 
     ClaudeJSON["claude.json<br/>findings list"]:::data
     CodexJSON["codex.json<br/>findings list"]:::data
-    GeminiJSON["gemini.json<br/>findings list"]:::data
+    AntigravityJSON["antigravity.json<br/>findings list"]:::data
     Claude --> ClaudeJSON
     Codex --> CodexJSON
-    Gemini --> GeminiJSON
+    Antigravity --> AntigravityJSON
 
     subgraph Anchor["Phase 3.5 · anchor_lines.py · Iteration 1"]
         direction TB
@@ -57,7 +59,7 @@ flowchart TD
 
     ClaudeJSON --> Extract
     CodexJSON --> Extract
-    GeminiJSON --> Extract
+    AntigravityJSON --> Extract
 
     subgraph Consensus["Phase 4 · diff_findings.py · Q-A Consensus"]
         direction TB
@@ -82,7 +84,7 @@ flowchart TD
         Prepare["prepare<br/>filter targets by mode<br/>disagreement = DEBATE only<br/>both = + CONSENSUS"]:::script
         Targets["targets.json<br/>round2_prompt.txt"]:::data
         Round2Spawn["3-peer Round 2 spawn<br/>Phase 2와 동일 메커니즘"]:::orchestrator
-        Round2JSON["claude_round2.json<br/>codex_round2.json<br/>gemini_round2.json"]:::data
+        Round2JSON["claude_round2.json<br/>codex_round2.json<br/>antigravity_round2.json"]:::data
         Merge["merge<br/>apply_verdicts per cluster<br/>action: agree, revise, withdraw"]:::script
         Status{"all members<br/>withdrew?"}:::decision
         Dismiss["DISMISSED · false alarm"]:::status
@@ -195,7 +197,7 @@ flowchart LR
         Anchor["scripts/anchor_lines.py"]:::script
         Diff["scripts/diff_findings.py"]:::script
         Debate["scripts/debate_round2.py"]:::script
-        Gemini["scripts/call_gemini.sh<br/>--yolo + allowlist"]:::script
+        Antigravity["scripts/call_antigravity.sh<br/>--dangerously-skip-permissions"]:::script
     end
 
     subgraph CB["cc-bootstrap/skills/codebase-scan/"]
@@ -205,7 +207,7 @@ flowchart LR
 
     subgraph Setup["cc-bootstrap/setup.sh"]
         Sync["[5] Shared skills sync<br/>symlink to claude/skills/"]:::script
-        MCP["[9b] codex/gemini MCP register<br/>serena + code-review-graph"]:::script
+        MCP["[9b] codex/antigravity MCP register<br/>serena + code-review-graph"]:::script
         Doctor["doctor: triangle-review checks"]:::script
     end
 
@@ -227,7 +229,7 @@ flowchart LR
 | Line accuracy | 15% | **95%** | +80pp |
 | Pure False Positive | 0/20 | 0/20 | 동일 |
 | CONSENSUS clusters | 0 | 1 | anchor 적용으로 free win |
-| Round 2 양방향 verdict 변경 | — | claude↓ minor, gemini↑ critical | 입증 |
+| Round 2 양방향 verdict 변경 | — | claude↓ minor, 3rd peer↑ critical | 입증 (당시 3rd peer는 gemini; 메커니즘 동일) |
 
 ## 사용 흐름 (한 줄 셋업 → 사용)
 
