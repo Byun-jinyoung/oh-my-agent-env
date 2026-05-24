@@ -377,12 +377,12 @@ assemble_global_rules() {
     return
   fi
   local cli dir tools target
-  for cli in claude codex gemini; do
+  for cli in claude codex antigravity; do
     tools="$SCRIPT_DIR/runtimes/$cli/tools.md"
     case "$cli" in
-      claude) dir="$CONFIG_DIR"; target="$CONFIG_DIR/CLAUDE.md" ;;
-      codex)  dir="$CODEX_DIR";  target="$CODEX_DIR/AGENTS.md" ;;
-      gemini) dir="$GEMINI_DIR"; target="$GEMINI_DIR/GEMINI.md" ;;
+      claude)      dir="$CONFIG_DIR"; target="$CONFIG_DIR/CLAUDE.md" ;;
+      codex)       dir="$CODEX_DIR";  target="$CODEX_DIR/AGENTS.md" ;;
+      antigravity) dir="$GEMINI_DIR"; target="$GEMINI_DIR/GEMINI.md" ;;
     esac
     if [ ! -f "$tools" ]; then
       log_and_print "    [WARN] $cli Layer B missing ($tools) — skipping"
