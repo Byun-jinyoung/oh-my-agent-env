@@ -34,7 +34,7 @@ description: Orchestrated codebase comprehension for unfamiliar projects. Runs c
 
 **신규 Phase (2.5 / 4.5 / 6)**:
 - **2.5** — Data flow & types: 함수 signature, return type, dataclass/pydantic/TypedDict/torch nn.Module 필드, tensor shape 주석 캡처
-- **4.5** — Multi-tool hub consensus: graphify + CRG + codex-mcp(+gemini-mcp) 합의 (CONSENSUS/MAJORITY/SINGLE/DEBATE)
+- **4.5** — Multi-tool hub consensus: graphify + CRG + codex-mcp(+antigravity-mcp) 합의 (CONSENSUS/MAJORITY/SINGLE/DEBATE)
 - **6** — Publishing: graphify HTML + Obsidian `Research/{proj}/codemap/` wikilink 발행
 
 ## 사전 조건
@@ -195,7 +195,7 @@ Round 1 응답 + CRG L1-facts.md + graphify hubs를 함께 제시하며:
 
 Round 2 응답을 `.claude/codebase-scan/consensus/codex.json`에 저장.
 
-(선택) gemini-mcp도 동일 프로토콜로 호출 → `gemini.json` 저장.
+(선택) antigravity-mcp도 동일 프로토콜로 호출 → `antigravity.json` 저장.
 
 ### Step 4.5c — Consensus 계산
 ```bash
