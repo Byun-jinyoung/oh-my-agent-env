@@ -105,7 +105,7 @@ mkdir -p "$(dirname "$OUT")"
   printf '\n## Agent CLI Paths\n\n'
   printf -- '- claude: %s\n' "$(tool_path claude)"
   printf -- '- codex: %s\n' "$(tool_path codex)"
-  printf -- '- gemini: %s\n' "$(tool_path gemini)"
+  printf -- '- agy: %s\n' "$(tool_path agy)"
   printf -- '- gh: %s\n' "$(tool_path gh)"
   printf -- '- uv: %s\n' "$(tool_path uv)"
   printf '\n## Notes\n\n'

@@ -793,22 +793,9 @@ PYEOF
       log_and_print "           Resolve sudo warnings above, then re-run 'setup.sh sync'."
     fi
   fi
-  # gemini-swarm
-  # Check via filesystem only — never invoke `gemini` here. Both
-  # `gemini --list-extensions` and `gemini extensions install` hang when run
-  # inside this script's stdout pipeline (likely an interactive-UI heuristic);
-  # isolated invocations are fine. Extensions are stored under
-  # ~/.gemini/extensions/<name>, so a directory check is sufficient and never
-  # hangs. Fresh install must be done manually:
-  #   gemini extensions install https://github.com/tmdgusya/gemini-swarm --consent
-  if command -v gemini &>/dev/null; then
-    if [ -d "$GEMINI_DIR/extensions/gemini-swarm" ]; then
-      log_and_print "    [OK] gemini-swarm installed"
-    else
-      log_and_print "    [INFO] gemini-swarm not installed — run manually:"
-      log_and_print "      gemini extensions install https://github.com/tmdgusya/gemini-swarm --consent"
-    fi
-  fi
+  # gemini-swarm install logic removed 2026-05-25: Gemini CLI is fully deprecated
+  # in favor of Antigravity (agy). runtimes/claude/commands/gemini-swarm.md
+  # already carries a DEPRECATED notice for the orchestration command.
   # OMC patches — only run if (a) OMC's render.js is present and (b) we're
   # on Linux. The patch script uses GNU `sed -i '...'` syntax which is not
   # compatible with BSD sed on macOS (BSD sed requires `sed -i '' '...'`).

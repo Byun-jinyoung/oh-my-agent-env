@@ -13,7 +13,7 @@ Use local CLI tools only. Do not use MCP servers, app connectors, or plugin conn
 ## When
 
 Use for high-risk diffs or explicit requests: `multi-agent review`, `cross-check`,
-`ask another agent`, `council`, `verify with codex/claude/gemini/pi`.
+`ask another agent`, `council`, `verify with codex/claude/agy/pi`.
 
 ## Reviewer Lenses
 
@@ -31,7 +31,7 @@ If available, prefer installed local agent CLIs:
 
 1. `codex`
 2. `claude`
-3. `gemini`
+3. `agy` (Antigravity CLI; successor to gemini-cli)
 4. `pi` when useful.
 5. Otherwise run current-agent review and clearly say multi-agent tooling unavailable.
 
@@ -41,7 +41,7 @@ unless the user asked for that action.
 ## Before Running
 
 - Read `git status --short` and the relevant `git diff`.
-- Check available CLIs with recorded paths or `command -v codex claude gemini pi`.
+- Check available CLIs with recorded paths or `command -v codex claude agy pi`.
 - Skip unavailable CLIs without failing the review.
 - Include the task goal, changed files, relevant diff, test command/result, and known risks in each review request.
 - Ask for findings only: bugs, regressions, missing tests, unclear contracts, unsafe operations.
