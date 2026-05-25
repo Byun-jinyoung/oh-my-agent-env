@@ -633,7 +633,7 @@ else:
             elif current and line.strip().startswith("runtimes:"):
                 value = line.split(":", 1)[1].strip()
                 reg[current]["runtimes"] = [x.strip() for x in value.strip("[]").split(",") if x.strip()]
-dirs = {"claude": "$CONFIG_DIR/skills", "codex": "$CODEX_DIR/skills", "agents": "$AGENTS_DIR/skills", "gemini": "$GEMINI_DIR/skills"}
+dirs = {"claude": "$CONFIG_DIR/skills", "codex": "$CODEX_DIR/skills", "agents": "$AGENTS_DIR/skills", "antigravity": "$GEMINI_DIR/skills"}
 for name, info in reg.items():
     for rt in info.get("runtimes", []):
         if rt not in dirs: continue
