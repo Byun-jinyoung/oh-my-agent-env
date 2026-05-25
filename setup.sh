@@ -1060,10 +1060,13 @@ PYEOF
     add_mcp "supermemory" "claude mcp add -s user --transport http supermemory https://mcp.supermemory.ai/mcp" ""
   fi
 
-  # [9b] Codex / Gemini MCP registration (for triangle-review + codebase-scan)
-  # serena와 code-review-graph는 ~/.codex/config.toml과 ~/.gemini/settings.json에
-  # 별도 등록되어야 함 (claude mcp add는 Claude Code에만 등록됨)
-  log_and_print "[9b] Codex/Gemini MCP entries"
+  # [9b] Codex / Antigravity MCP registration (for triangle-review + codebase-scan)
+  # serena와 code-review-graph는 ~/.codex/config.toml과
+  # ~/.gemini/config/mcp_config.json에 별도 등록되어야 함
+  # (claude mcp add는 Claude Code에만 등록됨; agy CLI/IDE는 ~/.gemini/config/
+  # mcp_config.json을 shared MCP source of truth로 본다 — top-level
+  # ~/.gemini/settings.json mcpServers는 안 본다.)
+  log_and_print "[9b] Codex/Antigravity MCP entries"
   if command -v python3 &>/dev/null; then
     python3 - "$CODEX_DIR" "$GEMINI_DIR" << 'PYEOF' | sed 's/^/    /'
 import json, os, sys
@@ -1116,7 +1119,25 @@ if added_codex:
 else:
     print(f"[OK] Codex: serena + code-review-graph already in {codex_cfg.name}")
 
-# --- Gemini (JSON, ~/.gemini/settings.json) ---
+# --- Antigravity (shared MCP config at ~/.gemini/config/mcp_config.json) ---
+# agy CLI and Antigravity IDE both read this file as the global/shared
+# source of truth for MCP servers (per official Antigravity docs and
+# verified via /mcp output). ~/.gemini/settings.json mcpServers (the
+# pre-2026-05-19 gemini-cli location) is NOT picked up by agy.
+# Hooks below still write to ~/.gemini/settings.json because context-mode's
+# hook system was built for the gemini-cli hook schema; that's a separate
+# concern from MCP routing.
+agy_mcp_cfg = Path(gemini_dir) / "config" / "mcp_config.json"
+agy_mcp_cfg.parent.mkdir(parents=True, exist_ok=True)
+agy_data = {}
+if agy_mcp_cfg.exists() and agy_mcp_cfg.stat().st_size > 0:
+    try:
+        agy_data = json.loads(agy_mcp_cfg.read_text())
+    except json.JSONDecodeError:
+        print(f"[WARN] {agy_mcp_cfg} unparseable — skipping mcp register (back up + edit manually)")
+        agy_data = None
+
+# settings.json is still loaded for the hooks block that follows
 gemini_cfg = Path(gemini_dir) / "settings.json"
 gemini_cfg.parent.mkdir(parents=True, exist_ok=True)
 if gemini_cfg.exists():
@@ -1143,21 +1164,49 @@ def get_cm_paths():
 
 cm_path, cm_bin = get_cm_paths()
 
-mcp_servers = data.setdefault("mcpServers", {})
 added_gemini = []
-for name, spec in WANTED.items():
-    # Force update context-mode to ensure absolute path integrity
-    if name == "context-mode" and cm_path:
-        new_spec = {"command": "node", "args": [cm_path]}
-        if mcp_servers.get(name) != new_spec:
-            mcp_servers[name] = new_spec
-            added_gemini.append(name)
-        continue
-        
-    if name in mcp_servers:
-        continue
-    mcp_servers[name] = spec
-    added_gemini.append(name)
+if agy_data is not None:
+    mcp_servers = agy_data.setdefault("mcpServers", {})
+
+    # Step 1: preserve any third-party mcpServers that were in the legacy
+    # ~/.gemini/settings.json. Merge them into the new shared location BEFORE
+    # stripping the legacy key, so user-managed entries (e.g. agentmemory)
+    # don't get lost. cc-bootstrap-managed entries (WANTED below) win on
+    # conflict — they always reflect the canonical spec.
+    legacy_mcp = data.get("mcpServers", {}) if isinstance(data, dict) else {}
+    preserved = []
+    for name, spec in legacy_mcp.items():
+        if name not in mcp_servers:
+            mcp_servers[name] = spec
+            preserved.append(name)
+
+    # Step 2: apply cc-bootstrap's WANTED entries (overwrites legacy entries
+    # of the same name with the canonical spec).
+    for name, spec in WANTED.items():
+        # Force update context-mode to ensure absolute path integrity
+        if name == "context-mode" and cm_path:
+            new_spec = {"command": "node", "args": [cm_path]}
+            if mcp_servers.get(name) != new_spec:
+                mcp_servers[name] = new_spec
+                added_gemini.append(name)
+            continue
+
+        if name in mcp_servers and name not in preserved:
+            continue
+        mcp_servers[name] = spec
+        added_gemini.append(name)
+
+    agy_mcp_cfg.write_text(json.dumps(agy_data, indent=2))
+
+    # Step 3: strip the now-redundant mcpServers from the legacy settings.json.
+    # agy and Antigravity IDE don't read this location for MCPs anyway; leaving
+    # the entries there is misleading on doctor output and on future debugging.
+    if legacy_mcp:
+        del data["mcpServers"]
+        moved_label = (", ".join(legacy_mcp.keys())) or "(none)"
+        if preserved:
+            print(f"[OK] preserved third-party mcpServers ({', '.join(preserved)}) during migration")
+        print(f"[OK] migrated mcpServers ({moved_label}) out of {gemini_cfg.name} into config/mcp_config.json")
 
 # Gemini Hooks for context-mode
 hooks = data.setdefault("hooks", {})
@@ -1596,20 +1645,39 @@ cmd_doctor() {
     if [ -f "$file" ] && grep -qF "$pat" "$file"; then echo "  [OK] $label"
     else echo "  [MISS] $label (run setup.sh sync)"; WARNINGS=$((WARNINGS+1)); fi
   done
-  if [ -f "$GEMINI_DIR/settings.json" ] && command -v python3 &>/dev/null; then
-    python3 - "$GEMINI_DIR/settings.json" << 'PYEOF'
+  # Antigravity MCP check — primary location is ~/.gemini/config/mcp_config.json
+  # (read by agy CLI and Antigravity IDE). The pre-2026-05-19 top-level
+  # ~/.gemini/settings.json is checked too as a transition guard: stale
+  # entries there are reported as WARN so users know to migrate.
+  if command -v python3 &>/dev/null; then
+    python3 - "$GEMINI_DIR/config/mcp_config.json" "$GEMINI_DIR/settings.json" << 'PYEOF'
 import json, sys
-try:
-    d = json.loads(open(sys.argv[1]).read())
-    servers = d.get("mcpServers", {})
-    for name in ("serena", "code-review-graph"):
-        if name in servers: print(f"  [OK] antigravity {name}")
-        else: print(f"  [MISS] antigravity {name}")
-except Exception as e:
-    print(f"  [WARN] antigravity settings.json unparseable: {e}")
+from pathlib import Path
+
+shared = Path(sys.argv[1])
+legacy = Path(sys.argv[2])
+
+shared_servers = {}
+if shared.exists() and shared.stat().st_size > 0:
+    try:
+        shared_servers = json.loads(shared.read_text()).get("mcpServers", {})
+    except Exception as e:
+        print(f"  [WARN] {shared} unparseable: {e}")
+
+for name in ("serena", "code-review-graph"):
+    if name in shared_servers: print(f"  [OK] antigravity {name}")
+    else: print(f"  [MISS] antigravity {name} (expected in config/mcp_config.json — run setup.sh sync)")
+
+# Legacy location: warn if old gemini-cli settings.json still has mcpServers
+if legacy.exists():
+    try:
+        legacy_servers = json.loads(legacy.read_text()).get("mcpServers", {})
+        if legacy_servers:
+            stale = ", ".join(sorted(legacy_servers.keys()))
+            print(f"  [WARN] stale mcpServers in {legacy.name}: {stale} — agy ignores these. Run setup.sh sync to migrate.")
+    except Exception:
+        pass
 PYEOF
-  else
-    echo "  [MISS] antigravity settings.json"; WARNINGS=$((WARNINGS+1))
   fi
   if [ -f "$CODEX_DIR/hooks.json" ] && grep -qF "context-mode hook codex pretooluse" "$CODEX_DIR/hooks.json" \
     && grep -qF "context-mode hook codex posttooluse" "$CODEX_DIR/hooks.json" \
