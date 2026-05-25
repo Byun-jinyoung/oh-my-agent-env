@@ -1208,44 +1208,52 @@ if agy_data is not None:
             print(f"[OK] preserved third-party mcpServers ({', '.join(preserved)}) during migration")
         print(f"[OK] migrated mcpServers ({moved_label}) out of {gemini_cfg.name} into config/mcp_config.json")
 
-# Gemini Hooks for context-mode
-hooks = data.setdefault("hooks", {})
-gemini_hooks = {
-    "BeforeTool": {
-        "matcher": "run_shell_command|read_file|read_many_files|grep_search|search_file_content|web_fetch|activate_skill|mcp__plugin_context-mode",
-        "command": f"{cm_bin} hook gemini-cli beforetool"
-    },
-    "AfterTool": { "command": f"{cm_bin} hook gemini-cli aftertool" },
-    "PreCompress": { "command": f"{cm_bin} hook gemini-cli precompress" },
-    "SessionStart": { "command": f"{cm_bin} hook gemini-cli sessionstart" }
-}
+# --- Strip cc-bootstrap-managed gemini-cli hooks from legacy settings.json ---
+# agy does not read settings.json hooks (verified: 0 fires across agy logs;
+# import_manifest excludes hooks). The Gemini CLI does still read this file,
+# but the user's policy is full transition to agy. So we stop writing
+# context-mode gemini-cli hooks here and selectively strip any we previously
+# wrote. Third-party hook entries (e.g., RTK's rtk-hook-gemini.sh) are
+# preserved — the mcpServers regression taught us not to nuke the whole key.
+hooks_data = data.get("hooks", {})
+stripped = []
+if isinstance(hooks_data, dict):
+    for event in list(hooks_data.keys()):
+        wrappers = hooks_data.get(event, [])
+        if not isinstance(wrappers, list):
+            continue
+        new_wrappers = []
+        for w in wrappers:
+            if not isinstance(w, dict):
+                new_wrappers.append(w)
+                continue
+            hs = w.get("hooks", [])
+            kept = [h for h in hs
+                    if not (isinstance(h, dict)
+                            and "context-mode hook gemini-cli" in str(h.get("command", "")))]
+            if not kept:
+                # entire wrapper was a cc-bootstrap entry — drop it
+                stripped.append(f"{event}")
+                continue
+            if len(kept) != len(hs):
+                w["hooks"] = kept
+                stripped.append(f"{event}(partial)")
+            new_wrappers.append(w)
+        if new_wrappers:
+            hooks_data[event] = new_wrappers
+        else:
+            del hooks_data[event]
+    if not hooks_data:
+        data.pop("hooks", None)
 
-for event, spec in gemini_hooks.items():
-    existing = hooks.setdefault(event, [])
-    # Integrity check: Ensure any existing context-mode hook uses the absolute binary path
-    updated_any = False
-    for h_wrapper in existing:
-        for h in h_wrapper.get("hooks", []):
-            if "context-mode hook gemini-cli" in h.get("command", ""):
-                cmd = h["command"]
-                if not cmd.startswith("/") and cm_bin.startswith("/"):
-                    h["command"] = cmd.replace("context-mode", cm_bin)
-                    updated_any = True
-    
-    if updated_any:
-        added_gemini.append(f"hook-fix:{event}")
-
-    if not any(spec["command"] in str(h) for h in existing):
-        h_obj = {"hooks": [{"type": "command", "command": spec["command"]}]}
-        if "matcher" in spec: h_obj["matcher"] = spec["matcher"]
-        existing.append(h_obj)
-        added_gemini.append(f"hook:{event}")
-
-if added_gemini:
+# Write back if mcpServers strip OR hooks strip changed anything
+if bool(legacy_mcp) or stripped:
     gemini_cfg.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    print(f"[OK] Gemini: updated {', '.join(added_gemini)}")
-else:
-    print(f"[OK] Gemini: context-mode already configured")
+
+if stripped:
+    print(f"[OK] stripped cc-bootstrap-managed gemini-cli hooks ({', '.join(stripped)}) from settings.json — agy ignores them; gemini-cli still reads any remaining hooks")
+elif not legacy_mcp:
+    print("[OK] Gemini: settings.json already clean")
 PYEOF
   else
     log_and_print "    [SKIP] python3 not available"
