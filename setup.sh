@@ -1579,7 +1579,7 @@ cmd_doctor() {
   fi
 
   echo ""
-  echo "[ MCP servers (Codex/Gemini for triangle-review) ]"
+  echo "[ MCP servers (Codex/Antigravity for triangle-review) ]"
   if [ -f "$CODEX_DIR/config.toml" ] && grep -qF "multi_agent = true" "$CODEX_DIR/config.toml"; then
     echo "  [OK] codex multi_agent"
   else
@@ -1603,13 +1603,13 @@ try:
     d = json.loads(open(sys.argv[1]).read())
     servers = d.get("mcpServers", {})
     for name in ("serena", "code-review-graph"):
-        if name in servers: print(f"  [OK] gemini {name}")
-        else: print(f"  [MISS] gemini {name}")
+        if name in servers: print(f"  [OK] antigravity {name}")
+        else: print(f"  [MISS] antigravity {name}")
 except Exception as e:
-    print(f"  [WARN] gemini settings.json unparseable: {e}")
+    print(f"  [WARN] antigravity settings.json unparseable: {e}")
 PYEOF
   else
-    echo "  [MISS] gemini settings.json"; WARNINGS=$((WARNINGS+1))
+    echo "  [MISS] antigravity settings.json"; WARNINGS=$((WARNINGS+1))
   fi
   if [ -f "$CODEX_DIR/hooks.json" ] && grep -qF "context-mode hook codex pretooluse" "$CODEX_DIR/hooks.json" \
     && grep -qF "context-mode hook codex posttooluse" "$CODEX_DIR/hooks.json" \
