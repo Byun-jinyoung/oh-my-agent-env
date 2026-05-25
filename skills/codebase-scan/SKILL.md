@@ -27,10 +27,15 @@ description: Orchestrated codebase comprehension for unfamiliar projects. Runs c
 | 모드 | 소요 | 실행 Phase |
 |---|---|---|
 | `quick` | ~1분 | 0, 1 |
-| `standard` (기본) | ~5분 | 0, 1, 2, 3, 5 |
-| `deep` | ~20분+ | 0, 1, 2, 3, 4, 5 |
+| `standard` (기본) | ~5분 | 0, 1, 2, 2.5, 3, 5, 6 |
+| `deep` | ~20분+ | 0, 1, 2, 2.5, 3, 4, 4.5, 5, 6 |
 
 모드 미지정 시: 파일 수 < 20 → quick, ≤ 500 → standard, > 500 → standard (deep은 명시 요청 필요)
+
+**신규 Phase (2.5 / 4.5 / 6)**:
+- **2.5** — Data flow & types: 함수 signature, return type, dataclass/pydantic/TypedDict/torch nn.Module 필드, tensor shape 주석 캡처
+- **4.5** — Multi-tool hub consensus: graphify + CRG + codex-mcp(+gemini-mcp) 합의 (CONSENSUS/MAJORITY/SINGLE/DEBATE)
+- **6** — Publishing: graphify HTML + Obsidian `Research/{proj}/codemap/` wikilink 발행
 
 ## 사전 조건
 
@@ -89,6 +94,24 @@ python3 ~/.claude/skills/codebase-scan/scripts/extract_l1.py <repo_root>
 
 **전체 파일 스캔 지양**: pilot에서 top-level 심볼 100% 동일 확인됨. 샘플링으로 충분.
 
+## Phase 2.5 — Data Flow & Types (standard/deep, Python 한정)
+
+```bash
+python3 ~/.claude/skills/codebase-scan/scripts/extract_dataflow.py <repo_root> --top 15
+```
+
+산출물: `.claude/codebase-scan/dataflow/{functions.json, dataflow.md}`
+
+추출 내용:
+- 함수/메서드 signature: 각 파라미터의 `name: type`, return annotation
+- 데이터 구조: `@dataclass` / `pydantic.BaseModel` / `TypedDict` / `NamedTuple` 정의의 필드 + 타입
+- ML 보강: `torch.nn.Module.forward`는 `kind=forward`로 별도 표시. 본문의 `# (B, N, D)` 형식 shape 주석을 docstring에 첨부
+- 호출 그래프 1-hop: 각 함수가 호출하는 함수명 최대 12개
+
+선정 기준: L1.json blast 상위 N개 파일 → 없으면 `src/**/*.py` 전체 fallback.
+
+비-Python 프로젝트: 이 Phase를 스킵하고 `functions.json = {}`로 빈 파일 작성.
+
 ## Phase 3 — Evidence IDs + audit baseline (standard/deep)
 
 ```bash
@@ -142,6 +165,54 @@ python3 ~/.claude/skills/codebase-scan/scripts/audit_claims.py --check <repo_roo
 
 **Step 4c** (bounded retry): audit 실패 시 audit-report.md를 gsd 프롬프트에 append해서 **1회만** 재호출. 두 번째도 실패하면 해당 프로즈를 Phase 5의 Narrative에서 제외하고 `UNVERIFIED (audit failed)` 섹션으로 격리.
 
+## Phase 4.5 — Multi-tool Hub Consensus (deep)
+
+여러 분석 도구의 hub/centrality 의견을 모아 합의 라벨을 부여한다.
+
+### Step 4.5a — graphify 실행
+```bash
+graphify <repo_root> --no-viz
+```
+산출: `<repo_root>/graphify-out/graph.json`
+
+### Step 4.5b — codex-mcp 2-round 질의 (Claude가 직접 수행)
+
+세션 안에서 `mcp__codex-mcp__ask_codex` 호출:
+
+**Round 1** (초안 요청):
+```
+프롬프트: "이 repo의 top-5 hub 파일을 JSON으로 답하라.
+스키마: {\"hubs\":[{\"file\":\"<rel/path.py>\",\"rank\":<int>,\"why\":\"<짧은 근거>\"}]}.
+근거는 import/호출 빈도, 코드량, 데이터 흐름의 중심성 기준."
+```
+
+**Round 2** (반론/보완):
+Round 1 응답 + CRG L1-facts.md + graphify hubs를 함께 제시하며:
+```
+"이 hub 후보들을 본 후, 당신의 초안을 수정할 부분이 있는가?
+누락된 hub나, 잘못 포함된 항목이 있다면 동일 JSON 스키마로 갱신본을 내라."
+```
+
+Round 2 응답을 `.claude/codebase-scan/consensus/codex.json`에 저장.
+
+(선택) gemini-mcp도 동일 프로토콜로 호출 → `gemini.json` 저장.
+
+### Step 4.5c — Consensus 계산
+```bash
+python3 ~/.claude/skills/codebase-scan/scripts/consensus_hubs.py \
+  --crg <repo_root>/.claude/codebase-scan/evidence/L1.json \
+  --graphify <repo_root>/graphify-out/graph.json \
+  --codex <repo_root>/.claude/codebase-scan/consensus/codex.json \
+  --top-k 10 \
+  --out <repo_root>/.claude/codebase-scan/consensus
+```
+
+산출: `consensus/{hubs-consensus.md, hubs-consensus.json, disagreements.md}`
+
+라벨 규칙: top-10 중 ≥3 sources = **CONSENSUS** / 2 = **MAJORITY** / 1 = **SINGLE**. rank-1 후보가 도구별로 다르면 **DEBATE** 플래그.
+
+실패 시: ≥2 sources 미달이면 Phase 4.5 스킵 + 로그에 사유 기록.
+
 ## Phase 5 — 통합 산출물
 
 `.claude/codebase-scan/CODEBASE-MAP.md` 작성. confidence 라벨 규칙 **결정 테이블**:
@@ -158,6 +229,37 @@ python3 ~/.claude/skills/codebase-scan/scripts/audit_claims.py --check <repo_roo
 각 섹션 헤더에 confidence 라벨을 표기. Narrative 문장은 원본 `[EVIDENCE: ...]` 태그를 유지해야 함.
 
 사용자가 `/init` 또는 `/tutor-setup`을 원하면 이 파일을 입력으로 제공.
+
+## Phase 6 — Publishing (standard/deep)
+
+### Step 6a — HTML 인터랙티브 리포트
+
+Phase 4.5에서 `graphify --no-viz`로 graph.json만 뽑았다면, HTML이 필요할 때 추가로:
+```bash
+graphify <repo_root>            # default가 HTML 포함이라 재실행 가능. --update로 증분.
+```
+산출: `<repo_root>/graphify-out/index.html` + JSON + GRAPH_REPORT.md.
+
+### Step 6b — Obsidian vault 발행
+
+```bash
+python3 ~/.claude/skills/codebase-scan/scripts/publish_obsidian.py <repo_root> \
+  --vault ~/PROject/vault \
+  --proj <project_slug> \
+  --subdir Research
+```
+
+산출: `<vault>/Research/<proj>/codemap/`
+- `index.md` — entry-point, wikilink 허브 (frontmatter `tags: [codemap, <proj>]`)
+- `architecture.md` — Phase 5 `CODEBASE-MAP.md` 복사
+- `dataflow.md` — Phase 2.5 dataflow 표
+- `facts.md` — Phase 3 L1-facts
+- `consensus.md` — Phase 4.5 합의 표 (있으면)
+- `html-report.md` — graphify HTML 경로 안내
+
+**다음 세션에서 LLM 사용법**: 새 세션 시작 시 `Research/<proj>/codemap/index.md`를 먼저 읽음 → 작업 관련 wikilink만 따라가서 토큰 절약. 코드 재스캔 불필요.
+
+**주의 — vault 정책**: 이 repo CLAUDE.md는 보통 `Research/` 수정을 금지하나, codemap 출력은 사용자 명시 예외로 허용된다. 다른 파일은 건드리지 말 것.
 
 ## 상호보완 ↔ 교차검증 요약
 
