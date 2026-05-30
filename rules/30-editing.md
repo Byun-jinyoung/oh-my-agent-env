@@ -11,6 +11,7 @@
 ## 명령 및 도구 사용
 
 - 검색은 `rg`, 파일 목록은 `rg --files`를 우선한다.
+- 토큰 사용량이 큰 명령(`git status`/`git log`/`ls -R`/대용량 파일 dump 등)은 `rtk` 또는 `context-mode` sandbox 실행으로 raw output을 컨텍스트 밖에 둔다. 분석은 결과 요약·검색으로 접근한다.
 - 전역/user config를 바꾸는 명령은 임시 디렉터리나 격리된 환경변수로 먼저 검증한다.
 - 프로젝트 밖에 쓰기, 패키지 설치, 네트워크 호출, 실제 홈 설정 변경은 민감한 작업으로 취급한다.
 - `rm`, `git reset`, checkout/revert 같은 destructive command는 명시 요청이나 승인 없이 실행하지 않는다.

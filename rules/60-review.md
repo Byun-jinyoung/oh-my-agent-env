@@ -14,3 +14,4 @@
 - 각 subagent에는 좁고 구체적인 작업을 준다.
 - agent 간 작업을 중복시키지 않는다.
 - subagent 결과는 요약하고, 불일치나 미해결점을 표시한다.
+- 사용자가 codex cross-review를 지시하면, 원본 사용자 지시 사항을 그대로 주입해 codex와 multi-turn 대화로 cross-review를 진행하고, 합의/이견/미해결점을 요약해 보고한다.
