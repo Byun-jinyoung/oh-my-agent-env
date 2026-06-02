@@ -35,7 +35,7 @@ description: Orchestrated codebase comprehension for unfamiliar projects. Runs c
 **신규 Phase (2.5 / 4.5 / 6)**:
 - **2.5** — Data flow & types: 함수 signature, return type, dataclass/pydantic/TypedDict/torch nn.Module 필드, tensor shape 주석 캡처
 - **4.5** — Multi-tool hub consensus: graphify + CRG + codex-mcp(+antigravity-mcp) 합의 (CONSENSUS/MAJORITY/SINGLE/DEBATE)
-- **6** — Publishing: graphify HTML + Obsidian `Research/{proj}/codemap/` wikilink 발행
+- **6** — Publishing: 기본 `<repo>/docs/codemap/` (repo-internal, multi-machine 호환), 옵션 vault 통합 `--vault <path>`
 
 ## 사전 조건
 
@@ -253,13 +253,22 @@ graphify update <repo_root>     # 변경된 파일만 재추출 (idempotent)
 ```
 산출: `<repo_root>/graphify-out/{graph.json, graph.html, GRAPH_REPORT.md}`.
 
-### Step 6b — Obsidian vault 발행
+### Step 6b — codemap 발행 (Obsidian 호환)
+
+**기본 (multi-machine 호환, repo-internal)**:
+
+```bash
+python3 ~/.claude/skills/codebase-scan/scripts/publish_obsidian.py <repo_root>
+```
+
+산출: `<repo_root>/docs/codemap/` — repo 안에 self-contained. README에 link 추가 권장.
+Obsidian으로 보려면 `<repo_root>/docs/` (또는 `<repo_root>` 자체)를 "Open Folder as Vault"로 열기.
+
+**옵션 (본 머신 vault 통합 — cross-repo 탐색용)**:
 
 ```bash
 python3 ~/.claude/skills/codebase-scan/scripts/publish_obsidian.py <repo_root> \
-  --vault ~/PROject/vault \
-  --proj <project_slug> \
-  --subdir Research
+  --vault ~/PROject/vault --proj <project_slug>
 ```
 
 산출: `<vault>/Research/<proj>/codemap/`

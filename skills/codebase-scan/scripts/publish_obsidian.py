@@ -347,12 +347,25 @@ def write_html_report(dst_dir: Path, proj: str, repo: Path, html_rel: str) -> No
 
 
 def main() -> int:
-    p = argparse.ArgumentParser()
-    p.add_argument("repo", type=Path, help="repo root (must contain .codemap/)")
-    p.add_argument("--vault", type=Path, required=True, help="Obsidian vault root")
-    p.add_argument("--proj", type=str, default=None, help="project slug (defaults to repo name)")
+    p = argparse.ArgumentParser(
+        description=(
+            "Phase 6b — Publish codebase-scan artifacts as a wikilinked Obsidian-compatible "
+            "codemap. Default destination is <repo>/docs/codemap/ (portable across machines); "
+            "pass --vault for the legacy vault layout."
+        )
+    )
+    p.add_argument("repo", type=Path, help="repo root (must contain .claude/codebase-scan/)")
+    p.add_argument("--vault", type=Path, default=None,
+                   help="(optional) Obsidian vault root. When given, publishes to "
+                        "<vault>/<subdir>/<proj>/codemap/ (legacy layout). "
+                        "When omitted, publishes to <repo>/docs/codemap/ (portable default).")
+    p.add_argument("--proj", type=str, default=None,
+                   help="project slug for frontmatter (defaults to repo name). "
+                        "Also names the vault subdir when --vault given.")
     p.add_argument("--subdir", type=str, default="Research",
-                   help="vault subdir under which to write (default: Research)")
+                   help="vault subdir under which to write (only used with --vault; default: Research)")
+    p.add_argument("--out", type=Path, default=None,
+                   help="explicit output dir override (highest precedence; takes over --vault and default)")
     p.add_argument("--force", action="store_true",
                    help="overwrite existing codemap dir without warning")
     args = p.parse_args()
@@ -369,7 +382,15 @@ def main() -> int:
     if not proj or proj in (".", ".."):
         print(f"[err] invalid --proj value: {raw_proj!r}", file=sys.stderr)
         return 2
-    dst_dir = args.vault / args.subdir / proj / "codemap"
+
+    # Destination precedence: --out > --vault layout > repo-internal default.
+    if args.out is not None:
+        dst_dir = args.out
+    elif args.vault is not None:
+        dst_dir = args.vault / args.subdir / proj / "codemap"
+    else:
+        dst_dir = repo / "docs" / "codemap"
+
     if dst_dir.exists() and any(dst_dir.iterdir()) and not args.force:
         print(
             f"[warn] {dst_dir} already exists and is non-empty; "
