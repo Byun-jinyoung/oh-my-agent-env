@@ -77,9 +77,36 @@ def gather(repo_root: Path):
     base_counts = Counter(short(r["target_qualified"]) for r in inh_rows)
     top_bases = base_counts.most_common(10)
 
+    # CRG community_summaries schema (verified on graph.db 2026-05):
+    #   community_id INTEGER, name TEXT, purpose TEXT, key_symbols TEXT (JSON list),
+    #   risk TEXT, size INTEGER, dominant_language TEXT
+    # Older schemas may differ; we fall back to [] on OperationalError.
     try:
-        communities = list(con.execute(
-            "SELECT id, size, summary FROM community_summaries ORDER BY size DESC LIMIT 5"))
+        rows = con.execute(
+            "SELECT community_id, name, purpose, key_symbols, size, dominant_language "
+            "FROM community_summaries ORDER BY size DESC LIMIT 10"
+        ).fetchall()
+        communities = []
+        for r in rows:
+            try:
+                symbols = json.loads(r["key_symbols"]) if r["key_symbols"] else []
+            except (json.JSONDecodeError, TypeError):
+                symbols = []
+            # Dedup while preserving order; CRG may repeat e.g. "main" across files.
+            seen, top_symbols = set(), []
+            for s in symbols:
+                if s not in seen:
+                    seen.add(s); top_symbols.append(s)
+                if len(top_symbols) >= 3:
+                    break
+            communities.append({
+                "community_id": r["community_id"],
+                "name": r["name"],
+                "purpose": r["purpose"] or "",
+                "size": r["size"],
+                "language": r["dominant_language"] or "",
+                "top_symbols": top_symbols,
+            })
     except sqlite3.OperationalError:
         communities = []
     con.close()
@@ -110,9 +137,14 @@ def build_facts_md(repo_root: Path, gathered) -> str:
         lines.append(f"| INHERIT-{i:02d} | `{base}` | {c} |")
     if communities:
         lines += ["", "## Detected communities\n",
-                  "| ID | Community | Size | Summary |", "|---|---:|---:|---|"]
-        for i, row in enumerate(communities, 1):
-            lines.append(f"| COMM-{i:02d} | {row['id']} | {row['size']} | {row['summary'] or '-'} |")
+                  "| ID | Name | Size | Lang | Purpose | Top symbols |",
+                  "|---|---|---:|---|---|---|"]
+        for i, c in enumerate(communities, 1):
+            syms = ", ".join(f"`{s}`" for s in c["top_symbols"]) or "—"
+            lines.append(
+                f"| COMM-{i:02d} | `{c['name']}` | {c['size']} | "
+                f"{c['language'] or '—'} | {c['purpose'] or '—'} | {syms} |"
+            )
     lines += [
         "", "## Audit rules for L3 prose\n",
         "Every claim with architectural keywords must end with `[EVIDENCE: <ID>[, <ID>]]`.",
@@ -136,9 +168,16 @@ def build_evidence_json(repo_root: Path, gathered) -> dict:
         ev[f"HUB-{i:02d}"] = {"type": "HUB", "symbol": short(q), "qualified": q, "calls": c}
     for i, (base, c) in enumerate(top_bases, 1):
         ev[f"INHERIT-{i:02d}"] = {"type": "INHERIT", "base": base, "subclass_count": c}
-    for i, row in enumerate(communities, 1):
-        ev[f"COMM-{i:02d}"] = {"type": "COMM", "community_id": row["id"],
-                               "size": row["size"], "summary": row["summary"] or ""}
+    for i, c in enumerate(communities, 1):
+        ev[f"COMM-{i:02d}"] = {
+            "type": "COMM",
+            "community_id": c["community_id"],
+            "name": c["name"],
+            "purpose": c["purpose"],
+            "size": c["size"],
+            "language": c["language"],
+            "top_symbols": c["top_symbols"],
+        }
     return {
         "repo": str(repo_root),
         "generated_at": datetime.now(timezone.utc).isoformat(),

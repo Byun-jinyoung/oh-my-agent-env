@@ -5,6 +5,12 @@ Usage:
   extract_l1.py <repo_root>
 
 Output: <repo_root>/.claude/codebase-scan/evidence/L1.json
+
+NOTE: This script only emits L1.json. To also generate L1-facts.md and
+L1-evidence.json (the human/audit-facing files), run Phase 3:
+  python3 ~/.claude/skills/codebase-scan/scripts/audit_claims.py --emit-evidence <repo>
+audit_claims.py reads from the same CRG graph.db and is the canonical source
+for those two files (see SKILL.md Phase 3).
 """
 import json
 import sqlite3
@@ -93,6 +99,11 @@ def main() -> int:
     nodes = sum(data["node_kinds"].values())
     edges = sum(data["edge_kinds"].values())
     print(f"L1 extracted: {files} files, {nodes} nodes, {edges} edges -> {out}")
+    print(
+        "[next] for L1-facts.md + L1-evidence.json run Phase 3:\n"
+        f"       audit_claims.py --emit-evidence {repo_root}",
+        file=sys.stderr,
+    )
     return 0
 
 

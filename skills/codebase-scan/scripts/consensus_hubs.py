@@ -3,7 +3,7 @@
 Phase 4.5 — Multi-tool consensus on hub files.
 
 Inputs (each optional but ≥2 required):
-  --crg <path>       L1.json (or L1-evidence.json) from code-review-graph
+  --crg-l1 <path>    L1.json (or L1-evidence.json) from code-review-graph (alias: --crg, deprecated)
   --graphify <path>  graph.json from graphify (graphify-out/graph.json)
   --codex <path>     JSON file with codex-mcp response: {"hubs":[{"file":..,"rank":..}, ...]}
   --antigravity <path>  JSON file with antigravity-mcp response (same schema)
@@ -29,10 +29,46 @@ from collections import defaultdict
 from pathlib import Path
 
 
+class SourceError(ValueError):
+    """Raised when an input source file is unreadable or has the wrong shape."""
+
+
+def _safe_load_json(path: Path, source_label: str) -> dict:
+    """Read a JSON file, fail fast with a clear message on bad input.
+
+    `source_label` is e.g. 'crg' so the error tells the user which --xxx flag
+    pointed at the bad file. UnicodeDecodeError catches the `.db` mistake.
+    """
+    if path.suffix.lower() == ".db":
+        raise SourceError(
+            f"--{source_label} expects a JSON file (L1.json / graph.json), "
+            f"not a SQLite database. Got: {path}"
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as e:
+        raise SourceError(
+            f"--{source_label}: {path} is not UTF-8 text "
+            f"(looks like a binary file): {e}"
+        ) from e
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise SourceError(
+            f"--{source_label}: {path} is not valid JSON: {e}"
+        ) from e
+    if not isinstance(data, dict):
+        raise SourceError(
+            f"--{source_label}: top-level JSON in {path} must be an object, "
+            f"got {type(data).__name__}"
+        )
+    return data
+
+
 def load_crg_hubs(path: Path, top_k: int) -> list[str]:
     if not path.exists():
         return []
-    data = json.loads(path.read_text())
+    data = _safe_load_json(path, "crg")
     # CRG L1.json uses 'blast' for file-level impact ranking (file_path field).
     # Some variants emit 'BLAST'/'hubs' with {file|path|name}.
     for key in ("blast", "BLAST"):
@@ -64,7 +100,7 @@ def load_crg_hubs(path: Path, top_k: int) -> list[str]:
 def load_graphify_hubs(path: Path, top_k: int) -> list[str]:
     if not path.exists():
         return []
-    data = json.loads(path.read_text())
+    data = _safe_load_json(path, "graphify")
     nodes = data.get("nodes", [])
     # graphify uses 'links' (networkx-style) more often than 'edges'
     edges = data.get("links") or data.get("edges") or []
@@ -106,10 +142,10 @@ def load_graphify_hubs(path: Path, top_k: int) -> list[str]:
     return [f for f, _ in ranked[:top_k]]
 
 
-def load_generic_hubs(path: Path, top_k: int) -> list[str]:
+def load_generic_hubs(path: Path, top_k: int, source_label: str = "generic") -> list[str]:
     if not path.exists():
         return []
-    data = json.loads(path.read_text())
+    data = _safe_load_json(path, source_label)
     items = data.get("hubs") or data.get("top_files") or []
     out = []
     for it in items[:top_k]:
@@ -235,36 +271,131 @@ def render_md(result: dict) -> tuple[str, str]:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser()
-    p.add_argument("--crg", type=Path, default=None)
-    p.add_argument("--graphify", type=Path, default=None)
-    p.add_argument("--codex", type=Path, default=None)
-    p.add_argument("--antigravity", type=Path, default=None)
+    p = argparse.ArgumentParser(
+        description=(
+            "Phase 4.5 — Multi-tool consensus on hub files. "
+            "Pass `repo` as a positional to auto-derive --crg-l1/--graphify/--out "
+            "from the standard skill layout."
+        )
+    )
+    p.add_argument(
+        "repo", type=Path, nargs="?", default=None,
+        help="repo root (optional). If given, defaults are derived: "
+             "--crg-l1 = <repo>/.claude/codebase-scan/evidence/L1.json, "
+             "--graphify = <repo>/graphify-out/graph.json, "
+             "--out = <repo>/.claude/codebase-scan/consensus.",
+    )
+    # `--crg-l1` is the preferred name (reflects the expected L1.json input).
+    # `--crg` kept as alias for back-compat; deprecation warning emitted below.
+    p.add_argument(
+        "--crg-l1", "--crg", dest="crg", type=Path, default=None,
+        help="CRG L1.json path (NOT graph.db). Default: <repo>/.claude/codebase-scan/evidence/L1.json",
+    )
+    p.add_argument(
+        "--graphify", type=Path, default=None,
+        help="graphify graph.json path. Default: <repo>/graphify-out/graph.json",
+    )
+    p.add_argument(
+        "--codex", type=Path, default=None,
+        help="codex-mcp hubs JSON (no default — pass explicit path)",
+    )
+    p.add_argument(
+        "--antigravity", type=Path, default=None,
+        help="antigravity-mcp hubs JSON (no default — pass explicit path)",
+    )
     p.add_argument("--top-k", type=int, default=10)
-    p.add_argument("--out", type=Path, required=True)
+    p.add_argument(
+        "--out", type=Path, default=None,
+        help="output dir. Default: <repo>/.claude/codebase-scan/consensus. Required if `repo` not given.",
+    )
     args = p.parse_args()
 
+    # Deprecation notice for old flag name (sys.argv detection — argparse aliases share dest)
+    has_old = "--crg" in sys.argv
+    has_new = "--crg-l1" in sys.argv
+    if has_old and has_new:
+        print(
+            "[warn] both --crg and --crg-l1 given; argparse keeps the LAST one. "
+            "Use --crg-l1 only.",
+            file=sys.stderr,
+        )
+    elif has_old:
+        print(
+            "[warn] --crg is deprecated; prefer --crg-l1 (the input is L1.json, not graph.db)",
+            file=sys.stderr,
+        )
+
+    # Derive defaults from positional repo. Explicit `--xxx` overrides the
+    # derived default; warn so the override is visible (debuggability per round-2).
+    if args.repo:
+        repo = args.repo.resolve()
+        if not repo.is_dir():
+            print(f"[err] repo path is not a directory: {repo}", file=sys.stderr)
+            return 2
+        scan_root = repo / ".claude" / "codebase-scan"
+        derived = {
+            "--crg-l1":   ("crg",      scan_root / "evidence" / "L1.json"),
+            "--graphify": ("graphify", repo / "graphify-out" / "graph.json"),
+            "--out":      ("out",      scan_root / "consensus"),
+        }
+        for flag, (attr, default_path) in derived.items():
+            if getattr(args, attr) is None:
+                setattr(args, attr, default_path)
+            else:
+                print(
+                    f"[warn] {flag} override active: using {getattr(args, attr)} "
+                    f"(skill default would have been {default_path})",
+                    file=sys.stderr,
+                )
+
+    if args.out is None:
+        print(
+            "[err] --out is required when no `repo` positional is given",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Load each source. Failures degrade gracefully unless the user explicitly
+    # passed the path — in that case we surface the error rather than silently
+    # dropping the source.
+    loaders = [
+        ("crg",          args.crg,         load_crg_hubs,      "--crg-l1"),
+        ("graphify",     args.graphify,    load_graphify_hubs, "--graphify"),
+        ("codex",        args.codex,       load_generic_hubs,  "--codex"),
+        ("antigravity",  args.antigravity, load_generic_hubs,  "--antigravity"),
+    ]
     sources: dict[str, list[str]] = {}
-    if args.crg:
-        h = load_crg_hubs(args.crg, args.top_k)
-        if h: sources["crg"] = h
-    if args.graphify:
-        h = load_graphify_hubs(args.graphify, args.top_k)
-        if h: sources["graphify"] = h
-    if args.codex:
-        h = load_generic_hubs(args.codex, args.top_k)
-        if h: sources["codex"] = h
-    if args.antigravity:
-        h = load_generic_hubs(args.antigravity, args.top_k)
-        if h: sources["antigravity"] = h
+    for name, path, loader, flag in loaders:
+        if path is None:
+            continue
+        if not path.exists():
+            print(f"[warn] {flag}: file not found, skipping: {path}", file=sys.stderr)
+            continue
+        try:
+            if loader is load_generic_hubs:
+                hubs = loader(path, args.top_k, source_label=name)
+            else:
+                hubs = loader(path, args.top_k)
+        except SourceError as e:
+            print(f"[err] {flag}: {e}", file=sys.stderr)
+            return 2
+        if hubs:
+            sources[name] = hubs
+        else:
+            print(f"[warn] {flag}: loaded but 0 hubs found in {path}", file=sys.stderr)
 
     if len(sources) < 2:
-        print(f"[err] need ≥2 sources, got {len(sources)}: {list(sources.keys())}", file=sys.stderr)
+        print(
+            f"[err] need ≥2 sources, got {len(sources)}: {list(sources.keys())}",
+            file=sys.stderr,
+        )
         return 2
 
     result = consensus(sources, args.top_k)
     args.out.mkdir(parents=True, exist_ok=True)
-    (args.out / "hubs-consensus.json").write_text(json.dumps(result, indent=2, ensure_ascii=False))
+    (args.out / "hubs-consensus.json").write_text(
+        json.dumps(result, indent=2, ensure_ascii=False)
+    )
     md, dmd = render_md(result)
     (args.out / "hubs-consensus.md").write_text(md)
     (args.out / "disagreements.md").write_text(dmd)

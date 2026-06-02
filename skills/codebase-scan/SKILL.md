@@ -118,9 +118,13 @@ python3 ~/.claude/skills/codebase-scan/scripts/extract_dataflow.py <repo_root> -
 python3 ~/.claude/skills/codebase-scan/scripts/audit_claims.py --emit-evidence <repo_root>
 ```
 
-산출물 (항상 둘 다 생성):
-- `.claude/codebase-scan/evidence/L1-facts.md` — 사람이 읽는 표 (BLAST / HUB / INHERIT / COMM)
-- `.claude/codebase-scan/evidence/L1-evidence.json` — **stable IDs**: `BLAST-01..10`, `HUB-01..15`, `INHERIT-01..10`, `COMM-01..05`
+산출물 (`audit_claims.py --emit-evidence`가 둘 다 생성. CRG graph.db 직접 읽음):
+- `.claude/codebase-scan/evidence/L1-facts.md` — 사람이 읽는 표 (BLAST / HUB / INHERIT)
+- `.claude/codebase-scan/evidence/L1-evidence.json` — **stable IDs**: `BLAST-01..10`, `HUB-01..15`, `INHERIT-01..10`
+
+> `COMM-*` IDs: 현재 audit_claims.py는 BLAST/HUB/INHERIT만 emit한다 (community 데이터는 graphify-out/graph.json의 communities 필드에 있고, Phase 4.5 consensus 결과로 들어옴). 추후 Phase 3에서 graphify communities를 끌어와 COMM-* IDs도 emit하도록 확장 가능.
+
+> 워크플로우 순서: Phase 1 (`extract_l1.py` → L1.json) → Phase 3 (`audit_claims.py --emit-evidence` → L1-facts.md/L1-evidence.json). Phase 3를 건너뛰면 publish 단계의 facts.md 섹션이 SKIP된다.
 
 **Phase 4가 이 ID를 인용**해야 Phase 4의 프로즈가 audit을 통과한다.
 
@@ -171,9 +175,17 @@ python3 ~/.claude/skills/codebase-scan/scripts/audit_claims.py --check <repo_roo
 
 ### Step 4.5a — graphify 실행
 ```bash
-graphify <repo_root> --no-viz
+graphify update <repo_root>     # code-only 추출, LLM 불필요
 ```
-산출: `<repo_root>/graphify-out/graph.json`
+산출 (한 번에 모두 생성):
+- `<repo_root>/graphify-out/graph.json` — networkx-style nodes/links/communities
+- `<repo_root>/graphify-out/graph.html` — interactive viewer (Phase 6에서 사용)
+- `<repo_root>/graphify-out/GRAPH_REPORT.md` — community-별 요약
+
+> 이전 안내에 있던 `graphify <repo> --no-viz` / `graphify <repo>`는 실제 CLI에 존재하지 않음 (검증: `graphify --help`). 정답 명령은 `graphify update <path>`.
+> docs/이미지 포함 LLM-기반 추출이 필요하면 `/graphify` skill을 사용 (CLI 아닌 AI assistant skill).
+>
+> 검증된 동작 버전: graphify는 빠르게 진화하므로 CLI 옵션이 또 바뀔 수 있다. 본 가이드는 `update <path>`이 `graph.json` + `graph.html` + `GRAPH_REPORT.md`를 한 번에 만드는 버전을 가정한다. 실패 시 가장 먼저 `graphify --help`로 현재 명령 표를 확인할 것.
 
 ### Step 4.5b — codex-mcp 2-round 질의 (Claude가 직접 수행)
 
@@ -234,11 +246,12 @@ python3 ~/.claude/skills/codebase-scan/scripts/consensus_hubs.py \
 
 ### Step 6a — HTML 인터랙티브 리포트
 
-Phase 4.5에서 `graphify --no-viz`로 graph.json만 뽑았다면, HTML이 필요할 때 추가로:
+`graphify update`가 Phase 4.5a에서 이미 `graph.html`을 함께 생성하므로 별도 단계 불필요.
+변경 후 증분 재생성이 필요하면:
 ```bash
-graphify <repo_root>            # default가 HTML 포함이라 재실행 가능. --update로 증분.
+graphify update <repo_root>     # 변경된 파일만 재추출 (idempotent)
 ```
-산출: `<repo_root>/graphify-out/index.html` + JSON + GRAPH_REPORT.md.
+산출: `<repo_root>/graphify-out/{graph.json, graph.html, GRAPH_REPORT.md}`.
 
 ### Step 6b — Obsidian vault 발행
 
