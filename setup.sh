@@ -14,6 +14,18 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Load secrets / env overrides from .env if present (gitignored).
+# Sourced BEFORE the globals below so .env can override CLAUDE_CONFIG_DIR
+# (and any other VAR the globals read via ${VAR:-default}). SCRIPT_DIR is the
+# only global it depends on, and that's defined just above.
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$SCRIPT_DIR/.env"
+  set +a
+fi
+
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 CODEX_DIR="$HOME/.codex"
 AGENTS_DIR="$HOME/.agents"
@@ -24,14 +36,6 @@ SERENA_CONFIG="$HOME/.serena/serena_config.yml"
 SKIP_NETWORK=false
 SUBCMD="${1:-sync}"
 SUBCMD_ARG="${2:-}"
-
-# Load secrets from .env if present (gitignored).
-if [ -f "$SCRIPT_DIR/.env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . "$SCRIPT_DIR/.env"
-  set +a
-fi
 
 # Parse flags
 for arg in "$@"; do
