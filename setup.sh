@@ -978,6 +978,32 @@ PYEOF
             needs_register=1
           fi
         fi
+        # Generic env drift check beyond PATH: extract every `-e KEY=VAL`
+        # token from cmd and compare against the live entry. Catches the
+        # case where new env keys (e.g. MCP_CODEX_DEFAULT_MODEL) were added
+        # in a later setup.sh version but an older registration lacks them.
+        # Without this, just adding -e flags to cmd would do nothing for
+        # machines that already had codex-mcp registered.
+        if [ "$needs_register" = "0" ] && [ -n "$current_env" ]; then
+          local _exp_line _ek _ev _cur_v
+          while IFS= read -r _exp_line; do
+            [ -z "$_exp_line" ] && continue
+            _ek="${_exp_line%%=*}"
+            _ev="${_exp_line#*=}"
+            # PATH already covered above; skip to avoid duplicate work.
+            case "$_ek" in PATH|"") continue ;; esac
+            _cur_v="$(echo "$current_env" | grep -oE "${_ek}=[^[:space:]]+" | head -1 | sed "s/^${_ek}=//")"
+            if [ "$_cur_v" != "$_ev" ]; then
+              log_and_print "    [$name] env $_ek out of date — re-registering"
+              log_and_print "             have: ${_cur_v:-<unset>}"
+              log_and_print "             want: $_ev"
+              maybe_timeout 10 claude mcp remove "$name" -s user </dev/null 2>&1 | sed 's/^/      /' || true
+              maybe_timeout 10 claude mcp remove "$name" -s local </dev/null 2>&1 | sed 's/^/      /' || true
+              needs_register=1
+              break
+            fi
+          done < <(echo "$cmd" | grep -oE '\-e [A-Z_][A-Z0-9_]*=[^[:space:]]+' | sed -E 's/^-e ([A-Z_][A-Z0-9_]*)=(.*)$/\1=\2/')
+        fi
         if [ "$needs_register" = "0" ]; then
           log_and_print "    [$name] OK — already registered"
           # Detect local-scope shadow and auto-migrate. Earlier setup.sh
@@ -1067,8 +1093,13 @@ PYEOF
     else
       log_and_print "    [codex-mcp] codex CLI resolved: $_codex_resolved"
     fi
+    # Default codex model for the MCP. Fork hardcodes gpt-5.3-codex which is
+    # not available on every ChatGPT plan (exit 1 on first call). Override via
+    # MCP_CODEX_DEFAULT_MODEL env, which fork's dist/config.js getDefaultModel()
+    # reads at request time. Allow per-machine override via CC_BOOTSTRAP_CODEX_MODEL.
+    local CODEX_DEFAULT_MODEL="${CC_BOOTSTRAP_CODEX_MODEL:-gpt-5.5}"
     add_mcp "codex-mcp" \
-      "claude mcp add -s user codex-mcp -e PATH=${CODEX_PATH} -- codex-mcp" \
+      "claude mcp add -s user codex-mcp -e PATH=${CODEX_PATH} -e MCP_CODEX_DEFAULT_MODEL=${CODEX_DEFAULT_MODEL} -- codex-mcp" \
       "codex-mcp"
     add_mcp "antigravity-mcp" \
       "claude mcp add -s user antigravity-mcp -e PATH=${CODEX_PATH} -- antigravity-mcp" \
