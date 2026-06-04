@@ -25,7 +25,11 @@ bash setup.sh
 
 ```
 cc-bootstrap/
-├── setup.sh                              # One-command installer
+├── setup.sh                              # Entry: globals, .env source, dispatcher, small cmd_*
+├── lib/                                  # setup.sh helpers (sourced after globals)
+│   ├── common.sh                         #   shared helpers (log, link, MCP verify/cleanup, codex hooks, ...)
+│   ├── sync.sh                           #   cmd_sync body (plugins, MCP, frameworks)
+│   └── doctor.sh                         #   cmd_doctor body (diagnostics)
 ├── ui/statusline/
 │   └── my-statusline.mjs                 # Custom statusline (OMC HUD wrapper)
 ├── runtimes/
@@ -40,6 +44,7 @@ cc-bootstrap/
 │       └── skills/
 ├── rules/                                # SRP-split global rule modules (Layer A)
 ├── skills/                               # Shared cc-bootstrap skills (codebase-scan, triangle-review, ...)
+├── scripts/                              # Helper shell scripts (apply-project-template, snapshot, ...)
 └── patches/
     └── omc-render-model-first.sh         # OMC HUD model-first patch
 ```
