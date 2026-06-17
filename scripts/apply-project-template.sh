@@ -88,7 +88,7 @@ fi
 block_content() {
   local style="$1"
   local template="$2"
-  printf '> Project rules — cc-bootstrap `%s` template (inlined by apply-project-template.sh).\n' "$style"
+  printf '> Project rules — oh-my-agent-env `%s` template (inlined by apply-project-template.sh).\n' "$style"
   printf '> Read `PROJECT.md` before starting work; project rules override global defaults.\n\n'
   cat "$template"
 }
@@ -136,7 +136,7 @@ project_content() {
     printf -- '- Package manager: uv\n'
     printf -- '- Python env: .venv\n'
     printf -- '- Run prefix: uv run\n'
-    printf -- '- Machine snapshot: ~/.cc-bootstrap/local/machine.md\n'
+    printf -- '- Machine snapshot: ~/.oh-my-agent-env/local/machine.md\n'
     printf -- '- Project-specific compute:\n\n'
   fi
   printf '## Paths\n\n'

@@ -1,9 +1,9 @@
-# cc-bootstrap: cmd_doctor (sourced by setup.sh)
+# oh-my-agent-env: cmd_doctor (sourced by setup.sh)
 # Not standalone — relies on globals defined in setup.sh and helpers from
 # lib/common.sh (must be sourced first).
 
 cmd_doctor() {
-  echo "=== cc-bootstrap doctor ==="
+  echo "=== oh-my-agent-env doctor ==="
 
   # Establish the same user-owned prefix the sync uses, so the diagnostics
   # below speak the same vocabulary as the install path.
@@ -264,15 +264,15 @@ PYEOF
 
   echo ""
   echo "[ Managed skills ]"
-  # graphify is checked separately below (CLI-owned, not a cc-bootstrap symlink).
+  # graphify is checked separately below (CLI-owned, not a oh-my-agent-env symlink).
   for sk in triangle-review codebase-scan; do
     src="$SCRIPT_DIR/skills/$sk"
     dst="$CONFIG_DIR/skills/$sk"
     if [ -L "$dst" ] && [ -e "$dst" ]; then echo "  [OK] $sk symlink"
-    elif [ -e "$dst" ]; then echo "  [WARN] $sk exists but not symlinked from cc-bootstrap"
+    elif [ -e "$dst" ]; then echo "  [WARN] $sk exists but not symlinked from oh-my-agent-env"
     else echo "  [MISS] $sk"; WARNINGS=$((WARNINGS+1)); fi
   done
-  # graphify is managed by the graphify CLI itself (not cc-bootstrap).
+  # graphify is managed by the graphify CLI itself (not oh-my-agent-env).
   # claude side = real dir with SKILL.md; agents side = symlink to it.
   if [ -f "$CONFIG_DIR/skills/graphify/SKILL.md" ]; then echo "  [OK] graphify claude SKILL"
   else echo "  [MISS] graphify claude SKILL (run: graphify install --platform claude)"; WARNINGS=$((WARNINGS+1)); fi

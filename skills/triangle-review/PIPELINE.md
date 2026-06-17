@@ -192,7 +192,7 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    subgraph CC["cc-bootstrap/skills/triangle-review/"]
+    subgraph CC["oh-my-agent-env/skills/triangle-review/"]
         SKILL["SKILL.md<br/>orchestrator contract"]:::doc
         Anchor["scripts/anchor_lines.py"]:::script
         Diff["scripts/diff_findings.py"]:::script
@@ -200,12 +200,12 @@ flowchart LR
         Antigravity["scripts/call_antigravity.sh<br/>--dangerously-skip-permissions"]:::script
     end
 
-    subgraph CB["cc-bootstrap/skills/codebase-scan/"]
+    subgraph CB["oh-my-agent-env/skills/codebase-scan/"]
         Audit["scripts/audit_claims.py"]:::script
         L1["scripts/extract_l1.py"]:::script
     end
 
-    subgraph Setup["cc-bootstrap/setup.sh"]
+    subgraph Setup["oh-my-agent-env/setup.sh"]
         Sync["[5] Shared skills sync<br/>symlink to claude/skills/"]:::script
         MCP["[9b] codex/antigravity MCP register<br/>serena + code-review-graph"]:::script
         Doctor["doctor: triangle-review checks"]:::script
@@ -235,8 +235,8 @@ flowchart LR
 
 ```bash
 # 새 머신 셋업 (1회)
-git clone https://github.com/Byun-jinyoung/cc-bootstrap.git ~/.cc-bootstrap
-cd ~/.cc-bootstrap && ./setup.sh sync
+git clone https://github.com/Byun-jinyoung/oh-my-agent-env.git ~/.oh-my-agent-env
+cd ~/.oh-my-agent-env && ./setup.sh sync
 
 # Triangle Review 실행 (기본 = Round 1만)
 # Claude Code 안에서 "triangle review <target>" 트리거

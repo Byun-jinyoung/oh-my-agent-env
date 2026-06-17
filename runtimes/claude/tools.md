@@ -34,7 +34,7 @@ If `rtk gain` fails: possible name collision with reachingforthejack/rtk
 
 ## Skills
 
-Shared skills are synced into `~/.claude/skills/` from cc-bootstrap by
+Shared skills are synced into `~/.claude/skills/` from oh-my-agent-env by
 `setup.sh sync` (registry.yaml-driven). Available:
 
 - `graphify` — any input to knowledge graph. Trigger: `/graphify`.

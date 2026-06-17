@@ -1,4 +1,4 @@
-# cc-bootstrap skill registry
+# oh-my-agent-env skill registry
 # 새 skill 추가 시 이 파일에 엔트리 추가 → ./setup.sh sync가 자동 처리
 
 paper-analyzer:
@@ -26,7 +26,7 @@ codebase-scan:
     python: [code-review-graph]
     external_mcp: [serena, code-review-graph]
 
-# Graphify — managed by the graphify CLI itself, NOT by cc-bootstrap.
+# Graphify — managed by the graphify CLI itself, NOT by oh-my-agent-env.
 # `graphify install --platform claude` writes ~/.claude/skills/graphify/SKILL.md
 # (real directory, not a symlink). setup.sh's [10] Frameworks step invokes it
 # after `uv tool install graphifyy`. ~/.agents/skills/graphify is then created

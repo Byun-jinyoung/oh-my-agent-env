@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Writes a compact machine snapshot to ~/.cc-bootstrap/local/machine.md
+# Writes a compact machine snapshot to ~/.oh-my-agent-env/local/machine.md
 # Run on each machine after setup or when hardware/env changes.
-# Output path: $MACHINE_SNAPSHOT_OUT or ~/.cc-bootstrap/local/machine.md
+# Output path: $MACHINE_SNAPSHOT_OUT or ~/.oh-my-agent-env/local/machine.md
 set -euo pipefail
 
-OUT="${MACHINE_SNAPSHOT_OUT:-$HOME/.cc-bootstrap/local/machine.md}"
+OUT="${MACHINE_SNAPSHOT_OUT:-$HOME/.oh-my-agent-env/local/machine.md}"
 HOST_LABEL="${MACHINE_SNAPSHOT_HOST:-$(hostname -s)}"
 
 first_line() {

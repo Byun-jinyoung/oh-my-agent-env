@@ -1,12 +1,12 @@
-# cc-bootstrap
+# oh-my-agent-env
 
 One-command Claude Code environment setup for multiple machines.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/Byun-jinyoung/cc-bootstrap.git
-cd cc-bootstrap
+git clone https://github.com/Byun-jinyoung/oh-my-agent-env.git
+cd oh-my-agent-env
 bash setup.sh
 ```
 
@@ -24,7 +24,7 @@ bash setup.sh
 ## Directory Structure
 
 ```
-cc-bootstrap/
+oh-my-agent-env/
 ├── setup.sh                              # Entry: globals, .env source, dispatcher, small cmd_*
 ├── lib/                                  # setup.sh helpers (sourced after globals)
 │   ├── common.sh                         #   shared helpers (log, link, MCP verify/cleanup, codex hooks, ...)
@@ -43,7 +43,7 @@ cc-bootstrap/
 │       ├── tools.md                      # Antigravity (agy) tool guidance
 │       └── skills/
 ├── rules/                                # SRP-split global rule modules (Layer A)
-├── skills/                               # Shared cc-bootstrap skills (codebase-scan, triangle-review, ...)
+├── skills/                               # Shared oh-my-agent-env skills (codebase-scan, triangle-review, ...)
 ├── scripts/                              # Helper shell scripts (apply-project-template, snapshot, ...)
 └── patches/
     └── omc-render-model-first.sh         # OMC HUD model-first patch
@@ -74,7 +74,7 @@ This appends the Graphify guidance section to `AGENTS.md` and `CLAUDE.md`, insta
 Re-apply patches:
 
 ```bash
-cd cc-bootstrap
+cd oh-my-agent-env
 bash patches/omc-render-model-first.sh
 ```
 

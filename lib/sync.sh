@@ -1,13 +1,13 @@
-# cc-bootstrap: cmd_sync (sourced by setup.sh)
+# oh-my-agent-env: cmd_sync (sourced by setup.sh)
 # Not standalone — relies on globals defined in setup.sh and helpers from
 # lib/common.sh (must be sourced first).
 
 cmd_sync() {
-  log "=== cc-bootstrap sync started ==="
+  log "=== oh-my-agent-env sync started ==="
   log "  Platform: $(uname -s) $(uname -m)"
   log "  Shell: $SHELL"
   log "  PATH: $PATH"
-  echo "=== cc-bootstrap sync ==="
+  echo "=== oh-my-agent-env sync ==="
   echo "  Log: $LOG_FILE"
   echo ""
   # Dependencies
@@ -129,9 +129,9 @@ for name, info in reg.items():
         os.symlink(src, dst)
         print(f"    [LINK] {rt}/{name} → {src}")
 
-# Prune stale cc-bootstrap symlinks no longer in the registry, so that
+# Prune stale oh-my-agent-env symlinks no longer in the registry, so that
 # dropping a runtime from registry.yaml self-cleans on every machine.
-# Only cc-bootstrap-managed symlinks are removed; real dirs / foreign
+# Only oh-my-agent-env-managed symlinks are removed; real dirs / foreign
 # links are left untouched.
 skills_root = os.path.realpath(os.path.join("$SCRIPT_DIR", "skills"))
 desired = {(rt, name) for name, info in reg.items()
@@ -733,7 +733,7 @@ if agy_data is not None:
     # Step 1: preserve any third-party mcpServers that were in the legacy
     # ~/.gemini/settings.json. Merge them into the new shared location BEFORE
     # stripping the legacy key, so user-managed entries (e.g. agentmemory)
-    # don't get lost. cc-bootstrap-managed entries (WANTED below) win on
+    # don't get lost. oh-my-agent-env-managed entries (WANTED below) win on
     # conflict — they always reflect the canonical spec.
     legacy_mcp = data.get("mcpServers", {}) if isinstance(data, dict) else {}
     preserved = []
@@ -742,7 +742,7 @@ if agy_data is not None:
             mcp_servers[name] = spec
             preserved.append(name)
 
-    # Step 2: apply cc-bootstrap's WANTED entries (overwrites legacy entries
+    # Step 2: apply oh-my-agent-env's WANTED entries (overwrites legacy entries
     # of the same name with the canonical spec).
     for name, spec in WANTED.items():
         # Force update context-mode to ensure absolute path integrity
@@ -770,7 +770,7 @@ if agy_data is not None:
             print(f"[OK] preserved third-party mcpServers ({', '.join(preserved)}) during migration")
         print(f"[OK] migrated mcpServers ({moved_label}) out of {gemini_cfg.name} into config/mcp_config.json")
 
-# --- Strip cc-bootstrap-managed gemini-cli hooks from legacy settings.json ---
+# --- Strip oh-my-agent-env-managed gemini-cli hooks from legacy settings.json ---
 # agy does not read settings.json hooks (verified: 0 fires across agy logs;
 # import_manifest excludes hooks). The Gemini CLI does still read this file,
 # but the user's policy is full transition to agy. So we stop writing
@@ -794,7 +794,7 @@ if isinstance(hooks_data, dict):
                     if not (isinstance(h, dict)
                             and "context-mode hook gemini-cli" in str(h.get("command", "")))]
             if not kept:
-                # entire wrapper was a cc-bootstrap entry — drop it
+                # entire wrapper was a oh-my-agent-env entry — drop it
                 stripped.append(f"{event}")
                 continue
             if len(kept) != len(hs):
@@ -813,7 +813,7 @@ if bool(legacy_mcp) or stripped:
     gemini_cfg.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
 if stripped:
-    print(f"[OK] stripped cc-bootstrap-managed gemini-cli hooks ({', '.join(stripped)}) from settings.json — agy ignores them; gemini-cli still reads any remaining hooks")
+    print(f"[OK] stripped oh-my-agent-env-managed gemini-cli hooks ({', '.join(stripped)}) from settings.json — agy ignores them; gemini-cli still reads any remaining hooks")
 elif not legacy_mcp:
     print("[OK] Gemini: settings.json already clean")
 PYEOF
@@ -1000,7 +1000,7 @@ PYEOF
     run_with_timeout "graphify install (claude)" "graphify install --platform claude < /dev/null" \
       | sed 's/^/    /' || true
     # Mirror into ~/.agents/skills so codex/gemini see the same SKILL via their
-    # shared agents-skills scan. Replace any prior cc-bootstrap symlink.
+    # shared agents-skills scan. Replace any prior oh-my-agent-env symlink.
     if [ -d "$HOME/.claude/skills/graphify" ]; then
       mkdir -p "$AGENTS_DIR/skills"
       if [ -L "$AGENTS_DIR/skills/graphify" ] || [ -e "$AGENTS_DIR/skills/graphify" ]; then

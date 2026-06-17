@@ -4,7 +4,7 @@
 LLM이 매 세션 codebase 재분석에 토큰을 낭비하는 문제를 해결한다. repo/codebase를 사전에 다층 분석 → 영구 문서화 → 이후 세션이 참조 가능한 형태로 저장한다.
 
 ## Base
-`~/.cc-bootstrap/skills/codebase-scan/` (기존 user skill)을 in-place 확장한다. 동일 명 유지(`codebase-scan`).
+`~/.oh-my-agent-env/skills/codebase-scan/` (기존 user skill)을 in-place 확장한다. 동일 명 유지(`codebase-scan`).
 
 ## Gap → 추가 Phase
 

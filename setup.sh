@@ -1,8 +1,8 @@
 #!/bin/bash
-# cc-bootstrap: AI development environment bootstrap
+# oh-my-agent-env: AI development environment bootstrap
 # Usage:
-#   git clone https://github.com/Byun-jinyoung/cc-bootstrap.git ~/.cc-bootstrap
-#   cd ~/.cc-bootstrap && ./setup.sh sync
+#   git clone https://github.com/Byun-jinyoung/oh-my-agent-env.git ~/.oh-my-agent-env
+#   cd ~/.oh-my-agent-env && ./setup.sh sync
 #
 # Subcommands:
 #   sync      — Create/update symlinks from runtime dirs to this repo
@@ -45,7 +45,7 @@ for arg in "$@"; do
 done
 
 # Logging
-LOG_DIR="$HOME/.cc-bootstrap/logs"
+LOG_DIR="$HOME/.oh-my-agent-env/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/setup_$(date +%Y%m%d_%H%M%S).log"
 STEP_TIMEOUT=120  # seconds per step
@@ -64,7 +64,7 @@ STEP_TIMEOUT=120  # seconds per step
 . "$SCRIPT_DIR/lib/doctor.sh"
 
 cmd_validate() {
-  echo "=== cc-bootstrap validate ==="
+  echo "=== oh-my-agent-env validate ==="
   for skill_dir in "$SCRIPT_DIR/skills/"*/; do
     [ -d "$skill_dir" ] || continue
     name="$(basename "$skill_dir")"
@@ -80,7 +80,7 @@ cmd_validate() {
 }
 
 cmd_update() {
-  echo "=== cc-bootstrap update ==="
+  echo "=== oh-my-agent-env update ==="
   echo "[1/4] git pull"
   git -C "$SCRIPT_DIR" pull --ff-only 2>&1 | sed 's/^/  /'
   echo "[2/4] validate" && cmd_validate
@@ -89,7 +89,7 @@ cmd_update() {
 }
 
 cmd_install() {
-  echo "=== cc-bootstrap install (legacy copy mode) ==="
+  echo "=== oh-my-agent-env install (legacy copy mode) ==="
   mkdir -p "$CONFIG_DIR/commands" "$CONFIG_DIR/hud" "$CODEX_DIR" "$GEMINI_DIR"
   cp "$SCRIPT_DIR/runtimes/claude/commands/"*.md "$CONFIG_DIR/commands/" 2>/dev/null || true
   cp "$SCRIPT_DIR/runtimes/codex/instructions.md" "$CODEX_DIR/" 2>/dev/null || true
@@ -124,7 +124,7 @@ cmd_init_project() {
     exit 1
   }
   local project_name="$(basename "$project_path")"
-  echo "=== cc-bootstrap init-project: $project_name ==="
+  echo "=== oh-my-agent-env init-project: $project_name ==="
   echo "  Path: $project_path"
   echo ""
 

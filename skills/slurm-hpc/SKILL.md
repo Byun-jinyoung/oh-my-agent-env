@@ -28,7 +28,7 @@ Slurm resources.
 If missing, ask the user to run:
 
 ```bash
-~/.cc-bootstrap/scripts/generate-slurm-skill.sh
+~/.oh-my-agent-env/scripts/generate-slurm-skill.sh
 ```
 
 This writes `skills/slurm-hpc/references/cluster.generated.md` (gitignored,

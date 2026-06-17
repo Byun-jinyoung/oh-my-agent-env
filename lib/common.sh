@@ -1,4 +1,4 @@
-# cc-bootstrap: shared helpers (sourced by setup.sh)
+# oh-my-agent-env: shared helpers (sourced by setup.sh)
 # Not standalone — relies on globals defined in setup.sh:
 #   SCRIPT_DIR, CONFIG_DIR, CODEX_DIR, AGENTS_DIR, GEMINI_DIR,
 #   LOG_FILE, STEP_TIMEOUT, USER_NPM_PREFIX (set by ensure_user_npm_prefix).
