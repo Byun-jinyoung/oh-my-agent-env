@@ -61,6 +61,14 @@ cmd_sync() {
     done
   fi
 
+  # [2b] Rules-enforcement: compressed-rule file + settings.json hook wiring.
+  # rules-core.md is read by inject-core-rules.js at $CONFIG_DIR/rules-core.md.
+  if [ -f "$SCRIPT_DIR/runtimes/claude/rules-core.md" ]; then
+    make_link "$SCRIPT_DIR/runtimes/claude/rules-core.md" "$CONFIG_DIR/rules-core.md"
+  fi
+  echo "[2b] Rules-enforcement hooks (settings.json)"
+  ensure_rules_enforcement_hooks
+
   # Codex
   echo "[3] Codex"
   mkdir -p "$CODEX_DIR"
@@ -215,8 +223,39 @@ PYEOF
     fi
     log_and_print "             Keep ONE (recommended: $USER_NPM_PREFIX/bin/codex)."
     log_and_print "             Remove others with: npm uninstall -g @openai/codex (per prefix) or 'sudo rm <path>' for legacy /usr/bin."
+  elif [ "${#_codex_cands[@]}" -eq 1 ] && [ "${_codex_cands[0]}" = "$USER_NPM_PREFIX/bin/codex" ]; then
+    log_and_print "    [OK] codex CLI present -> $USER_NPM_PREFIX/bin/codex"
   elif [ "${#_codex_cands[@]}" -eq 1 ]; then
-    log_and_print "    [OK] codex CLI present -> ${_codex_cands[0]}"
+    # Single install but OUTSIDE the canonical user prefix (e.g. /usr/local,
+    # /opt/homebrew, /usr) — world-readable system path, policy violation.
+    # Auto-RELOCATE (not just warn): uninstall the stray from its own prefix,
+    # then force-reinstall into $USER_NPM_PREFIX via NPM_USER_ENV. We use the
+    # env override rather than `npm config set prefix` to honor the policy in
+    # ensure_user_npm_prefix (never mutate the user's global ~/.npmrc).
+    local _stray="${_codex_cands[0]}"
+    local _stray_prefix="${_stray%/bin/codex}"
+    log_and_print "    [codex] relocating codex from $_stray_prefix to $USER_NPM_PREFIX (policy: user-owned, mode 0700)"
+    run_with_timeout "codex uninstall (stray $_stray_prefix)" \
+      "npm uninstall -g --prefix '$_stray_prefix' @openai/codex < /dev/null" | tail -2 || true
+    local _relocate_warn=0
+    if [ -e "$_stray" ]; then
+      _relocate_warn=1
+      log_and_print "    [codex] [WARN] could not remove $_stray (rc!=0; likely root-owned system prefix)"
+      case "$_stray_prefix" in
+        /usr/*|/opt/*) log_and_print "             Manual: sudo npm uninstall -g --prefix '$_stray_prefix' @openai/codex" ;;
+      esac
+    fi
+    run_with_timeout "@openai/codex reinstall (user prefix)" \
+      "$NPM_USER_ENV npm install -g @openai/codex < /dev/null" | tail -3 || true
+    if [ -x "$USER_NPM_PREFIX/bin/codex" ]; then
+      if [ "$_relocate_warn" = "1" ]; then
+        log_and_print "    [codex] [WARN] codex installed -> $USER_NPM_PREFIX/bin/codex, but stray at $_stray still present — duplicate until you remove it (sudo)"
+      else
+        log_and_print "    [OK] codex relocated -> $USER_NPM_PREFIX/bin/codex"
+      fi
+    else
+      log_and_print "    [codex] [WARN] relocation failed — see $LOG_FILE; manual: npm_config_prefix='$USER_NPM_PREFIX' npm install -g @openai/codex"
+    fi
   else
     log_and_print "    Installing @openai/codex to user prefix ($USER_NPM_PREFIX)..."
     run_with_timeout "@openai/codex install" "$NPM_USER_ENV npm install -g @openai/codex < /dev/null" \

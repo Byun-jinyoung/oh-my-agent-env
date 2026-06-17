@@ -490,3 +490,68 @@ assemble_global_rules() {
     log_and_print "    [OK] $target (Layer A rules/ + $cli tools)"
   done
 }
+
+# Register the rules-enforcement hooks (compressed-rule injection + pre-edit
+# checklist + edit-turn verify gate) into Claude's global settings.json.
+# Idempotent + non-destructive: merges only its own entries, preserves all
+# existing hooks (RTK PreToolUse[Bash], gsd, user-added). Detects prior
+# registration by script basename so re-running sync is a no-op. The hook
+# SCRIPTS themselves are symlinked separately by cmd_sync's [2] Claude hooks
+# step ($CONFIG_DIR/hooks/<name>); this only wires settings.json to call them.
+ensure_rules_enforcement_hooks() {
+  command -v python3 &>/dev/null || { log_and_print "    [SKIP] python3 missing — rules-enforcement hooks"; return; }
+  python3 - "$CONFIG_DIR" << 'PYEOF' | sed 's/^/    /'
+import json, sys, shutil
+from pathlib import Path
+
+config_dir = Path(sys.argv[1])
+settings = config_dir / "settings.json"
+hooks_dir = config_dir / "hooks"
+
+# (event, matcher_or_None, script_basename)
+WANT = [
+    ("UserPromptSubmit", None, "inject-core-rules.js"),
+    ("Stop", None, "stop-verify-gate.js"),
+    ("PreToolUse", "Edit|Write|MultiEdit|NotebookEdit", "pre-edit-gate.js"),
+]
+
+if settings.exists():
+    try:
+        data = json.loads(settings.read_text())
+    except json.JSONDecodeError:
+        print("[WARN] settings.json unparseable — skipping rules-enforcement hooks (edit manually)")
+        sys.exit(0)
+else:
+    data = {}
+
+hooks = data.setdefault("hooks", {})
+changed = []
+for event, matcher, script in WANT:
+    arr = hooks.setdefault(event, [])
+    if not isinstance(arr, list):
+        continue
+    already = any(
+        isinstance(h, dict)
+        and any(isinstance(x, dict) and script in str(x.get("command", "")) for x in h.get("hooks", []))
+        for h in arr
+    )
+    if already:
+        continue
+    cmd = f'node "{hooks_dir}/{script}"'
+    entry = {"hooks": [{"type": "command", "command": cmd}]}
+    if matcher:
+        entry = {"matcher": matcher, "hooks": [{"type": "command", "command": cmd}]}
+    arr.append(entry)
+    changed.append(f"{event}:{script}")
+
+if changed:
+    bak = settings.parent / (settings.name + ".bak.rules-enforcement")
+    if settings.exists() and not bak.exists():
+        shutil.copyfile(settings, bak)
+        print(f"[BACKUP] {bak.name}")
+    settings.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    print(f"[OK] rules-enforcement hooks registered: {', '.join(changed)}")
+else:
+    print("[OK] rules-enforcement hooks already registered")
+PYEOF
+}
