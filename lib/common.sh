@@ -468,6 +468,13 @@ ensure_codex_mcp_paths() {
   for _pair in "serena:uvx" "code-review-graph:code-review-graph" "antigravity-mcp:antigravity-mcp"; do
     _name="${_pair%%:*}"; _bin="${_pair##*:}"
     _abs="$(command -v "$_bin" 2>/dev/null)"
+    # Fallback: the sync shell's PATH may lack ~/.local/bin even though _baked
+    # includes it — probe the baked dirs so we still harden the server.
+    if [ -z "$_abs" ]; then
+      local _bd
+      IFS=':' read -ra _bd <<<"$_baked"
+      for _seg in "${_bd[@]}"; do [ -x "$_seg/$_bin" ] && { _abs="$_seg/$_bin"; break; }; done
+    fi
     [ -n "$_abs" ] && _specs="${_specs}${_name}	${_abs}
 "
   done

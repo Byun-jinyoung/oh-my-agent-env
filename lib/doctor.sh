@@ -267,7 +267,10 @@ PYEOF
   # check resolves each managed server's command + downstream deps UNDER its own
   # baked env.PATH, catching the "installed but non-functional" false-OK class.
   if command -v python3 &>/dev/null; then
-    _rtdep="$(python3 - "$CODEX_DIR/config.toml" << 'PYEOF'
+    # Use a temp-file redirect (NOT $(... << heredoc ...)) — a heredoc body with
+    # single quotes nested inside command substitution confuses bash's parser.
+    _rtf="$(mktemp)"
+    python3 - "$CODEX_DIR/config.toml" > "$_rtf" 2>&1 << 'PYEOF'
 import sys, os, shutil
 cfg = sys.argv[1]
 try:
@@ -288,21 +291,27 @@ for name, deps in checks.items():
         continue
     cmd = s.get("command", "") or ""
     envp = (s.get("env") or {}).get("PATH")
+    # No baked env PATH => the server is NOT hardened; it relies on whatever PATH
+    # codex inherits at spawn time. Resolving in doctor's own (login) shell would
+    # be a false-OK, so flag it outright rather than guessing.
+    if not envp:
+        print(f"  [WARN] codex {name}: no baked env PATH — relies on codex inherited PATH (run setup.sh sync to harden)")
+        warn += 1
+        continue
     base = os.path.basename(cmd) if cmd else name
     for t in [base] + deps:
         if t == base and os.path.isabs(cmd):
             ok = os.path.isfile(cmd) and os.access(cmd, os.X_OK)
         else:
-            ok = (shutil.which(t, path=envp) if envp else shutil.which(t)) is not None
-        note = "" if envp else " (no baked env PATH — relies on codex inherited PATH)"
-        print(f"  [{'OK' if ok else 'WARN'}] codex {name}: '{t}' resolves{note}")
+            ok = shutil.which(t, path=envp) is not None
+        print(f"  [{'OK' if ok else 'WARN'}] codex {name}: '{t}' resolves under baked PATH")
         warn += 0 if ok else 1
 print(f"__WARN__{warn}")
 PYEOF
-)"
-    echo "$_rtdep" | grep -v '^__WARN__'
-    _rtw="$(printf '%s\n' "$_rtdep" | sed -n 's/^__WARN__//p' | tail -1)"
+    grep -v '^__WARN__' "$_rtf"
+    _rtw="$(sed -n 's/^__WARN__//p' "$_rtf" | tail -1)"
     [ -n "$_rtw" ] && [ "$_rtw" -gt 0 ] 2>/dev/null && WARNINGS=$((WARNINGS+_rtw))
+    rm -f "$_rtf"
   fi
 
   echo ""
