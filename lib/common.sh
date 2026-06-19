@@ -314,25 +314,96 @@ ensure_codex_context_mode() {
     log_and_print "    [SKIP] node not available"
     return
   fi
-  node << 'JSEOF' | sed 's/^/    /'
+  # Codex spawns MCP servers / hooks with its own inherited PATH (the codex npm
+  # wrapper does NOT build a login-shell PATH). On machines where context-mode
+  # lives only in a user npm prefix (e.g. ~/.npm-global/bin on Linux) that dir is
+  # often absent from codex's spawn PATH, so a bare `command = "context-mode"`
+  # entry fails with ENOENT and the MCP never starts (hooks likewise). macOS
+  # happened to work only because context-mode resolved under /usr/local/bin.
+  # Fix: bake the ABSOLUTE context-mode path into config.toml + hooks, and inject
+  # a PATH env (incl. node's dir, for the `#!/usr/bin/env node` shebang). Resolved
+  # fresh every sync so it self-heals across machines. We do targeted TOML/JSON
+  # edits (never `codex mcp add/remove`) to preserve user-added subsections like
+  # [mcp_servers.context-mode.tools.*].
+  local _cm_bin _node_bin _cm_dir _node_dir _baked _d
+  _cm_bin="$(command -v context-mode 2>/dev/null)"
+  if [ -z "$_cm_bin" ]; then
+    log_and_print "    [SKIP] context-mode not on PATH — cannot wire Codex context-mode"
+    return
+  fi
+  _node_bin="$(command -v node 2>/dev/null)"
+  _cm_dir="$(dirname "$_cm_bin")"
+  _node_dir="$(dirname "$_node_bin")"
+  _baked="$_cm_dir"
+  for _d in "$_node_dir" /usr/local/bin /usr/bin /bin; do
+    [ -n "$_d" ] || continue
+    case ":$_baked:" in *":$_d:"*) ;; *) _baked="$_baked:$_d" ;; esac
+  done
+  CM_BIN="$_cm_bin" CM_PATH="$_baked" node << 'JSEOF' | sed 's/^/    /'
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
+const cmBin = process.env.CM_BIN || "context-mode";
+const bakedPath = process.env.CM_PATH || "";
+
 const codexDir = path.join(os.homedir(), ".codex");
 fs.mkdirSync(codexDir, { recursive: true });
 
+// ---- config.toml: set absolute command + env.PATH on [mcp_servers.context-mode],
+//      preserving every other table (incl. .tools.* subsections). ----
 const cfg = path.join(codexDir, "config.toml");
 let content = fs.existsSync(cfg) ? fs.readFileSync(cfg, "utf8") : "";
-if (/^\[mcp_servers\.context-mode\]$/m.test(content)) {
-  console.log("[OK] Codex: context-mode MCP already in config.toml");
+let lines = content.length ? content.split("\n") : [];
+
+const MAIN = "mcp_servers.context-mode";
+const ENVT = "mcp_servers.context-mode.env";
+const desiredCmd = `command = "${cmBin}"`;
+const desiredPath = `PATH = "${bakedPath}"`;
+
+const isHeader = (l) => /^\s*\[/.test(l);
+const headerName = (l) => { const m = l.match(/^\s*\[(.+?)\]\s*$/); return m ? m[1].trim() : null; };
+const bodyEndFrom = (start) => { for (let i = start; i < lines.length; i++) if (isHeader(lines[i])) return i; return lines.length; };
+
+let changed = false;
+let mainIdx = lines.findIndex((l) => headerName(l) === MAIN);
+
+if (mainIdx === -1) {
+  if (content.length && !content.endsWith("\n")) lines.push("");
+  lines.push("", `[${MAIN}]`, desiredCmd, "", `[${ENVT}]`, desiredPath);
+  changed = true;
 } else {
-  if (content && !content.endsWith("\n")) content += "\n";
-  content += '\n[mcp_servers.context-mode]\ncommand = "context-mode"\n';
-  fs.writeFileSync(cfg, content);
-  console.log("[OK] Codex: added context-mode MCP to config.toml");
+  // command line inside the main table body
+  let end = bodyEndFrom(mainIdx + 1);
+  let cmdLine = -1;
+  for (let i = mainIdx + 1; i < end; i++) if (/^\s*command\s*=/.test(lines[i])) { cmdLine = i; break; }
+  if (cmdLine === -1) { lines.splice(mainIdx + 1, 0, desiredCmd); changed = true; }
+  else if (lines[cmdLine].trim() !== desiredCmd) { lines[cmdLine] = desiredCmd; changed = true; }
+
+  // ensure [..env] table with PATH
+  let envIdx = lines.findIndex((l) => headerName(l) === ENVT);
+  if (envIdx === -1) {
+    const insAt = bodyEndFrom(mainIdx + 1);
+    lines.splice(insAt, 0, `[${ENVT}]`, desiredPath, "");
+    changed = true;
+  } else {
+    let eend = bodyEndFrom(envIdx + 1);
+    let pLine = -1;
+    for (let i = envIdx + 1; i < eend; i++) if (/^\s*PATH\s*=/.test(lines[i])) { pLine = i; break; }
+    if (pLine === -1) { lines.splice(envIdx + 1, 0, desiredPath); changed = true; }
+    else if (lines[pLine].trim() !== desiredPath) { lines[pLine] = desiredPath; changed = true; }
+  }
 }
 
+if (changed) {
+  fs.writeFileSync(cfg, lines.join("\n").replace(/^\n+/, "").replace(/\n+$/, "") + "\n");
+  console.log("[OK] Codex: context-mode MCP command(abs)+env.PATH set in config.toml");
+} else {
+  console.log("[OK] Codex: context-mode MCP command+env.PATH already correct");
+}
+
+// ---- hooks.json: wrap each command with /usr/bin/env PATH=... <abs> so the
+//      hook executable + its node shebang resolve regardless of codex spawn PATH.
 const hooksPath = path.join(codexDir, "hooks.json");
 let data = {};
 if (fs.existsSync(hooksPath)) {
@@ -342,29 +413,34 @@ if (fs.existsSync(hooksPath)) {
     const backup = `${hooksPath}.bak.${Date.now()}`;
     fs.copyFileSync(hooksPath, backup);
     console.log(`[WARN] Codex: hooks.json invalid; backed up to ${backup}`);
+    data = {};
   }
 }
 data.hooks = data.hooks || {};
+const mkCmd = (tok) => `/usr/bin/env PATH=${bakedPath} ${cmBin} hook codex ${tok}`;
 const wanted = {
   PreToolUse: {
+    token: "pretooluse",
     matcher: "local_shell|shell|shell_command|exec_command|container.exec|Bash|Shell|grep_files|mcp__plugin_context-mode_context-mode__ctx_execute|mcp__plugin_context-mode_context-mode__ctx_execute_file|mcp__plugin_context-mode_context-mode__ctx_batch_execute",
-    command: "context-mode hook codex pretooluse",
   },
-  PostToolUse: { command: "context-mode hook codex posttooluse" },
-  SessionStart: { command: "context-mode hook codex sessionstart" },
-  UserPromptSubmit: { command: "context-mode hook codex userpromptsubmit" },
-  Stop: { command: "context-mode hook codex stop" },
+  PostToolUse: { token: "posttooluse" },
+  SessionStart: { token: "sessionstart" },
+  UserPromptSubmit: { token: "userpromptsubmit" },
+  Stop: { token: "stop" },
 };
 for (const [event, spec] of Object.entries(wanted)) {
   const existing = Array.isArray(data.hooks[event]) ? data.hooks[event] : [];
-  const filtered = existing.filter((entry) => !JSON.stringify(entry).includes(spec.command));
-  const entry = { hooks: [{ type: "command", command: spec.command }] };
+  // Remove ANY prior context-mode hook for this event (bare or wrapped) by its
+  // stable marker, so re-running upgrades old entries instead of duplicating.
+  const marker = `hook codex ${spec.token}`;
+  const filtered = existing.filter((entry) => !JSON.stringify(entry).includes(marker));
+  const entry = { hooks: [{ type: "command", command: mkCmd(spec.token) }] };
   if (spec.matcher) entry.matcher = spec.matcher;
   filtered.push(entry);
   data.hooks[event] = filtered;
 }
 fs.writeFileSync(hooksPath, JSON.stringify(data, null, 2) + "\n");
-console.log("[OK] Codex: context-mode hooks installed in hooks.json");
+console.log("[OK] Codex: context-mode hooks set (env-wrapped, abs path) in hooks.json");
 // ~/.codex/AGENTS.md is assembled by assemble_global_rules (Layer A + Layer B);
 // context-mode routing lives in runtimes/codex/tools.md.
 JSEOF
