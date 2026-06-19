@@ -261,6 +261,49 @@ PYEOF
     echo "  [MISS] codex context-mode routing instructions (run setup.sh sync)"
     WARNINGS=$((WARNINGS+1))
   fi
+  # Runtime dependency resolution: a stdio handshake only proves the MCP server
+  # binary launched — NOT that the tools it shells out to (e.g. antigravity-mcp
+  # -> `agy`) are reachable under the PATH codex bakes into that server. This
+  # check resolves each managed server's command + downstream deps UNDER its own
+  # baked env.PATH, catching the "installed but non-functional" false-OK class.
+  if command -v python3 &>/dev/null; then
+    _rtdep="$(python3 - "$CODEX_DIR/config.toml" << 'PYEOF'
+import sys, os, shutil
+cfg = sys.argv[1]
+try:
+    import tomllib
+except ImportError:
+    print("  [SKIP] runtime dep check (python<3.11, no tomllib)"); print("__WARN__0"); sys.exit(0)
+try:
+    d = tomllib.load(open(cfg, "rb"))
+except Exception as e:
+    print(f"  [WARN] runtime dep check: cannot read config.toml ({e})"); print("__WARN__1"); sys.exit(0)
+m = d.get("mcp_servers", {})
+# server -> downstream executables it also needs at runtime
+checks = {"context-mode": [], "serena": [], "code-review-graph": [], "antigravity-mcp": ["agy"]}
+warn = 0
+for name, deps in checks.items():
+    s = m.get(name)
+    if not s:
+        continue
+    cmd = s.get("command", "") or ""
+    envp = (s.get("env") or {}).get("PATH")
+    base = os.path.basename(cmd) if cmd else name
+    for t in [base] + deps:
+        if t == base and os.path.isabs(cmd):
+            ok = os.path.isfile(cmd) and os.access(cmd, os.X_OK)
+        else:
+            ok = (shutil.which(t, path=envp) if envp else shutil.which(t)) is not None
+        note = "" if envp else " (no baked env PATH — relies on codex inherited PATH)"
+        print(f"  [{'OK' if ok else 'WARN'}] codex {name}: '{t}' resolves{note}")
+        warn += 0 if ok else 1
+print(f"__WARN__{warn}")
+PYEOF
+)"
+    echo "$_rtdep" | grep -v '^__WARN__'
+    _rtw="$(printf '%s\n' "$_rtdep" | sed -n 's/^__WARN__//p' | tail -1)"
+    [ -n "$_rtw" ] && [ "$_rtw" -gt 0 ] 2>/dev/null && WARNINGS=$((WARNINGS+_rtw))
+  fi
 
   echo ""
   echo "[ Managed skills ]"

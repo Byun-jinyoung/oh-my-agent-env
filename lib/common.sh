@@ -446,6 +446,91 @@ console.log("[OK] Codex: context-mode hooks set (env-wrapped, abs path) in hooks
 JSEOF
 }
 
+ensure_codex_mcp_paths() {
+  # Same root cause as the context-mode fix, generalized to the other Codex-side
+  # managed MCP servers: Codex spawns MCP servers with its inherited process PATH
+  # (no login-shell PATH). serena (command=uvx), code-review-graph, and
+  # antigravity-mcp (which itself shells out to `agy`) live in ~/.local/bin or
+  # ~/.npm-global/bin — often absent from Codex's spawn PATH, so a bare command
+  # fails to start the server (or antigravity starts but hits `agy` ENOENT).
+  # Set an ABSOLUTE command + [..env] PATH on each, preserving args / .tools.*
+  # subsections / other servers. Created if absent (antigravity-mcp). Idempotent,
+  # resolved fresh each sync. context-mode is handled by ensure_codex_context_mode.
+  command -v node &>/dev/null || { log_and_print "    [SKIP] node not available — codex MCP PATH hardening"; return; }
+  local _seg _baked="" _node_dir=""
+  command -v node &>/dev/null && _node_dir="$(dirname "$(command -v node)")"
+  for _seg in "$HOME/.local/bin" "$HOME/.npm-global/bin" "${USER_NPM_PREFIX:+$USER_NPM_PREFIX/bin}" "$_node_dir" /usr/local/bin /opt/homebrew/bin /usr/bin /bin; do
+    [ -n "$_seg" ] || continue
+    case ":$_baked:" in *":$_seg:"*) ;; *) _baked="${_baked:+$_baked:}$_seg" ;; esac
+  done
+  # name:lookup-binary for each managed server (serena's command is uvx).
+  local _specs="" _pair _name _bin _abs
+  for _pair in "serena:uvx" "code-review-graph:code-review-graph" "antigravity-mcp:antigravity-mcp"; do
+    _name="${_pair%%:*}"; _bin="${_pair##*:}"
+    _abs="$(command -v "$_bin" 2>/dev/null)"
+    [ -n "$_abs" ] && _specs="${_specs}${_name}	${_abs}
+"
+  done
+  [ -n "$_specs" ] || { log_and_print "    [SKIP] no codex-managed MCP binaries resolvable"; return; }
+  CMCP_PATH="$_baked" CMCP_SPECS="$_specs" node << 'JSEOF' | sed 's/^/    /'
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+const baked = process.env.CMCP_PATH || "";
+const specs = (process.env.CMCP_SPECS || "").split("\n").map((l) => l.trim()).filter(Boolean)
+  .map((l) => { const [name, cmd] = l.split("\t"); return { name, cmd }; });
+
+const cfg = path.join(os.homedir(), ".codex", "config.toml");
+let content = fs.existsSync(cfg) ? fs.readFileSync(cfg, "utf8") : "";
+let lines = content.length ? content.split("\n") : [];
+
+const isHeader = (l) => /^\s*\[/.test(l);
+const headerName = (l) => { const m = l.match(/^\s*\[(.+?)\]\s*$/); return m ? m[1].trim() : null; };
+const bodyEndFrom = (start) => { for (let i = start; i < lines.length; i++) if (isHeader(lines[i])) return i; return lines.length; };
+
+let changed = false;
+for (const { name, cmd } of specs) {
+  const MAIN = `mcp_servers.${name}`;
+  const ENVT = `mcp_servers.${name}.env`;
+  const dCmd = `command = "${cmd}"`;
+  const dPath = `PATH = "${baked}"`;
+  let mi = lines.findIndex((l) => headerName(l) === MAIN);
+  if (mi === -1) {
+    if (lines.length && lines[lines.length - 1].trim() !== "") lines.push("");
+    lines.push(`[${MAIN}]`, dCmd, "", `[${ENVT}]`, dPath, "");
+    changed = true;
+    continue;
+  }
+  let end = bodyEndFrom(mi + 1);
+  let ci = -1;
+  for (let i = mi + 1; i < end; i++) if (/^\s*command\s*=/.test(lines[i])) { ci = i; break; }
+  if (ci === -1) { lines.splice(mi + 1, 0, dCmd); changed = true; }
+  else if (lines[ci].trim() !== dCmd) { lines[ci] = dCmd; changed = true; }
+
+  let ei = lines.findIndex((l) => headerName(l) === ENVT);
+  if (ei === -1) {
+    const insAt = bodyEndFrom(mi + 1);
+    lines.splice(insAt, 0, `[${ENVT}]`, dPath, "");
+    changed = true;
+  } else {
+    let ee = bodyEndFrom(ei + 1);
+    let pi = -1;
+    for (let i = ei + 1; i < ee; i++) if (/^\s*PATH\s*=/.test(lines[i])) { pi = i; break; }
+    if (pi === -1) { lines.splice(ei + 1, 0, dPath); changed = true; }
+    else if (lines[pi].trim() !== dPath) { lines[pi] = dPath; changed = true; }
+  }
+}
+
+if (changed) {
+  fs.writeFileSync(cfg, lines.join("\n").replace(/^\n+/, "").replace(/\n+$/, "") + "\n");
+  console.log("[OK] Codex: managed MCP command(abs)+env.PATH hardened (" + specs.map((s) => s.name).join(", ") + ")");
+} else {
+  console.log("[OK] Codex: managed MCP command+env.PATH already correct");
+}
+JSEOF
+}
+
 write_graphify_project_config() {
   local project_path="$1"
   local graphify_section='## graphify

@@ -804,6 +804,9 @@ PYEOF
   else
     log_and_print "    [WARN] context-mode missing. Install Node package first: npm install -g context-mode"
   fi
+  # Harden the other Codex-side managed MCPs (serena/code-review-graph/antigravity-mcp)
+  # with absolute command + env PATH so they resolve under Codex's spawn PATH.
+  ensure_codex_mcp_paths
 
   # [9c] Serena hardening — disable browser auto-launch on MCP start
   # Dashboard stays enabled (useful for debugging via http://localhost:24282/dashboard/),
