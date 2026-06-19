@@ -546,6 +546,14 @@ PYEOF
       _codex_resolved="$(command -v codex)"
       _codex_dir="$(dirname "$_codex_resolved")"
     fi
+    # antigravity-mcp shells out to the `agy` CLI, which typically installs to
+    # ~/.local/bin — a dir NOT covered by the npm/system segments below. Without
+    # agy's dir in the baked PATH, antigravity-mcp starts (stdio handshake ok, so
+    # doctor reports OK) but every antigravity call fails with `agy` ENOENT,
+    # silently breaking triangle-review/debate-loop/analyze-paper. Resolve agy's
+    # dir (and include ~/.local/bin generally) so the injected PATH can find it.
+    local _agy_dir=""
+    if command -v agy &>/dev/null; then _agy_dir="$(dirname "$(command -v agy)")"; fi
     # Build PATH from non-empty segments only (guard against empty npm prefix
     # turning into bare ":/usr/local/bin..." which means "current dir first").
     # Order: actual codex location → USER_NPM_PREFIX/bin → currently-configured
@@ -555,6 +563,8 @@ PYEOF
                 "$USER_NPM_PREFIX/bin" \
                 "$NPM_BIN_DIR" \
                 "$HOME/.npm-global/bin" \
+                "$_agy_dir" \
+                "$HOME/.local/bin" \
                 "/usr/local/bin" "/opt/homebrew/bin" "/usr/bin" "/bin"; do
       [ -n "$_seg" ] || continue
       # de-dup
