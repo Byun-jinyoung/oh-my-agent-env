@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "createdAt": "2026-06-21T06:30:51.323Z",
+  "updatedAt": "2026-06-21T06:34:32.335Z",
+  "briefPath": ".omo/ulw-loop/verify-oh-my-agent-env-runtime-20260621/brief.md",
+  "goalsPath": ".omo/ulw-loop/verify-oh-my-agent-env-runtime-20260621/goals.json",
+  "ledgerPath": ".omo/ulw-loop/verify-oh-my-agent-env-runtime-20260621/ledger.jsonl",
+  "codexGoalMode": "aggregate",
+  "goals": [
+    {
+      "id": "G001-verify-that-oh-my-agent-env-setup-sy",
+      "title": "Verify that ~/.oh-my-agent-env setup/sync/doctor refactor and shared...",
+      "objective": "Verify that ~/.oh-my-agent-env setup/sync/doctor refactor and shared skills/MCP configuration function normally across reproducibility, idempotency, and runtime parity. Do not modify product code unless verification exposes a blocking defect.",
+      "status": "complete",
+      "successCriteria": [
+        {
+          "id": "C001",
+          "scenario": "CLI structure/load path: current refactored setup/sync/doctor source graph parses, public command functions exist, and smoke-refactor passes.",
+          "userModel": "happy",
+          "expectedEvidence": ".omo/ulw-loop/evidence/verify-runtime/C001-structure-load.txt containing bash -n, smoke-refactor, and function/source file checks.",
+          "essential": true,
+          "capturedEvidence": ".omo/ulw-loop/evidence/verify-runtime/C001-structure-load.txt: bash -n OK; smoke-refactor OK; required functions present | cleanup: no long-running process",
+          "status": "pass",
+          "capturedAt": "2026-06-21T06:33:36.385Z"
+        },
+        {
+          "id": "C002",
+          "scenario": "CLI reproducibility/idempotency path: isolated HOME sync --skip-network and validate succeed without touching real HOME, and repeated shell checks remain stable.",
+          "userModel": "edge",
+          "expectedEvidence": ".omo/ulw-loop/evidence/verify-runtime/C002-isolated-idempotency.txt containing repeated bash -n, isolated HOME sync --skip-network output, isolated validate output, generated file sample, and cleanup receipt.",
+          "essential": true,
+          "capturedEvidence": ".omo/ulw-loop/evidence/verify-runtime/C002-isolated-idempotency.txt: repeated bash -n OK; isolated HOME sync --skip-network and validate OK; temp HOME removed | cleanup: temp HOME removed; no long-running process",
+          "status": "pass",
+          "capturedAt": "2026-06-21T06:33:36.486Z"
+        },
+        {
+          "id": "C003",
+          "scenario": "Runtime parity path: real doctor and parsed config/symlink checks prove shared skills and MCP entries are present for Claude Code, Codex, and Antigravity; LazyCodex/omo is enabled.",
+          "userModel": "regression",
+          "expectedEvidence": ".omo/ulw-loop/evidence/verify-runtime/C003-runtime-parity.txt containing setup.sh validate, setup.sh doctor summary, symlink inventory for ~/.claude ~/.codex ~/.gemini ~/.agents, parsed MCP config presence, LazyCodex plugin line, and git status.",
+          "essential": false,
+          "capturedEvidence": ".omo/ulw-loop/evidence/verify-runtime/C003-runtime-parity.txt: validate OK; doctor rc 0; LazyCodex omo@sisyphuslabs enabled; shared skill symlinks present; Claude/Codex/Antigravity MCP config entries present; only warnings are credential dir permissions 755 | cleanup: no long-running process",
+          "status": "pass",
+          "capturedAt": "2026-06-21T06:33:36.580Z"
+        }
+      ],
+      "attempt": 1,
+      "createdAt": "2026-06-21T06:30:51.323Z",
+      "updatedAt": "2026-06-21T06:34:32.335Z",
+      "startedAt": "2026-06-21T06:30:58.991Z",
+      "completedAt": "2026-06-21T06:34:32.335Z",
+      "evidence": "C001-C003 pass; setup/sync/doctor and shared skills/MCP runtime parity verified; only warning is credential/state dir mode 755."
+    }
+  ],
+  "codexObjective": "Complete the durable ulw-loop plan in .omo/ulw-loop/verify-oh-my-agent-env-runtime-20260621/goals.json, including later accepted/appended stories, under the original brief constraints; use .omo/ulw-loop/verify-oh-my-agent-env-runtime-20260621/ledger.jsonl as the audit trail.",
+  "aggregateCompletion": {
+    "status": "complete",
+    "completedAt": "2026-06-21T06:34:32.335Z",
+    "evidence": "C001-C003 pass; setup/sync/doctor and shared skills/MCP runtime parity verified; only warning is credential/state dir mode 755.",
+    "codexGoal": {
+      "goal": {
+        "threadId": "019ee8a8-98ac-7120-b232-0f80ba39d095",
+        "objective": "Complete the durable ulw-loop plan in .omo/ulw-loop/verify-oh-my-agent-env-runtime-20260621/goals.json, including later accepted/appended stories, under the original brief constraints; use .omo/ulw-loop/verify-oh-my-agent-env-runtime-20260621/ledger.jsonl as the audit trail.",
+        "status": "complete",
+        "tokensUsed": 38197,
+        "timeUsedSeconds": 198
+      }
+    }
+  }
+}

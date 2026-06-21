@@ -1,0 +1,1 @@
+Verify that ~/.oh-my-agent-env setup/sync/doctor refactor and shared skills/MCP configuration function normally across reproducibility, idempotency, and runtime parity. Do not modify product code unless verification exposes a blocking defect.

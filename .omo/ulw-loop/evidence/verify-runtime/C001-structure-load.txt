@@ -1,0 +1,38 @@
+# C001 structure/load verification
+## git status before
+?? .omo/ulw-loop/evidence/verify-runtime/
+?? .omo/ulw-loop/verify-oh-my-agent-env-runtime-20260621/
+## required files
+lib/common.sh
+lib/doctor.sh
+lib/doctor/agent-mcp.sh
+lib/doctor/claude.sh
+lib/doctor/codex-integrity.sh
+lib/doctor/frameworks.sh
+lib/doctor/lazycodex.sh
+lib/doctor/local-prereqs.sh
+lib/doctor/main.sh
+lib/sync.sh
+lib/sync/core.sh
+lib/sync/external-tools.sh
+lib/sync/frameworks.sh
+lib/sync/plugins-mcp.sh
+lib/sync/rules.sh
+lib/sync/skills.sh
+## shell syntax
+bash -n: OK
+## public functions
+lib/sync.sh:cmd_sync() {
+lib/doctor/main.sh:cmd_doctor() {
+lib/sync/external-tools.sh:sync_external_tools() {
+lib/sync/plugins-mcp.sh:sync_plugins_mcp() {
+lib/sync/frameworks.sh:sync_agent_mcp_frameworks() {
+lib/doctor/lazycodex.sh:doctor_lazycodex() {
+lib/doctor/agent-mcp.sh:doctor_agent_mcp_surfaces() {
+## smoke-refactor
+[1] shell syntax
+[2] required sync domains
+[3] required doctor domains
+[4] public command functions
+[5] isolated HOME validate
+smoke-refactor OK

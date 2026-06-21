@@ -1,0 +1,9 @@
+{
+  "goal": {
+    "threadId": "019ee8a8-98ac-7120-b232-0f80ba39d095",
+    "objective": "Complete the durable ulw-loop plan in .omo/ulw-loop/verify-oh-my-agent-env-runtime-20260621/goals.json, including later accepted/appended stories, under the original brief constraints; use .omo/ulw-loop/verify-oh-my-agent-env-runtime-20260621/ledger.jsonl as the audit trail.",
+    "status": "complete",
+    "tokensUsed": 38197,
+    "timeUsedSeconds": 198
+  }
+}

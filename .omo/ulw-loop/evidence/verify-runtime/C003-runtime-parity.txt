@@ -1,0 +1,94 @@
+# C003 runtime parity verification
+## setup.sh validate
+=== oh-my-agent-env validate ===
+  [OK] codebase-scan
+  [OK] git-cli-workflow
+  [OK] multi-agent-review
+  [OK] paper-analyzer
+  [OK] slurm-hpc
+  [OK] spec-interview
+  [OK] triangle-review
+  [OK] analyze-paper.md
+  [OK] debate-loop.md
+  [OK] update-feeds.md
+  [OK] update-refs.md
+
+## setup.sh doctor summary
+doctor rc: 0
+  [OK] codex
+  [OK] context-mode
+  [OK] omo (/Users/byunjin-young/.local/bin/omo)
+  [OK] context-mode@context-mode
+  [OK] codex@openai-codex
+  [OK] codex-mcp
+  [OK] antigravity-mcp
+  [OK] serena
+  [OK] fork features present (codex session_id, antigravity --conversation)
+  [OK] codex-mcp stdio handshake
+  [OK] antigravity-mcp stdio handshake
+  [OK] codex CLI on PATH (/Users/byunjin-young/.npm-global/bin/codex)
+[ LazyCodex (Codex plugin) ]
+  [OK] omo@sisyphuslabs installed, enabled (4.12.1)
+  [OK] codex multi_agent
+  [OK] codex serena
+  [OK] codex code-review-graph
+  [OK] codex context-mode
+  [OK] antigravity serena
+  [OK] antigravity code-review-graph
+  [OK] codex context-mode hooks
+  [OK] codex context-mode routing instructions
+  [OK] codex context-mode: 'context-mode' resolves under baked PATH
+  [OK] codex serena: 'uvx' resolves under baked PATH
+  [OK] codex code-review-graph: 'code-review-graph' resolves under baked PATH
+  [OK] codex antigravity-mcp: 'antigravity-mcp' resolves under baked PATH
+  [OK] codex antigravity-mcp: 'agy' resolves under baked PATH
+[ Managed skills ]
+  [OK] code-review-graph CLI
+[ Frameworks ]
+  3 item(s) missing.
+
+## skills symlink inventory
+### /Users/byunjin-young/.claude/skills
+/Users/byunjin-young/.claude/skills/codebase-scan -> /Users/byunjin-young/.oh-my-agent-env/skills/codebase-scan
+/Users/byunjin-young/.claude/skills/git-cli-workflow -> /Users/byunjin-young/.oh-my-agent-env/skills/git-cli-workflow
+/Users/byunjin-young/.claude/skills/multi-agent-review -> /Users/byunjin-young/.oh-my-agent-env/skills/multi-agent-review
+/Users/byunjin-young/.claude/skills/slurm-hpc -> /Users/byunjin-young/.oh-my-agent-env/skills/slurm-hpc
+/Users/byunjin-young/.claude/skills/spec-interview -> /Users/byunjin-young/.oh-my-agent-env/skills/spec-interview
+/Users/byunjin-young/.claude/skills/triangle-review -> /Users/byunjin-young/.oh-my-agent-env/skills/triangle-review
+### /Users/byunjin-young/.codex/skills
+/Users/byunjin-young/.codex/skills/codebase-scan -> /Users/byunjin-young/.oh-my-agent-env/skills/codebase-scan
+/Users/byunjin-young/.codex/skills/paper-analyzer -> /Users/byunjin-young/.oh-my-agent-env/skills/paper-analyzer/codex
+### /Users/byunjin-young/.gemini/skills
+/Users/byunjin-young/.gemini/skills/codebase-scan -> /Users/byunjin-young/.oh-my-agent-env/skills/codebase-scan
+/Users/byunjin-young/.gemini/skills/paper-analyzer -> /Users/byunjin-young/.oh-my-agent-env/skills/paper-analyzer
+### /Users/byunjin-young/.agents/skills
+/Users/byunjin-young/.agents/skills/git-cli-workflow -> /Users/byunjin-young/.oh-my-agent-env/skills/git-cli-workflow
+/Users/byunjin-young/.agents/skills/graphify -> /Users/byunjin-young/.claude/skills/graphify
+/Users/byunjin-young/.agents/skills/multi-agent-review -> /Users/byunjin-young/.oh-my-agent-env/skills/multi-agent-review
+/Users/byunjin-young/.agents/skills/slurm-hpc -> /Users/byunjin-young/.oh-my-agent-env/skills/slurm-hpc
+/Users/byunjin-young/.agents/skills/spec-interview -> /Users/byunjin-young/.oh-my-agent-env/skills/spec-interview
+
+## parsed MCP config presence
+codex config: /Users/byunjin-young/.codex/config.toml exists= True
+codex mcp serena: True
+codex mcp code-review-graph: True
+codex mcp context-mode: True
+codex mcp antigravity-mcp: True
+claude config: /Users/byunjin-young/.claude.json exists= True
+claude mcp codex-mcp: True
+claude mcp antigravity-mcp: True
+claude mcp serena: True
+claude mcp supermemory: True
+antigravity config: /Users/byunjin-young/.gemini/config/mcp_config.json exists= True
+antigravity mcp serena: True
+antigravity mcp code-review-graph: True
+antigravity mcp context-mode: True
+
+## LazyCodex direct checks
+/Users/byunjin-young/.local/bin/omo
+4.12.1
+omo@sisyphuslabs  installed, enabled  4.12.1   /Users/byunjin-young/.codex/plugins/cache/sisyphuslabs/omo/4.12.1
+
+## git status
+?? .omo/ulw-loop/evidence/verify-runtime/
+?? .omo/ulw-loop/verify-oh-my-agent-env-runtime-20260621/

@@ -1,0 +1,111 @@
+{
+    "codeReview": {
+        "by": "lazycodex-code-reviewer",
+        "recommendation": "APPROVE",
+        "codeQualityStatus": "CLEAR",
+        "reportPath": ".omo/ulw-loop/evidence/verify-runtime/quality-gate.json",
+        "evidence": "No product code changes were made during this verification run; git status only showed ULW verification artifacts before checkpoint.",
+        "blockers": []
+    },
+    "manualQa": {
+        "by": "lazycodex-qa-executor",
+        "status": "passed",
+        "evidence": "CLI verification surfaces passed: structure/load, isolated HOME sync --skip-network, validate, doctor, skills symlink inventory, parsed MCP config presence, LazyCodex plugin check.",
+        "surfaceEvidence": [
+            {
+                "id": "surface-structure-load",
+                "criterionRef": "C001",
+                "surface": "cli",
+                "invocation": "bash -n setup.sh lib/common.sh lib/sync.sh lib/sync/*.sh lib/doctor.sh lib/doctor/*.sh tests/smoke-refactor.sh && bash tests/smoke-refactor.sh",
+                "verdict": "passed",
+                "artifactRefs": [
+                    "artifact-C001"
+                ]
+            },
+            {
+                "id": "surface-isolated-home",
+                "criterionRef": "C002",
+                "surface": "cli",
+                "invocation": "HOME=$(mktemp -d) bash setup.sh sync --skip-network && HOME=$tmp_home bash setup.sh validate",
+                "verdict": "passed",
+                "artifactRefs": [
+                    "artifact-C002"
+                ]
+            },
+            {
+                "id": "surface-runtime-parity",
+                "criterionRef": "C003",
+                "surface": "cli",
+                "invocation": "bash setup.sh validate && bash setup.sh doctor plus parsed skill/MCP inventory",
+                "verdict": "passed",
+                "artifactRefs": [
+                    "artifact-C003"
+                ]
+            }
+        ],
+        "adversarialCases": [
+            {
+                "id": "adv-state-permission-warning",
+                "criterionRef": "C003",
+                "scenario": "doctor reports credential/state directories with mode 755",
+                "expectedBehavior": "doctor exits 0 while surfacing security warning; runtime parity remains functional",
+                "verdict": "passed",
+                "artifactRefs": [
+                    "artifact-C003"
+                ]
+            }
+        ],
+        "artifactRefs": [
+            {
+                "id": "artifact-C001",
+                "kind": "cli-transcript",
+                "description": "structure and load verification",
+                "path": ".omo/ulw-loop/evidence/verify-runtime/C001-structure-load.txt"
+            },
+            {
+                "id": "artifact-C002",
+                "kind": "cli-transcript",
+                "description": "isolated HOME idempotency verification",
+                "path": ".omo/ulw-loop/evidence/verify-runtime/C002-isolated-idempotency.txt"
+            },
+            {
+                "id": "artifact-C003",
+                "kind": "cli-transcript",
+                "description": "runtime parity verification",
+                "path": ".omo/ulw-loop/evidence/verify-runtime/C003-runtime-parity.txt"
+            }
+        ]
+    },
+    "gateReview": {
+        "by": "lazycodex-gate-reviewer",
+        "recommendation": "APPROVE",
+        "reportPath": ".omo/ulw-loop/evidence/verify-runtime/quality-gate.json",
+        "evidence": "C001-C003 are pass in ULW ledger; verification artifacts exist; only non-functional finding is credential/state directory mode 755 warning.",
+        "blockers": []
+    },
+    "iteration": {
+        "fullRerun": true,
+        "status": "passed",
+        "rerunCommands": [
+            "bash tests/smoke-refactor.sh",
+            "HOME=$(mktemp -d) bash setup.sh sync --skip-network",
+            "bash setup.sh validate",
+            "bash setup.sh doctor"
+        ],
+        "evidence": "All verification commands completed; doctor rc 0; shared skills/MCP and LazyCodex checks passed."
+    },
+    "criteriaCoverage": {
+        "totalCriteria": 3,
+        "passCount": 3,
+        "originalIntent": "Verify all functionality after the setup/sync/doctor refactor for a cross-machine custom package.",
+        "desiredOutcome": "Confirm reproducibility, idempotency, runtime parity, shared skills/MCP configuration, and LazyCodex operation.",
+        "userOutcomeReview": "All functional checks passed. Security warning remains for credential/state directory permissions being 755.",
+        "adversarialClassesCovered": [
+            "dirty_worktree",
+            "isolated_home",
+            "stale_state",
+            "misleading_success_output",
+            "permission_warning"
+        ]
+    }
+}
