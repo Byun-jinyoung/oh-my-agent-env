@@ -1,0 +1,9 @@
+{
+  "goal": {
+    "threadId": "019ee8a8-98ac-7120-b232-0f80ba39d095",
+    "objective": "Complete the durable ulw-loop plan in .omo/ulw-loop/019ee8a8-98ac-7120-b232-0f80ba39d095/goals.json, including later accepted/appended stories, under the original brief constraints; use .omo/ulw-loop/019ee8a8-98ac-7120-b232-0f80ba39d095/ledger.jsonl as the audit trail.",
+    "status": "complete",
+    "tokensUsed": 329000,
+    "timeUsedSeconds": 752
+  }
+}

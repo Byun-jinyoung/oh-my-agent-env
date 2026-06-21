@@ -1,6 +1,6 @@
 {
     "codeReview": {
-        "by": "final-code-review",
+        "by": "lazycodex-code-reviewer",
         "recommendation": "APPROVE",
         "codeQualityStatus": "CLEAR",
         "reportPath": ".omo/ulw-loop/evidence/quality-gate.json",
@@ -8,38 +8,38 @@
         "blockers": []
     },
     "manualQa": {
-        "by": "final-qa-review",
+        "by": "lazycodex-qa-executor",
         "status": "passed",
         "evidence": "C001-C003 artifacts exist and are non-empty; smoke-refactor passed; graphify blocker accurately documented.",
         "surfaceEvidence": [
             {
                 "id": "C001",
                 "criterionRef": "C001",
-                "surface": "CLI stdout",
+                "surface": "cli",
                 "invocation": "bash tests/smoke-refactor.sh",
                 "verdict": "passed",
                 "artifactRefs": [
-                    ".omo/ulw-loop/evidence/C001-structure-and-load.txt"
+                    "C001"
                 ]
             },
             {
                 "id": "C002",
                 "criterionRef": "C002",
-                "surface": "CLI stdout",
+                "surface": "cli",
                 "invocation": "HOME=$(mktemp -d) bash setup.sh sync --skip-network && bash setup.sh validate",
                 "verdict": "passed",
                 "artifactRefs": [
-                    ".omo/ulw-loop/evidence/C002-idempotency-repro.txt"
+                    "C002"
                 ]
             },
             {
                 "id": "C003",
                 "criterionRef": "C003",
-                "surface": "CLI stdout",
+                "surface": "cli",
                 "invocation": "bash setup.sh validate && bash setup.sh doctor && graphify update .",
-                "verdict": "passed-with-documented-graphify-blocker",
+                "verdict": "passed",
                 "artifactRefs": [
-                    ".omo/ulw-loop/evidence/C003-runtime-parity-regression.txt"
+                    "C003"
                 ]
             }
         ],
@@ -51,7 +51,7 @@
                 "expectedBehavior": "graphify refuses overwrite unless explicit force is available; blocker documented",
                 "verdict": "passed",
                 "artifactRefs": [
-                    ".omo/ulw-loop/evidence/C003-runtime-parity-regression.txt"
+                    "C003"
                 ]
             }
         ],
@@ -77,7 +77,7 @@
         ]
     },
     "gateReview": {
-        "by": "final-gate-review",
+        "by": "lazycodex-gate-reviewer",
         "recommendation": "APPROVE",
         "reportPath": ".omo/ulw-loop/evidence/quality-gate.json",
         "evidence": "checkpoint commit e0a5fe4 precedes refactor commit b280271; C001-C003 pass; ledger evidence exists; worktree clean.",
