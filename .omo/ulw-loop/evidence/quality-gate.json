@@ -1,0 +1,110 @@
+{
+    "codeReview": {
+        "by": "final-code-review",
+        "recommendation": "APPROVE",
+        "codeQualityStatus": "CLEAR",
+        "reportPath": ".omo/ulw-loop/evidence/quality-gate.json",
+        "evidence": "git show --stat b280271 inspected; bash -n and smoke-refactor passed; reconstructed sync/doctor source order showed behavior-preserving split.",
+        "blockers": []
+    },
+    "manualQa": {
+        "by": "final-qa-review",
+        "status": "passed",
+        "evidence": "C001-C003 artifacts exist and are non-empty; smoke-refactor passed; graphify blocker accurately documented.",
+        "surfaceEvidence": [
+            {
+                "id": "C001",
+                "criterionRef": "C001",
+                "surface": "CLI stdout",
+                "invocation": "bash tests/smoke-refactor.sh",
+                "verdict": "passed",
+                "artifactRefs": [
+                    ".omo/ulw-loop/evidence/C001-structure-and-load.txt"
+                ]
+            },
+            {
+                "id": "C002",
+                "criterionRef": "C002",
+                "surface": "CLI stdout",
+                "invocation": "HOME=$(mktemp -d) bash setup.sh sync --skip-network && bash setup.sh validate",
+                "verdict": "passed",
+                "artifactRefs": [
+                    ".omo/ulw-loop/evidence/C002-idempotency-repro.txt"
+                ]
+            },
+            {
+                "id": "C003",
+                "criterionRef": "C003",
+                "surface": "CLI stdout",
+                "invocation": "bash setup.sh validate && bash setup.sh doctor && graphify update .",
+                "verdict": "passed-with-documented-graphify-blocker",
+                "artifactRefs": [
+                    ".omo/ulw-loop/evidence/C003-runtime-parity-regression.txt"
+                ]
+            }
+        ],
+        "adversarialCases": [
+            {
+                "id": "graphify-vendor-pollution",
+                "criterionRef": "C003",
+                "scenario": "vendor/minified files removed from graph input reduce nodes sharply",
+                "expectedBehavior": "graphify refuses overwrite unless explicit force is available; blocker documented",
+                "verdict": "passed",
+                "artifactRefs": [
+                    ".omo/ulw-loop/evidence/C003-runtime-parity-regression.txt"
+                ]
+            }
+        ],
+        "artifactRefs": [
+            {
+                "id": "C001",
+                "kind": "cli-transcript",
+                "description": "structure and load evidence",
+                "path": ".omo/ulw-loop/evidence/C001-structure-and-load.txt"
+            },
+            {
+                "id": "C002",
+                "kind": "cli-transcript",
+                "description": "idempotency and reproducibility evidence",
+                "path": ".omo/ulw-loop/evidence/C002-idempotency-repro.txt"
+            },
+            {
+                "id": "C003",
+                "kind": "cli-transcript",
+                "description": "runtime parity regression evidence",
+                "path": ".omo/ulw-loop/evidence/C003-runtime-parity-regression.txt"
+            }
+        ]
+    },
+    "gateReview": {
+        "by": "final-gate-review",
+        "recommendation": "APPROVE",
+        "reportPath": ".omo/ulw-loop/evidence/quality-gate.json",
+        "evidence": "checkpoint commit e0a5fe4 precedes refactor commit b280271; C001-C003 pass; ledger evidence exists; worktree clean.",
+        "blockers": []
+    },
+    "iteration": {
+        "fullRerun": true,
+        "status": "passed",
+        "rerunCommands": [
+            "bash -n setup.sh lib/common.sh lib/sync.sh lib/sync/*.sh lib/doctor.sh lib/doctor/*.sh tests/smoke-refactor.sh",
+            "bash tests/smoke-refactor.sh",
+            "bash setup.sh validate"
+        ],
+        "evidence": "All local final verification commands passed. setup.sh doctor passed earlier with rc 0 and LazyCodex OK."
+    },
+    "criteriaCoverage": {
+        "totalCriteria": 3,
+        "passCount": 3,
+        "originalIntent": "Commit current state first, then reorganize setup/sync/doctor structure for a cross-machine custom package.",
+        "desiredOutcome": "Behavior-preserving Bash domain split with reproducibility, idempotency, and runtime parity evidence.",
+        "userOutcomeReview": "The result keeps setup.sh stable, splits sync and doctor into visible domains, adds smoke verification, and records evidence.",
+        "adversarialClassesCovered": [
+            "dirty_worktree",
+            "stale_state",
+            "misleading_success_output",
+            "repeated_interruptions",
+            "vendor_polluted_graph"
+        ]
+    }
+}
