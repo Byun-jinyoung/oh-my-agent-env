@@ -4,7 +4,8 @@
 #   LOG_FILE, STEP_TIMEOUT, USER_NPM_PREFIX (set by ensure_user_npm_prefix).
 # Contains: log, log_and_print, maybe_timeout, run_with_timeout,
 #   ensure_user_npm_prefix, make_link, verify_codex_gemini_mcp,
-#   cleanup_upstream_codex_gemini_mcp, mcp_spawn_check,
+#   cleanup_upstream_codex_gemini_mcp, verify_lazycodex_codex_plugin,
+#   mcp_spawn_check,
 #   append_section_if_missing, ensure_line_in_file,
 #   ensure_codex_multi_agent, ensure_codex_context_mode,
 #   write_graphify_project_config,
@@ -170,6 +171,29 @@ verify_codex_gemini_mcp() {
   grep -q 'session_id' "$dist_dir/providers/codex.js" 2>/dev/null || return 1
   grep -q '"--conversation"' "$dist_dir/providers/antigravity.js" 2>/dev/null || return 1
   return 0
+}
+
+# Verify LazyCodex is installed as the Codex plugin it actually registers:
+# omo@sisyphuslabs. LazyCodex's public installer is an npx alias; Codex sees
+# the installed payload as the OMO plugin namespace under the sisyphuslabs
+# marketplace.
+verify_lazycodex_codex_plugin() {
+  command -v codex &>/dev/null || return 1
+
+  local plugin_root="$CODEX_DIR/plugins/cache/sisyphuslabs/omo"
+  local installed_root=""
+  if [ -d "$plugin_root" ]; then
+    installed_root="$(find "$plugin_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1)"
+  fi
+  [ -n "$installed_root" ] || return 1
+  [ -f "$installed_root/.codex-plugin/plugin.json" ] || return 1
+  [ -d "$installed_root/skills" ] || return 1
+  [ -f "$installed_root/.mcp.json" ] || return 1
+
+  if maybe_timeout 30 codex plugin list </dev/null 2>/dev/null | grep -qE 'omo@sisyphuslabs[[:space:]]+installed, enabled'; then
+    return 0
+  fi
+  return 1
 }
 
 # Detect & remove upstream donghae0414 install (and stale system-wide symlinks)

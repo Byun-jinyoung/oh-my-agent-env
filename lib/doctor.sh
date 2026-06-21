@@ -76,6 +76,14 @@ cmd_doctor() {
     if command -v $cmd &>/dev/null; then echo "  [OK] $cmd"
     else echo "  [MISS] $cmd"; WARNINGS=$((WARNINGS+1)); fi
   done
+  if [ -x "$HOME/.local/bin/omo" ]; then
+    echo "  [OK] omo ($HOME/.local/bin/omo)"
+  elif command -v omo &>/dev/null; then
+    echo "  [OK] omo ($(command -v omo))"
+  else
+    echo "  [MISS] omo (installed by LazyCodex; run setup.sh sync)"
+    WARNINGS=$((WARNINGS+1))
+  fi
 
   echo ""
   echo "[ Symlinks ]"
@@ -190,6 +198,18 @@ cmd_doctor() {
     done
     command -v codex &>/dev/null && echo "          PATH winner: $(command -v codex)"
     echo "          Keep one (recommended: \$(npm config get prefix)/bin/codex); remove rest."
+    WARNINGS=$((WARNINGS+1))
+  fi
+
+  echo ""
+  echo "[ LazyCodex (Codex plugin) ]"
+  if verify_lazycodex_codex_plugin; then
+    _lazycodex_root="$(find "$CODEX_DIR/plugins/cache/sisyphuslabs/omo" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1)"
+    _lazycodex_version="$(basename "$_lazycodex_root" 2>/dev/null)"
+    echo "  [OK] omo@sisyphuslabs installed, enabled${_lazycodex_version:+ ($_lazycodex_version)}"
+    echo "       root: ${_lazycodex_root:-?}"
+  else
+    echo "  [MISS] LazyCodex Codex plugin (expected omo@sisyphuslabs) — run setup.sh sync"
     WARNINGS=$((WARNINGS+1))
   fi
 

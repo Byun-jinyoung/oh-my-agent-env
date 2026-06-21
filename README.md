@@ -18,6 +18,7 @@ bash setup.sh
 | **my-statusline.mjs** | Custom HUD: model, branch, 5h/7d usage bars, context, agents, todos |
 | **GEMINI.md** | Global reliability rules for Antigravity (agy reads `~/.gemini/GEMINI.md` via gemini-cli inheritance) |
 | **instructions.md** | Global reliability rules for Codex CLI |
+| **LazyCodex** | Codex plugin `omo@sisyphuslabs` installed via `npx lazycodex-ai@latest install --no-tui` |
 | **OMC patches** | Model-first display order in OMC HUD |
 | **Graphify** | Knowledge graph CLI (`graphifyy` package, `graphify` command), Claude/Codex skills, and project hooks |
 
@@ -56,6 +57,26 @@ oh-my-agent-env/
 - Claude Code CLI
 - (Optional) Antigravity (agy): see https://antigravity.google.com — gemini-cli successor
 - (Optional) Codex CLI: `npm install -g @openai/codex`
+
+## LazyCodex for Codex
+
+`setup.sh sync` installs LazyCodex on each machine through its upstream npx
+installer:
+
+```bash
+npx --yes lazycodex-ai@latest install --no-tui
+```
+
+LazyCodex registers in Codex as `omo@sisyphuslabs`, so the expected verification
+surface is:
+
+```bash
+codex plugin list | grep 'omo@sisyphuslabs'
+~/.local/bin/omo --version
+```
+
+After the first sync on a new machine, restart Codex App/CLI and approve the
+`omo@sisyphuslabs` hooks when Codex asks.
 
 ## Project Graphify Setup
 

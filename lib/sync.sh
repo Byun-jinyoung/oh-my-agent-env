@@ -125,7 +125,7 @@ PYEOF
   fi
 }
 
-# [7] External tools (context-mode, codex CLI, codex-gemini-mcp fork, OMC patches)
+# [7] External tools (context-mode, codex CLI, LazyCodex, codex-gemini-mcp fork, OMC patches)
 sync_external_tools() {
   # External tools
   log_and_print "[7] External tools"
@@ -238,6 +238,30 @@ sync_external_tools() {
     else
       log_and_print "    [WARN] @openai/codex install failed — codex-mcp will not function. See $LOG_FILE"
     fi
+  fi
+
+  # LazyCodex — Codex agent harness installed via npx. The public package is
+  # lazycodex-ai, but the Codex plugin it registers is omo@sisyphuslabs.
+  if verify_lazycodex_codex_plugin; then
+    local _lcx_version=""
+    _lcx_version="$(find "$CODEX_DIR/plugins/cache/sisyphuslabs/omo" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1 | xargs basename 2>/dev/null || true)"
+    log_and_print "    [OK] LazyCodex installed as omo@sisyphuslabs${_lcx_version:+ ($_lcx_version)}"
+  elif command -v npm &>/dev/null && command -v codex &>/dev/null; then
+    log_and_print "    Installing LazyCodex for Codex (npx lazycodex-ai@latest install --no-tui)..."
+    run_with_timeout "LazyCodex install" \
+      "$NPM_USER_ENV npx --yes lazycodex-ai@latest install --no-tui < /dev/null" \
+      | tail -4 || true
+    if verify_lazycodex_codex_plugin; then
+      local _lcx_version=""
+      _lcx_version="$(find "$CODEX_DIR/plugins/cache/sisyphuslabs/omo" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1 | xargs basename 2>/dev/null || true)"
+      log_and_print "    [OK] LazyCodex installed as omo@sisyphuslabs${_lcx_version:+ ($_lcx_version)}"
+      log_and_print "         Restart Codex App/CLI and approve omo@sisyphuslabs hooks on first launch."
+    else
+      log_and_print "    [WARN] LazyCodex install ran but Codex plugin verification failed — see $LOG_FILE"
+      log_and_print "           Manual check: codex plugin list | grep 'omo@sisyphuslabs'"
+    fi
+  else
+    log_and_print "    [SKIP] LazyCodex — requires npm and codex CLI"
   fi
 
   # codex-gemini-mcp (Byun-jinyoung fork — codex-mcp + antigravity-mcp)
