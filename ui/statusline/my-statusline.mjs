@@ -136,12 +136,24 @@ function bar(pct, n) {
 
 function resetTxt(resetsAt) {
   if (!resetsAt) return "";
-  const secs = Math.max(0, Math.floor((new Date(resetsAt).getTime() - Date.now()) / 1000));
+  const secs = Math.floor((new Date(resetsAt).getTime() - Date.now()) / 1000);
+  if (secs < 60) return ""; // expired / stale source — omit instead of "(0m)"
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
   if (h > 24) return `(${Math.floor(h / 24)}d${h % 24}h)`;
   if (h > 0) return `(${h}h${m}m)`;
   return `(${m}m)`;
+}
+
+// A rate window can come from the payload or the cc-alchemy cache. The payload
+// sometimes carries a STALE resets_at (long-lived session); the cache is freshly
+// fetched. Pick whichever resets furthest in the future so the freshest snapshot
+// (percentage + countdown) wins. Missing resets_at sorts oldest.
+function pickWindow(a, b) {
+  const t = (w) => (w && w.resets_at ? new Date(w.resets_at).getTime() : 0);
+  if (!a) return b;
+  if (!b) return a;
+  return t(a) >= t(b) ? a : b;
 }
 
 // A usage window may come from the payload ({used_percentage, resets_at}) or
@@ -168,10 +180,11 @@ function main() {
   const branch = gitBranch(cwd);
   const ctxPct = Math.round(data.context_window?.used_percentage || 0);
 
-  // Rate limits: prefer the payload, fall back to the cc-alchemy cache.
+  // Rate limits: take the freshest of {payload, cc-alchemy cache} per window
+  // (payload resets_at can be stale on long sessions; cache is freshly fetched).
   const cache = readCache();
-  const five = data.rate_limits?.five_hour ?? cache.five_hour;
-  const week = data.rate_limits?.seven_day ?? cache.seven_day;
+  const five = pickWindow(data.rate_limits?.five_hour, cache.five_hour);
+  const week = pickWindow(data.rate_limits?.seven_day, cache.seven_day);
 
   const mins = sessionMins(data.transcript_path);
   const cost = data.cost?.total_cost_usd;
