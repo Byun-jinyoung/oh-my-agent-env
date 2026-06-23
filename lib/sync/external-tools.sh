@@ -20,6 +20,22 @@ sync_external_tools() {
       log_and_print "           Run: echo 'export PATH=\"\$(npm config get prefix)/bin:\$PATH\"' >> ~/.bashrc"
     fi
   fi
+  # cc-alchemy-statusline — usage tracker that powers the 5h/wk bars + reset
+  # countdown in ui/statusline/my-statusline.mjs. my-statusline shells out to
+  # `cc-alchemy-statusline --fetch-only` to keep the rate-limit cache fresh;
+  # without it the reset countdowns go stale (show no "(…)"). npm global pkg.
+  if command -v cc-alchemy-statusline &>/dev/null; then
+    log_and_print "    [OK] cc-alchemy-statusline installed"
+  else
+    log_and_print "    Installing cc-alchemy-statusline (npm global → $USER_NPM_PREFIX)..."
+    run_with_timeout "cc-alchemy-statusline install" "$NPM_USER_ENV npm install -g cc-alchemy-statusline < /dev/null" \
+      | tail -3 || true
+    if command -v cc-alchemy-statusline &>/dev/null; then
+      log_and_print "    [OK] cc-alchemy-statusline installed -> $(command -v cc-alchemy-statusline)"
+    else
+      log_and_print "    [WARN] cc-alchemy-statusline still not on PATH after install — statusline reset countdown will be stale."
+    fi
+  fi
   # @openai/codex CLI — REQUIRED by codex-mcp (the MCP spawns `codex` from PATH).
   # Without this, codex-mcp connects but every request fails on first spawn.
   #
