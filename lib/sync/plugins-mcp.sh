@@ -386,6 +386,14 @@ PYEOF
       _codex_resolved="$(command -v codex)"
       _codex_dir="$(dirname "$_codex_resolved")"
     fi
+    # Prefer the standalone installer's binary at ~/.local/bin over the live
+    # PATH winner: a stale npm-global shim (e.g. an outdated @openai/codex or a
+    # leftover opencodex wrapper) can shadow it earlier in PATH and fail on
+    # missing optional deps (2026-07: broken 0.142.5 shim vs working 0.144.1).
+    if [ -x "$HOME/.local/bin/codex" ]; then
+      _codex_resolved="$HOME/.local/bin/codex"
+      _codex_dir="$HOME/.local/bin"
+    fi
     # antigravity-mcp shells out to the `agy` CLI, which typically installs to
     # ~/.local/bin — a dir NOT covered by the npm/system segments below. Without
     # agy's dir in the baked PATH, antigravity-mcp starts (stdio handshake ok, so
@@ -394,17 +402,57 @@ PYEOF
     # dir (and include ~/.local/bin generally) so the injected PATH can find it.
     local _agy_dir=""
     if command -v agy &>/dev/null; then _agy_dir="$(dirname "$(command -v agy)")"; fi
+    # codex-mcp / antigravity-mcp are `#!/usr/bin/env node` shims: the *node*
+    # that runs them is resolved from this same baked PATH, not from the shell
+    # that launched Claude Code. If a foreign-arch node sits earlier in the
+    # baked PATH than a native one (e.g. an Intel-era /usr/local/bin/node on an
+    # arm64 Mac), the shim runs under emulation and codex's platform-specific
+    # optional dep (@openai/codex-darwin-x64 vs -arm64) fails to resolve →
+    # "Missing optional dependency" on every spawn. Resolve the sync shell's
+    # node per-machine at registration time (same pattern as _codex_dir /
+    # _agy_dir above — never hardcode: machines differ in OS and arch).
+    # The arch cross-check is Darwin-only: Rosetta is the only case we know of
+    # where a wrong-arch binary silently runs instead of failing outright.
+    local _node_dir=""
+    if command -v node &>/dev/null; then
+      _node_dir="$(dirname "$(command -v node)")"
+      if [ "$(uname -s)" = "Darwin" ]; then
+        local _m_arch _n_desc _cand
+        _m_arch="$(uname -m)"
+        _n_desc="$(file -b "$(command -v node)" 2>/dev/null || true)"
+        if [ -n "$_n_desc" ] && ! echo "$_n_desc" | grep -q "$_m_arch"; then
+          # Scan the sync shell's own PATH segments first (covers miniforge,
+          # nvm, asdf, volta, custom brew prefixes — per-machine, no hardcoded
+          # homes), then the usual system dirs as a last resort.
+          _node_dir=""
+          local _path_cand
+          IFS=':' read -ra _path_cand <<< "$PATH"
+          for _cand in "${_path_cand[@]}" /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
+            [ -n "$_cand" ] || continue
+            if [ -x "$_cand/node" ] \
+               && file -b "$_cand/node" 2>/dev/null | grep -q "$_m_arch"; then
+              _node_dir="$_cand"; break
+            fi
+          done
+          [ -z "$_node_dir" ] && log_and_print "    [codex-mcp] [WARN] no ${_m_arch}-native node found; MCP node shims may run under emulation"
+        fi
+      fi
+    fi
     # Build PATH from non-empty segments only (guard against empty npm prefix
     # turning into bare ":/usr/local/bin..." which means "current dir first").
-    # Order: actual codex location → USER_NPM_PREFIX/bin → currently-configured
-    # npm prefix bin → ~/.npm-global/bin → standard system dirs.
+    # Order: native-arch node dir → actual codex location → ~/.local/bin
+    # (standalone codex/agy installs; must precede the npm dirs so a stale
+    # npm-global codex shim can never shadow it) → USER_NPM_PREFIX/bin
+    # → currently-configured npm prefix bin → ~/.npm-global/bin → standard
+    # system dirs.
     CODEX_PATH=""
-    for _seg in "$_codex_dir" \
+    for _seg in "$_node_dir" \
+                "$_codex_dir" \
+                "$HOME/.local/bin" \
                 "$USER_NPM_PREFIX/bin" \
                 "$NPM_BIN_DIR" \
                 "$HOME/.npm-global/bin" \
                 "$_agy_dir" \
-                "$HOME/.local/bin" \
                 "/usr/local/bin" "/opt/homebrew/bin" "/usr/bin" "/bin"; do
       [ -n "$_seg" ] || continue
       # de-dup
