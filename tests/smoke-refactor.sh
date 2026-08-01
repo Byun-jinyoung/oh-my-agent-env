@@ -383,4 +383,36 @@ for target in ("claude/CLAUDE.md", "codex/AGENTS.md", "gemini/GEMINI.md"):
 sys.exit(1 if bad else 0)
 PY
 
+echo "[12] NPM_USER_ENV survives the bash -c it is built for"
+# Cross-review's sharpest remaining point: nothing in this suite touches the
+# sync paths that decide WHERE a global npm install lands. NPM_USER_ENV carries
+# quotes on purpose (lib/common.sh), and shellcheck is silenced about them
+# because run_with_timeout evaluates the string through `bash -c`. If that
+# contract ever breaks, npm falls back to the system prefix and installs land
+# outside $HOME — the failure is silent and needs root to undo.
+#
+# So pin the contract rather than the implementation: build the prefix under a
+# HOME containing a space (the case the quoting exists for) and assert the value
+# arrives intact on the far side of a real `bash -c`.
+np="$TMP/np dir"; mkdir -p "$np"
+(
+  HOME="$np"; export HOME
+  LOG_FILE="$TMP/np.log"
+  SCRIPT_DIR="$ROOT"; export SCRIPT_DIR
+  # shellcheck disable=SC1091
+  source "$ROOT/lib/common.sh" 2>/dev/null || true
+  ensure_user_npm_prefix >/dev/null 2>&1
+
+  case "$USER_NPM_PREFIX" in
+    "$np"/*) ;;
+    *) echo "prefix escaped HOME: $USER_NPM_PREFIX"; exit 1 ;;
+  esac
+  got="$(bash -c "$NPM_USER_ENV printenv npm_config_prefix")" || {
+    echo "NPM_USER_ENV is not bash -c safe: $NPM_USER_ENV"; exit 1; }
+  [ "$got" = "$USER_NPM_PREFIX" ] || {
+    echo "prefix mangled through bash -c: got '$got' want '$USER_NPM_PREFIX'"; exit 1; }
+  [ -d "$USER_NPM_PREFIX/bin" ] && [ -d "$USER_NPM_PREFIX/lib" ] || {
+    echo "prefix dirs not created"; exit 1; }
+) || fail "NPM_USER_ENV no longer delivers the prefix it promises"
+
 echo "smoke-refactor OK"
