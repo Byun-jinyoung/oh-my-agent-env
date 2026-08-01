@@ -26,7 +26,11 @@ while [ $# -gt 0 ]; do
         --cmd)  CMD="$2" ;;
         --note) NOTE="$2" ;;
         --exit) EXITCODE="$2" ;;
-        --repo) LAB_ROOT="$(cd "$2" && pwd -P)"; export LAB_ROOT ;;
+        # Unlike its siblings this used to swallow a failed cd, so a typo in
+        # --repo silently recorded the failure against the CALLER's repo — the
+        # one place a cross-session memory of broken commands must not land.
+        --repo) LAB_ROOT="$(cd "$2" && pwd -P)" || lab_die "no such repo: $2"
+                export LAB_ROOT ;;
       esac
       shift 2 ;;
     *) lab_die "unknown option: $1" ;;

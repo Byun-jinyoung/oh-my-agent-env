@@ -26,7 +26,11 @@ export LAB_DIR
 # that appear nowhere else in the code, and anything added past line 12 would
 # not have shown up on the help screen where the error would be visible.
 usage() {
-  awk '/^set -/{exit} NR>1 && /^#/{sub(/^# ?/, ""); print}' \
+  # Stop at the first line that is not a comment, whatever it is. Keying on
+  # `set -` assumed the header is always followed by exactly that; move the
+  # set, indent it, or drop it, and the internal comments leak into --help
+  # while awk still exits 0, so the broken help reads as success.
+  awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' \
     "$(readlink -f "${BASH_SOURCE[0]}")"
 }
 

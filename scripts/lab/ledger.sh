@@ -29,7 +29,8 @@ METRICS="" TAG="" NOGATE=0 REASON="" LIMIT=20 METRIC="" ORDER=max
 # on "unknown option" — the help block below the dispatch was unreachable from
 # the only spelling a user would try.
 ledger_usage() {
-  awk '/^set -/{exit} NR>1 && /^#/{sub(/^# ?/, ""); print}' \
+  # Stops at the first non-comment line rather than at `set -`; see oma-lab.
+  awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' \
     "$(readlink -f "${BASH_SOURCE[0]}")"
 }
 
@@ -58,13 +59,17 @@ parse_common() {
   CMD_ARGV=()
 }
 
-FILE="$(lab_ledger_path)"
-
+# The ledger path is resolved at each use, not cached here. --repo is what sets
+# LAB_ROOT, and parse_common runs after this point, so a cached path pointed at
+# whatever directory the command was launched from: `run --repo /target` wrote
+# ledger.jsonl into the CALLER's repo while CURRENT landed in the target, and a
+# run launched from this harness wrote straight into it. Resolving late means a
+# future branch cannot reintroduce the ordering bug by forgetting to reassign.
 case "$verb" in
   run)
     if [ "${1:-}" = "list" ]; then
       shift; parse_common "$@"
-      lab_jsonl_query "$FILE" '
+      lab_jsonl_query "$(lab_ledger_path)" '
 n = int(args[0])
 for r in rows[-n:]:
     print("%s  %s  exit=%-3s %6.1fs  %s" % (
@@ -86,7 +91,7 @@ print("(%d runs recorded)" % len(rows))
     lab_ensure_gitignore
 
     # Same code, same tree, same command: almost always an accident.
-    lab_jsonl_query "$FILE" '
+    lab_jsonl_query "$(lab_ledger_path)" '
 h, g = args[0], args[1]
 prev = [r for r in rows if r.get("cmd_hash") == h and r.get("git_state") == g]
 if prev:
@@ -104,7 +109,7 @@ if prev:
         gate="passed"
       else
         gate="failed"
-        lab_append_jsonl "$FILE" "$(lab_json_obj \
+        lab_append_jsonl "$(lab_ledger_path)" "$(lab_json_obj \
           ts "$(lab_now)" run_id aborted cmd "$CMD_STR" cmd_hash "$(lab_cmd_hash "$CMD_STR")" \
           commit "$(lab_git_commit)" git_state "$(lab_git_commit | cut -c1-12):$(lab_diff_hash)" \
           gate failed exit 1 aborted true repo "$root")"
@@ -124,7 +129,7 @@ if prev:
     code=$?
     dur=$(( $(date +%s) - start ))
 
-    lab_append_jsonl "$FILE" "$(lab_json_obj \
+    lab_append_jsonl "$(lab_ledger_path)" "$(lab_json_obj \
       ts "$(lab_now)" run_id "$RID" cmd "$CMD_STR" cmd_hash "$(lab_cmd_hash "$CMD_STR")" \
       commit "$(lab_git_commit)" dirty "$(lab_git_dirty)" \
       git_state "$(lab_git_commit | cut -c1-12):$(lab_diff_hash)" \
@@ -142,7 +147,7 @@ if prev:
   top)
     parse_common "$@"
     [ -n "$METRIC" ] || lab_die "top requires --metric KEY"
-    lab_jsonl_query "$FILE" '
+    lab_jsonl_query "$(lab_ledger_path)" '
 key, order, n = args[0], args[1], int(args[2])
 def val(r):
     for pair in (r.get("metrics") or "").split(","):

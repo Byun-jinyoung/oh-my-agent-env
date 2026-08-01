@@ -37,6 +37,8 @@ command -v python3 >/dev/null 2>&1 || { echo "  [SKIP] lab e2e: python3 missing"
 
 HARNESS_BEFORE="$TMP/harness-before"
 (cd "$ROOT" && git status --porcelain) > "$HARNESS_BEFORE" 2>/dev/null
+# shellcheck disable=SC2034  # read inside check()'s eval, which shellcheck cannot follow
+EXCLUDE_BEFORE="$(cat "$ROOT/.git/info/exclude" 2>/dev/null | sha256sum)"
 
 # --- read-only verbs must not create state ----------------------------------
 # The regression this file exists for. lab_state_dir() used to mkdir -p as a
@@ -93,6 +95,10 @@ lab board claim --id seed-sweep --hypothesis "higher seed lowers rmse"
 check "board records the claim" 'bash "$OMA_LAB" board list | grep -q seed-sweep'
 lab board claim --id seed-sweep --hypothesis "duplicate"
 check "board refuses a second claim of the same id" '[ "$RC" -ne 0 ]'
+# The exit code alone would pass even if the duplicate row were appended and
+# the refusal were cosmetic. Count the rows.
+check "the refused claim wrote no row" \
+      '[ "$(wc -l < .oma-lab/experiments.jsonl)" -eq 1 ]'
 
 # --- run: the ledger records what was tried ----------------------------------
 for s in 0 1 2; do
@@ -117,7 +123,10 @@ check "top --min surfaces the best run" \
 # --- capsule: a number stays traceable to what produced it -------------------
 lab capsule save --config data/train.csv --output ckpt/model_seed2.pt \
   --note "best of the seed sweep"
-check "capsule is listed"                'bash "$OMA_LAB" capsule list | grep -q .'
+# `capsule list | grep -q .` would pass on the empty-index output, which is
+# still a line: "(0 capsule(s))". Assert the index actually gained a row.
+check "capsule index gained a row"       '[ "$(wc -l < .oma-lab/capsules.jsonl)" -eq 1 ]'
+check "capsule list reports it"          'bash "$OMA_LAB" capsule list | grep -qv "(0 capsule"'
 check "whence traces the checkpoint back" \
       'bash "$OMA_LAB" capsule whence ckpt/model_seed2.pt | grep -q run='
 
@@ -125,15 +134,47 @@ check "whence traces the checkpoint back" \
 lab fail record --cmd "python3 train.py --bogus" --exit 2 --note "no such flag"
 lab fail check --cmd "python3 train.py --bogus"
 check "a known failure is re-reported (exit 3)" '[ "$RC" -eq 3 ]'
+# `!= 3` would also accept an unrelated error such as 1, so these pin 0 exactly:
+# the point is that the command is cleared to run, not merely that some other
+# failure occurred.
 lab fail check --cmd "python3 train.py 3"
-check "an unseen command is not blocked" '[ "$RC" -ne 3 ]'
+check "an unseen command is cleared to run" '[ "$RC" -eq 0 ]'
 lab fail resolve --cmd "python3 train.py --bogus" --note "fixed"
 lab fail check --cmd "python3 train.py --bogus"
-check "a resolved failure stops blocking" '[ "$RC" -ne 3 ]'
+check "a resolved failure is cleared to run" '[ "$RC" -eq 0 ]'
+
+# --- --repo: state must land in ONE repo, the named one ----------------------
+# The ledger path used to be resolved before --repo was parsed, so a run
+# launched from elsewhere split its state: ledger.jsonl in the caller's repo,
+# CURRENT in the target. Launched from the harness, that wrote into the harness.
+launcher="$TMP/launcher"; target="$TMP/target"
+mkdir -p "$launcher" "$target"
+(cd "$launcher" && git init -q .)
+(cd "$target"   && git init -q .)
+( cd "$launcher" && bash "$OMA_LAB" run --repo "$target" --no-gate --reason e2e -- true ) >/dev/null 2>&1
+check "--repo keeps the ledger out of the caller's repo" '[ ! -e "$launcher/.oma-lab/ledger.jsonl" ]'
+check "--repo puts the ledger in the named repo"         '[ -f "$target/.oma-lab/ledger.jsonl" ]'
+check "--repo keeps CURRENT with the ledger"             '[ -f "$target/.oma-lab/CURRENT" ]'
+# A typo'd --repo must not silently record against the caller instead.
+( cd "$launcher" && bash "$OMA_LAB" fail record --repo "$TMP/no-such-repo" --cmd false ) >/dev/null 2>&1
+check "a bad --repo is refused, not redirected" '[ ! -e "$launcher/.oma-lab/failures.jsonl" ]'
+
+# --- a write that cannot happen must not report success ----------------------
+blocked="$TMP/blocked"; mkdir -p "$blocked"
+(cd "$blocked" && git init -q .)
+chmod u-w "$blocked"
+( cd "$blocked" && bash "$OMA_LAB" board claim --id nope ) >/dev/null 2>&1
+blocked_rc=$?
+chmod u+w "$blocked"
+check "an unwritable repo fails loudly" '[ "'"$blocked_rc"'" -ne 0 ]'
 
 # --- containment --------------------------------------------------------------
 check "state lands in the target repo" '[ -d "$WORK/.oma-lab" ]'
 check "no state in the harness"        '[ ! -e "$ROOT/.oma-lab" ]'
+# git status cannot see this one: lab_ensure_gitignore writes .git/info/exclude,
+# which is not a tracked path and never shows up as a modification.
+check "harness .git/info/exclude untouched" \
+      '[ "$(cat "$ROOT/.git/info/exclude" 2>/dev/null | sha256sum)" = "$EXCLUDE_BEFORE" ]'
 (cd "$ROOT" && git status --porcelain) > "$TMP/harness-after" 2>/dev/null
 check "harness working tree untouched" 'diff -q "$HARNESS_BEFORE" "$TMP/harness-after"'
 

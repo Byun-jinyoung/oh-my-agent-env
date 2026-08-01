@@ -139,21 +139,30 @@ print(json.dumps(out, ensure_ascii=False, sort_keys=True, allow_nan=False))
 # 12 concurrent journal entries to exactly this, so the lock is here from the
 # start rather than after the next incident. The lock lives outside the state
 # dir so a synced or shared filesystem does not replicate it.
+# A write that does not happen is fatal, not a warning. No caller checked the
+# return value, so on a read-only repo `board claim` printed "claimed" and
+# exited 0 having recorded nothing — the tool then reports an experiment as
+# taken that no file remembers, which is worse than refusing to claim it.
+# Failing here means the caller cannot get it wrong by omission.
 lab_append_jsonl() {
-  local file="$1" row="$2"
-  mkdir -p "$(dirname "$file")" || { lab_warn "cannot create $(dirname "$file")"; return 1; }
-  local lockdir="${XDG_CACHE_HOME:-$HOME/.cache}/oh-my-agent-env/locks"
+  local file="$1" row="$2" dir
+  dir="$(dirname "$file")"
+  mkdir -p "$dir" || lab_die "cannot create $dir"
+  # HOME may be unset in a batch context (cron, a Slurm prologue); falling back
+  # keeps the lock optional rather than making an unset variable fatal.
+  local lockdir="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/oh-my-agent-env/locks"
   if command -v flock >/dev/null 2>&1 && mkdir -p "$lockdir" 2>/dev/null; then
-    local lock
+    local lock rc=0
     lock="$lockdir/lab-$(printf '%s' "$file" | sha256sum | cut -c1-16).lock"
     if exec 8>"$lock" 2>/dev/null && flock -w 10 8; then
-      printf '%s\n' "$row" >> "$file"
+      printf '%s\n' "$row" >> "$file" || rc=$?
       flock -u 8
+      [ "$rc" -eq 0 ] || lab_die "cannot write $file"
       return 0
     fi
     lab_warn "lock unavailable — appending unserialized"
   fi
-  printf '%s\n' "$row" >> "$file"
+  printf '%s\n' "$row" >> "$file" || lab_die "cannot write $file"
 }
 
 # Read every row of a JSONL file as python objects and run CODE over `rows`.
