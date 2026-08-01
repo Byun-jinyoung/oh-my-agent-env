@@ -257,6 +257,43 @@ cmd_oma() {
     return 0
   fi
 
+  # [0] Full-pipeline prerequisites (idempotent). oma workflows (e.g. ultrawork)
+  # shell out to the `oma` CLI (state:emit / state:verify / agent:spawn) and to
+  # the serena MCP server (.mcp.json uses `command: serena`). Without these on
+  # PATH the workflow files load but the full pipeline can't run. We install into
+  # per-user prefixes (bun global -> ~/.bun/bin, uv tool -> ~/.local/bin): no
+  # sudo, reversible (bun remove -g oh-my-agent / uv tool uninstall serena-agent).
+  # Set OMA_SKIP_DEPS=1 to skip (used by the offline smoke test).
+  if [ "${OMA_SKIP_DEPS:-0}" != "1" ]; then
+    echo "[0] Ensure full-pipeline deps (oma CLI + serena)"
+    if command -v oma &>/dev/null; then
+      echo "    [OK] oma CLI present -> $(command -v oma)"
+    elif command -v bun &>/dev/null; then
+      echo "    Installing oma CLI globally (bun add -g oh-my-agent)..."
+      bun add -g oh-my-agent < /dev/null 2>&1 | tail -2 | sed 's/^/    /' || true
+      if command -v oma &>/dev/null || [ -x "$HOME/.bun/bin/oma" ]; then
+        echo "    [OK] oma CLI installed -> $HOME/.bun/bin/oma"
+      else
+        echo "    [WARN] oma CLI install ran but 'oma' still not found — workflow CLI calls (state:emit/agent:spawn) will fail"
+      fi
+    else
+      echo "    [SKIP] bun not found — install bun first (https://bun.sh); oma CLI calls will fail"
+    fi
+    if command -v serena &>/dev/null; then
+      echo "    [OK] serena present -> $(command -v serena)"
+    elif command -v uv &>/dev/null; then
+      echo "    Installing serena (uv tool install serena-agent)..."
+      uv tool install serena-agent < /dev/null 2>&1 | tail -2 | sed 's/^/    /' || true
+      if command -v serena &>/dev/null || [ -x "$HOME/.local/bin/serena" ]; then
+        echo "    [OK] serena installed -> $HOME/.local/bin/serena"
+      else
+        echo "    [WARN] serena install ran but 'serena' still not found — serena MCP will stay disconnected"
+      fi
+    else
+      echo "    [SKIP] uv not found — install uv first (https://docs.astral.sh/uv/); serena MCP will stay disconnected"
+    fi
+  fi
+
   echo "[1] oma install (idempotent)"
   if ( cd "$project_path" && OMA_YES=1 CI=true bunx "oh-my-agent@${oma_version}" install < /dev/null ) \
        2>&1 | grep -v -E 'Resolving|Resolved|warn:|Saved lockfile|→ \.' | sed 's/^/    /'; then

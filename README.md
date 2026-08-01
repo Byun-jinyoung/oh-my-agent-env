@@ -243,8 +243,9 @@ Install/refresh the per-project multi-agent harness:
 bash setup.sh oma /path/to/project   # default: current dir; idempotent
 ```
 
-This runs `bunx oh-my-agent@latest install`, then:
+This first ensures the **full-pipeline prerequisites** (idempotent, step `[0]`), then runs `bunx oh-my-agent@latest install`:
 
+- **oma CLI + serena** — oma workflows (e.g. `ultrawork`) shell out to the `oma` CLI (`state:emit` / `state:verify` / `agent:spawn`) and to the **serena** MCP server (`.mcp.json` uses `command: serena`). Without both on `PATH` the workflow files load but the full pipeline can't run. `setup.sh oma` installs them into per-user prefixes — `bun add -g oh-my-agent` (→ `~/.bun/bin/oma`) and `uv tool install serena-agent` (→ `~/.local/bin/serena`). No sudo; reversible via `bun remove -g oh-my-agent` / `uv tool uninstall serena-agent`. Set `OMA_SKIP_DEPS=1` to skip (e.g. offline). `~/.bun/bin` and `~/.local/bin` must be on `PATH` so Claude Code can spawn them.
 - **`.agents/oma-config.yaml` is a managed file** — `setup.sh oma` overwrites it from `templates/oma/oma-config.yaml` on every run. This is the single source of truth (cross-machine reproducibility, no drift). **To change config, edit `templates/oma/oma-config.yaml`** (tracked) and re-run — do not hand-edit the generated copy, it is overwritten.
 - **statusline** — oma points the project statusLine at its own `hud.ts`. `setup.sh oma` re-pins our unified statusline in `.claude/settings.local.json` (gitignored, outranks project `settings.json`), so it wins and survives every oma re-link. Always install oma via `setup.sh oma` (not `bunx` directly) to keep this pin.
 

@@ -76,7 +76,9 @@ echo "stub: oma installed"
 STUB
 chmod +x "$stub_bin/bunx"
 oma_proj="$oma_tmp/proj"; mkdir -p "$oma_proj"
-run_oma() { PATH="$stub_bin:$PATH" HOME="$oma_tmp/home" bash "$ROOT/setup.sh" oma "$oma_proj" >/dev/null 2>&1; }
+# OMA_SKIP_DEPS=1 keeps this hermetic/offline: skip the [0] oma-CLI/serena
+# global install step (bun add -g / uv tool install would hit the network).
+run_oma() { OMA_SKIP_DEPS=1 PATH="$stub_bin:$PATH" HOME="$oma_tmp/home" bash "$ROOT/setup.sh" oma "$oma_proj" >/dev/null 2>&1; }
 run_oma
 # a) oma-config.yaml overlaid byte-identical to the tracked template (managed)
 cmp -s "$oma_proj/.agents/oma-config.yaml" "$ROOT/templates/oma/oma-config.yaml"
