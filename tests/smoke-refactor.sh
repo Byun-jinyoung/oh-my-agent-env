@@ -245,4 +245,17 @@ jf2="$(OMA_VAULT="$jv2" bash "$ROOT/scripts/journal.sh" path)"
 [ "$(sed -n '/OMA-WORK-JOURNAL:BEGIN/,/^<!-- OMA-WORK-JOURNAL:END -->$/p' "$jf2" | grep -c '^- ')" = 2 ] \
   || fail "journal entries escaped the managed block"
 
+# Appending is read-modify-write. Unserialized, concurrent callers dropped most
+# of their entries — 2 of 12 survived when this was first measured.
+jv3="$TMP/vault3"; mkdir -p "$jv3"
+for i in 1 2 3 4 5 6 7 8; do
+  OMA_VAULT="$jv3" bash "$ROOT/scripts/journal.sh" add "conc-$i" >/dev/null 2>&1 &
+done
+wait
+jf3="$(OMA_VAULT="$jv3" bash "$ROOT/scripts/journal.sh" path)"
+[ "$(grep -c '^- ' "$jf3")" = 8 ] || fail "concurrent journal writes lost entries"
+# The lock must not live in the vault: a Syncthing-backed vault would replicate
+# it to machines where it means nothing.
+[ -z "$(find "$jv3" -name '*.lock' 2>/dev/null)" ] || fail "journal lock written inside the vault"
+
 echo "smoke-refactor OK"

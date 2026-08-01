@@ -72,6 +72,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+write_entry() {
 python3 - "$FILE" "$DAY" "$SUMMARY" "$REPO" "$BRANCH" "$OUTCOME" "$EVIDENCE" "$NEXT" <<'PYEOF' || warn "write failed — entry not recorded"
 import os, sys, tempfile, time
 from pathlib import Path
@@ -135,4 +136,32 @@ except BaseException:
     raise
 print(f"journal: {path}")
 PYEOF
+}
+
+# Serialize writers. Appending is read-modify-write, so concurrent callers —
+# several agent sessions, or one session with parallel subagents — otherwise
+# race and silently drop entries: measured 2 of 12 surviving without this.
+#
+# The lock lives outside the vault. A lock file inside a Syncthing-backed vault
+# would be replicated to other machines, where it means nothing and only invites
+# conflict copies.
+#
+# Bounded wait, then give up: a journal must never hold up the work it records.
+LOCK_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/oh-my-agent-env/locks"
+if command -v flock >/dev/null 2>&1 && mkdir -p "$LOCK_DIR" 2>/dev/null; then
+  if exec 9>"$LOCK_DIR/journal-$DAY.lock" 2>/dev/null; then
+    if flock -w 10 9; then
+      write_entry
+      flock -u 9
+    else
+      warn "another writer held the journal lock for 10s — entry not recorded"
+    fi
+  else
+    warn "cannot open journal lock — writing unserialized"
+    write_entry
+  fi
+else
+  warn "flock unavailable — writing unserialized"
+  write_entry
+fi
 exit 0
