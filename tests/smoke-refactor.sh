@@ -318,4 +318,46 @@ lab_repo="$TMP/labrepo"; mkdir -p "$lab_repo"
 # and nothing leaked into this repo
 test ! -e "$ROOT/.oma-lab" || fail "lab tools wrote into the harness repo"
 
+echo "[11] Layer A rules reach every runtime, not just Claude"
+# Cross-review caught this one: assemble_global_rules (lib/common.sh:713) feeds
+# claude, codex AND antigravity from the same rules/*.md. The obvious way to
+# shrink the resident file — move a rule module into an on-demand skill — is
+# safe only if that skill ships to all three. Move it Claude-only and the other
+# two silently lose the rule, with nothing failing to say so.
+#
+# The invariant is therefore parity, not size: every section heading in Layer A
+# must be reachable from each runtime's global instruction file. Rewording a
+# rule keeps this green; quietly dropping one for two of three CLIs does not.
+#
+# The baseline is checked in (tests/fixtures/layer-a-sections.txt) rather than
+# derived from rules/*.md. Deriving it makes the check a tautology: emptying a
+# module also empties the expectation, so the first version of this step passed
+# its own negative control. Retiring a section now means editing the fixture on
+# purpose.
+ra="$TMP/rules-assemble"; mkdir -p "$ra"
+(
+  SCRIPT_DIR="$ROOT"; export SCRIPT_DIR
+  CONFIG_DIR="$ra/claude"; CODEX_DIR="$ra/codex"; GEMINI_DIR="$ra/gemini"
+  # log() appends to $LOG_FILE (lib/common.sh:15). Sourcing overrides any stub
+  # defined here, so point the real variable at the sandbox instead — an empty
+  # $LOG_FILE makes every log line a failed redirect, which under `set -e` kills
+  # the assembly before it writes anything.
+  LOG_FILE="$ra/sync.log"
+  # shellcheck disable=SC1091
+  source "$ROOT/lib/common.sh" 2>/dev/null || true
+  assemble_global_rules >/dev/null 2>&1
+
+  missing=0
+  while IFS= read -r heading; do
+    for t in "$CONFIG_DIR/CLAUDE.md" "$CODEX_DIR/AGENTS.md" "$GEMINI_DIR/GEMINI.md"; do
+      [ -f "$t" ] || { echo "not assembled: $t"; exit 1; }
+      grep -qxF "$heading" "$t" || {
+        echo "Layer A heading missing from $(basename "$t"): $heading"
+        missing=1
+      }
+    done
+  done < <(grep '^## ' "$ROOT/tests/fixtures/layer-a-sections.txt")
+  [ "$missing" = 0 ] || exit 1
+) || fail "Layer A rules are no longer CLI-agnostic"
+
 echo "smoke-refactor OK"

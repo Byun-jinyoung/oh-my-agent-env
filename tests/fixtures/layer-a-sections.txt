@@ -1,0 +1,14 @@
+# Layer A section headings — checked-in baseline for smoke step [11].
+# Regenerate deliberately when a section is genuinely renamed or retired:
+#   grep -h '^## ' rules/*.md | sort -u >> tests/fixtures/layer-a-sections.txt
+## 기록
+## 의사결정 지원
+## 컨텍스트 명확화
+## 신뢰성 규약
+## 비교의 공정성
+## 편집 규칙
+## 최종 응답 규칙
+## 코드 변경 전 분석
+## 명령 및 도구 사용
+## Spec Gate — 코드보다 명세 먼저
+## Subagent 규칙
