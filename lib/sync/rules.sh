@@ -1,5 +1,6 @@
 # oh-my-agent-env: sync domain - rules.sh
 # Sourced by lib/sync.sh; not standalone.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 # [3][3b][4][4b] Codex instructions, Gemini dir, global rule assembly
 sync_agent_rules() {

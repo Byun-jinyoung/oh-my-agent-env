@@ -4,6 +4,7 @@
 #
 # The domain functions live under lib/sync/*.sh. Keep cmd_sync here as the
 # public sync command boundary so setup.sh dispatch and phase order stay stable.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/sync/core.sh"

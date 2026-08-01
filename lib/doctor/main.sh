@@ -1,5 +1,6 @@
 # oh-my-agent-env: doctor diagnostics orchestrator
 # Sourced by lib/doctor.sh; not standalone.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 cmd_doctor() {
   echo "=== oh-my-agent-env doctor ==="

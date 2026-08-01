@@ -217,7 +217,7 @@ echo "[9] Obsidian work-journal (fake vault, never the real one)"
 jv="$TMP/vault"; mkdir -p "$jv"
 OMA_VAULT="$TMP/no-such-vault" bash "$ROOT/scripts/journal.sh" add "x" >/dev/null 2>&1 \
   || fail "journal must fail open when the vault is absent"
-OMA_VAULT="$jv" bash "$ROOT/scripts/journal.sh" add "first" --outcome done >/dev/null 2>&1
+OMA_VAULT="$jv" bash "$ROOT/scripts/journal.sh" add "first" --outcome "done" >/dev/null 2>&1
 jf="$(OMA_VAULT="$jv" bash "$ROOT/scripts/journal.sh" path)"
 test -f "$jf" || fail "journal file not created"
 grep -q 'OMA-WORK-JOURNAL:BEGIN' "$jf" || fail "journal managed block missing"

@@ -1,11 +1,11 @@
 # oh-my-agent-env: doctor domain - frameworks.sh
 # Sourced by lib/doctor.sh; not standalone.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 doctor_framework_surfaces() {
   echo "[ Managed skills ]"
   # graphify is checked separately below (CLI-owned, not a oh-my-agent-env symlink).
   for sk in triangle-review codebase-scan; do
-    src="$SCRIPT_DIR/skills/$sk"
     dst="$CONFIG_DIR/skills/$sk"
     if [ -L "$dst" ] && [ -e "$dst" ]; then echo "  [OK] $sk symlink"
     elif [ -e "$dst" ]; then echo "  [WARN] $sk exists but not symlinked from oh-my-agent-env"

@@ -1,5 +1,6 @@
 # oh-my-agent-env: sync domain - frameworks.sh
 # Sourced by lib/sync.sh; not standalone.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 # [9b][9c][10] Codex/Antigravity MCP entries, Serena hardening, frameworks (GSD/RTK/Graphify/CRG/codegraph)
 sync_agent_mcp_frameworks() {

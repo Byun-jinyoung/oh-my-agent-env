@@ -138,7 +138,8 @@ lab_append_jsonl() {
   mkdir -p "$(dirname "$file")" || { lab_warn "cannot create $(dirname "$file")"; return 1; }
   local lockdir="${XDG_CACHE_HOME:-$HOME/.cache}/oh-my-agent-env/locks"
   if command -v flock >/dev/null 2>&1 && mkdir -p "$lockdir" 2>/dev/null; then
-    local lock="$lockdir/lab-$(printf '%s' "$file" | sha256sum | cut -c1-16).lock"
+    local lock
+    lock="$lockdir/lab-$(printf '%s' "$file" | sha256sum | cut -c1-16).lock"
     if exec 8>"$lock" 2>/dev/null && flock -w 10 8; then
       printf '%s\n' "$row" >> "$file"
       flock -u 8

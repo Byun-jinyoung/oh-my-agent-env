@@ -1,5 +1,6 @@
 # oh-my-agent-env: doctor domain - lazycodex.sh
 # Sourced by lib/doctor.sh; not standalone.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 doctor_lazycodex() {
   echo "[ LazyCodex (Codex plugin) ]"

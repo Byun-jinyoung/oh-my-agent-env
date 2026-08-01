@@ -124,7 +124,8 @@ cmd_init_project() {
     echo "[FAIL] Directory not found: $1"
     exit 1
   }
-  local project_name="$(basename "$project_path")"
+  local project_name
+  project_name="$(basename "$project_path")"
   echo "=== oh-my-agent-env init-project: $project_name ==="
   echo "  Path: $project_path"
   echo ""

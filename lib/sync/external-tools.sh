@@ -1,5 +1,6 @@
 # oh-my-agent-env: sync domain - external-tools.sh
 # Sourced by lib/sync.sh; not standalone.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 # [7] External tools (context-mode, codex CLI, LazyCodex, codex-gemini-mcp fork)
 sync_external_tools() {

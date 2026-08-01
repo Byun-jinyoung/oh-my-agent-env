@@ -4,6 +4,7 @@
 #
 # The diagnostic implementation lives under lib/doctor/*.sh so doctor can
 # evolve by domain without changing setup.sh dispatch.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/doctor/local-prereqs.sh"

@@ -1,5 +1,6 @@
 # oh-my-agent-env: doctor domain - local-prereqs.sh
 # Sourced by lib/doctor.sh; not standalone.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 doctor_local_prereqs() {
   echo "[ npm prefix policy ]  (goal: keep MY tools out of world-readable system paths)"

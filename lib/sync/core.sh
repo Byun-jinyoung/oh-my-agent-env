@@ -1,5 +1,6 @@
 # oh-my-agent-env: sync domain - core.sh
 # Sourced by lib/sync.sh; not standalone.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 # [1][2][2b] Claude commands, hooks, rules-enforcement
 sync_claude() {

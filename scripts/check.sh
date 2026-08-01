@@ -10,13 +10,14 @@
 # into every descendant, and the smoke suite spawns setup.sh, which would then
 # see a variable meant for the gate.
 #
-# shellcheck is required in CI (OMA_REQUIRE_SHELLCHECK=1) and skipped with a
+# The shellcheck stage is required in CI (OMA_REQUIRE_SHELLCHECK=1) and skipped
+# with a
 # visible notice locally, so a machine without it can still run the gate instead
 # of having no gate at all.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-cd "$ROOT"
+cd "$ROOT" || { echo "cannot cd to repo root: $ROOT" >&2; exit 2; }
 
 LINT=1
 TESTS=1

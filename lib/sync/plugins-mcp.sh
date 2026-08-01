@@ -1,5 +1,6 @@
 # oh-my-agent-env: sync domain - plugins-mcp.sh
 # Sourced by lib/sync.sh; not standalone.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 # [8][9] Claude Code plugins + MCP servers (incl. local helpers install_plugin/add_mcp/migrate)
 sync_plugins_mcp() {
@@ -216,8 +217,10 @@ PYEOF
           return 0
         fi
         log_and_print "    [$name] registering..."
-        local result
-        if result=$(run_with_timeout "$name mcp add" "$cmd < /dev/null" 2>&1); then
+        # No capture: run_with_timeout already logs the failing output
+        # (lib/common.sh "output: $output"), so holding it here only made
+        # an unused variable.
+        if run_with_timeout "$name mcp add" "$cmd < /dev/null" >/dev/null 2>&1; then
           log_and_print "    [$name] registered successfully (user scope)"
         else
           log_and_print "    [$name] registration failed — see $LOG_FILE"

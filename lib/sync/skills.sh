@@ -1,5 +1,6 @@
 # oh-my-agent-env: sync domain - skills.sh
 # Sourced by lib/sync.sh; not standalone.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 # [5][6] Shared skills (registry.yaml) + statusline
 sync_skills_statusline() {

@@ -1,5 +1,6 @@
 # oh-my-agent-env: doctor domain - agent-mcp.sh
 # Sourced by lib/doctor.sh; not standalone.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 doctor_agent_mcp_surfaces() {
   echo "[ MCP servers (Codex/Antigravity for triangle-review) ]"

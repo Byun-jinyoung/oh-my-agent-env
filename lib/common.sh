@@ -10,9 +10,11 @@
 #   ensure_codex_multi_agent, ensure_codex_context_mode,
 #   write_graphify_project_config,
 #   assemble_global_rules.
+# shellcheck shell=bash   # sourced fragment: no shebang by design
 
 log() {
-  local msg="[$(date '+%H:%M:%S')] $*"
+  local msg
+  msg="[$(date '+%H:%M:%S')] $*"
   echo "$msg" >> "$LOG_FILE"
 }
 
@@ -38,7 +40,8 @@ run_with_timeout() {
   local label="$1"
   shift
   log "START: $label — cmd: $*"
-  local start_time=$(date +%s)
+  local start_time
+  start_time=$(date +%s)
   local output
 
   # Check for timeout or gtimeout
@@ -126,7 +129,11 @@ ensure_user_npm_prefix() {
   # Env string prepended to npm invocations. npm_config_prefix is the official
   # npm env override (docs.npmjs.com/cli/v10/using-npm/config). Quoting the
   # value handles paths with spaces; the assignment must be bash-c safe.
+  # Consumed by run_with_timeout, which passes it to `bash -c` — the quoting is
+  # honoured there, not by word splitting here.
+  # shellcheck disable=SC2089
   NPM_USER_ENV="npm_config_prefix='$USER_NPM_PREFIX'"
+  # shellcheck disable=SC2090
   export USER_NPM_PREFIX NPM_USER_ENV
   log "  USER_NPM_PREFIX=$USER_NPM_PREFIX (npm reported: ${cur:-<unset>}, mode locked to 0700)"
 }
@@ -202,7 +209,7 @@ verify_lazycodex_codex_plugin() {
 # Side effects: npm uninstall -g per detected prefix; warns about root-owned
 # system paths (/usr/bin, /usr/lib/node_modules) that require sudo.
 cleanup_upstream_codex_gemini_mcp() {
-  local removed=0 prefix pkg_dir warn_sys=0
+  local prefix pkg_dir warn_sys=0
   # 1. npm-prefix-managed installs (no sudo needed for user-prefix; system
   #    prefix may require sudo — npm itself surfaces the error).
   local prefixes=()
@@ -226,9 +233,7 @@ cleanup_upstream_codex_gemini_mcp() {
           "npm uninstall -g --prefix '$prefix' @donghae0414/codex-gemini-mcp" \
           | tail -2
         local uninstall_rc=${PIPESTATUS[0]}
-        if [ "$uninstall_rc" -eq 0 ] && [ ! -d "$pkg_dir" ]; then
-          removed=1
-        else
+        if [ "$uninstall_rc" -ne 0 ] || [ -d "$pkg_dir" ]; then
           log_and_print "    [cleanup] [WARN] upstream uninstall failed at $prefix (rc=$uninstall_rc); fork may be shadowed on PATH"
           if [[ "$prefix" == /usr/* ]] || [[ "$prefix" == /opt/* ]]; then
             log_and_print "      Try: sudo npm uninstall -g --prefix '$prefix' @donghae0414/codex-gemini-mcp"
