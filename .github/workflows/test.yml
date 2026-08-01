@@ -1,0 +1,44 @@
+name: test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Lint is a separate job from tests on purpose: scripts/check.sh reports the
+  # first failing stage and exits, so a single shellcheck nit in a combined job
+  # would hide every test result. A second runner buys an independent red/green.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Lint
+        env:
+          OMA_REQUIRE_SHELLCHECK: "1"
+        run: bash scripts/check.sh --lint-only
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      # The smoke suite sandboxes HOME/XDG/TMPDIR itself; it must never depend
+      # on the runner's home being pristine, because a developer running it
+      # locally does not have that luxury either.
+      - name: Tests
+        run: bash scripts/check.sh --no-lint

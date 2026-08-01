@@ -10,12 +10,21 @@ sync_claude() {
     [ -f "$f" ] && make_link "$f" "$CONFIG_DIR/commands/$(basename "$f")"
   done
 
-  # Claude hooks
-  if ls "$SCRIPT_DIR/runtimes/claude/hooks/"* &>/dev/null 2>&1; then
+  # Claude hooks — manifest-driven. The manifest is the single source of truth
+  # shared with ensure_rules_enforcement_hooks, so a hook can never be installed
+  # as a file without also being wired into settings.json (and vice versa). A
+  # bare glob used to link test fixtures (test-*.js) into the live hooks dir too.
+  local hooks_src="$SCRIPT_DIR/runtimes/claude/hooks"
+  if [ -d "$hooks_src" ]; then
     echo "[2] Claude hooks"
     mkdir -p "$CONFIG_DIR/hooks"
-    for f in "$SCRIPT_DIR/runtimes/claude/hooks/"*; do
-      [ -f "$f" ] && make_link "$f" "$CONFIG_DIR/hooks/$(basename "$f")"
+    local script
+    for script in $(hook_manifest_scripts); do
+      if [ -f "$hooks_src/$script" ]; then
+        make_link "$hooks_src/$script" "$CONFIG_DIR/hooks/$script"
+      else
+        log_and_print "    [WARN] manifest lists $script but $hooks_src/$script is missing"
+      fi
     done
   fi
 

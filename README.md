@@ -52,6 +52,10 @@ oh-my-agent-env/
 │   ├── claude/commands/                  # Claude Code slash commands
 │   │   ├── analyze-paper.md
 │   │   └── debate-loop.md
+│   ├── claude/hooks/                     # Rules-enforcement hooks (see below)
+│   │   ├── manifest.json                 #   SSOT: which hooks install AND register
+│   │   └── *.js                          #   one file per enforced rule
+│   ├── claude/rules-core.md              # Compressed rules injected every turn
 │   ├── codex/
 │   │   ├── instructions.md               # Codex global rules
 │   │   └── tools.md                      # Codex tool guidance
@@ -60,15 +64,68 @@ oh-my-agent-env/
 │       └── skills/
 ├── rules/                                # SRP-split global rule modules (Layer A)
 ├── skills/                               # Shared oh-my-agent-env skills (codebase-scan, triangle-review, ...)
-├── scripts/                              # Helper shell scripts (apply-project-template, snapshot, ...)
+├── scripts/                              # Helper shell scripts
+│   ├── check.sh                          #   verification gate (lint + tests); CI runs this
+│   ├── journal.sh                        #   Obsidian work-journal entries
+│   └── ...                               #   apply-project-template, snapshot, ...
 └── tests/
-    └── smoke-refactor.sh                 # Source graph + isolated HOME validate smoke test
+    └── smoke-refactor.sh                 # Source graph, isolated HOME, hook contract, journal
 ```
 
 `setup.sh` is intentionally kept as the stable user-facing entrypoint. The
 `sync` and `doctor` loaders preserve command names while domain files make
 runtime parity easier to review: setup mutating domains and diagnostic domains
 are now visible in the file tree instead of being hidden in monolithic scripts.
+
+## Rules Enforcement
+
+`rules/*.md` is prose the CLI reads; it is not enforced. The enforced layer is
+`runtimes/claude/rules-core.md` — a compressed rule list injected on every turn
+— plus one hook per rule that can actually block a tool call.
+
+`runtimes/claude/hooks/manifest.json` is the single source of truth: it decides
+both which hook files get symlinked into `~/.claude/hooks/` and which entries get
+reconciled into `~/.claude/settings.json`. Adding a hook means adding one entry
+there. Anything absent from the manifest is neither installed nor registered.
+
+The two lists used to be maintained separately, and they drifted: three hooks
+shipped as files that nothing ever called, on every machine whose `settings.json`
+had not been hand-edited. `tests/smoke-refactor.sh` step [7] now fails if a
+shipped hook is missing from the manifest, and `setup.sh doctor` reports any hook
+that is registered but dead.
+
+Registration is a reconcile, not an append. Entries pointing at a script this
+repo ships are rebuilt from the manifest, so a renamed or retired hook converges
+instead of lingering; everything else in `settings.json` — `rtk`, `gsd-*`,
+`context-mode-cache-heal.mjs`, anything you added — is never inspected or moved.
+
+## Verification
+
+```bash
+scripts/check.sh              # lint + tests — run before committing
+scripts/check.sh --lint-only  # bash -n, node --check, JSON parse, shellcheck
+scripts/check.sh --no-lint    # smoke suite + hook fixtures
+```
+
+CI (`.github/workflows/test.yml`) runs the same entry point, with lint and tests
+as separate jobs so one lint failure cannot hide every test result. `shellcheck`
+is required in CI and skipped with a notice locally.
+
+The smoke suite sandboxes `HOME`, `XDG_*`, `TMPDIR` and git config into one temp
+root, so running it never touches your real `~/.claude` or vault.
+
+## Work Journal
+
+```bash
+scripts/journal.sh add "what happened" --outcome done --evidence "scripts/check.sh"
+scripts/journal.sh path          # today's file
+```
+
+Writes to `$OMA_VAULT/Planner/Agent-Journal/YYYY-MM-DD.md` (`OMA_VAULT` defaults
+to `~/PROject/vault`) — a dedicated file, never the Templater-owned daily note.
+The entry links to `[[YYYY-MM-DD]]` so it surfaces in that day's backlinks
+without writing into it. Journalling is fail-open: it warns and exits 0 rather
+than blocking whatever called it.
 
 ## Prerequisites
 

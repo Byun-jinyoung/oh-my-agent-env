@@ -1,0 +1,60 @@
+{
+  "_comment": [
+    "SSOT for Claude hook installation. Read by lib/sync/core.sh (which files to",
+    "symlink into $CONFIG_DIR/hooks) and by lib/common.sh:ensure_rules_enforcement_hooks",
+    "(which entries to reconcile into settings.json).",
+    "",
+    "Before this file existed the two lists were maintained separately, so a hook",
+    "could be installed as a file and never wired into settings.json — it then sat",
+    "in the hooks dir as silent dead code. Adding a hook now means adding one entry",
+    "here; anything not listed is neither linked nor registered.",
+    "",
+    "Fields: event = Claude Code hook event; matcher = tool-name regex or null for",
+    "events that take no matcher; script = basename inside runtimes/claude/hooks/.",
+    "Order is the order entries are appended to a fresh settings.json.",
+    "",
+    "'retired' lists hooks this repo used to ship. Ownership is decided by asking",
+    "whether the repo has the file, so a hook deleted outright stops looking like",
+    "ours and its settings.json entry would linger forever. Naming it here keeps it",
+    "prunable. Entries can be dropped once every machine has synced past them."
+  ],
+  "retired": [],
+  "hooks": [
+    {
+      "event": "UserPromptSubmit",
+      "matcher": null,
+      "script": "inject-core-rules.js",
+      "enforces": "injects rules-core.md as additionalContext every turn"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+      "script": "pre-edit-gate.js",
+      "enforces": "rules-core rule 7 — incremental edit size (warn >300L/30KiB, deny >800L/80KiB)"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "script": "bash-size-guard.js",
+      "enforces": "rules-core rule 7 — closes the heredoc/tee/echo bypass of pre-edit-gate"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Read",
+      "script": "read-size-gate.js",
+      "enforces": "rules-core rule 6 — token efficiency; staged by on-disk size, bounded reads pass"
+    },
+    {
+      "event": "Stop",
+      "matcher": null,
+      "script": "stop-verify-gate.js",
+      "enforces": "rules-core rule 6 — blocks a turn that edited a file without running a verification command"
+    },
+    {
+      "event": "Stop",
+      "matcher": null,
+      "script": "stop-todo-gate.js",
+      "enforces": "rules-core rule 3 — blocks a long multi-edit turn that never used the ToDo tools"
+    }
+  ]
+}

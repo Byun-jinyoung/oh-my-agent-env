@@ -3,6 +3,28 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# One sandbox root for every step, removed once. Previously each step made its
+# own mktemp dir and re-registered an EXIT trap, so the later trap replaced the
+# earlier one; and step [5] wrote to a fixed /tmp path that collided between
+# concurrent runs and was never cleaned.
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-agent-env-smoke.XXXXXX")"
+TMP="$(cd "$TMP" && pwd -P)"
+trap 'rm -rf "$TMP"' EXIT HUP INT TERM
+
+# Keep sub-tools off the real user environment. HOME alone is not enough:
+# anything honouring XDG or writing a git config still reaches ~/.config,
+# ~/.cache and ~/.gitconfig.
+export XDG_CONFIG_HOME="$TMP/xdg-config"
+export XDG_CACHE_HOME="$TMP/xdg-cache"
+export XDG_DATA_HOME="$TMP/xdg-data"
+export TMPDIR="$TMP/runtime"
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$TMPDIR"
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
 echo "[1] shell syntax"
 bash -n "$ROOT/setup.sh" "$ROOT/lib/common.sh" "$ROOT/lib/sync.sh" "$ROOT"/lib/sync/*.sh "$ROOT/lib/doctor.sh" "$ROOT"/lib/doctor/*.sh
 
@@ -39,14 +61,12 @@ grep -q '^doctor_lazycodex()' "$ROOT/lib/doctor/lazycodex.sh"
 grep -q '^doctor_agent_mcp_surfaces()' "$ROOT/lib/doctor/agent-mcp.sh"
 
 echo "[5] isolated HOME validate"
-tmp_home="$(mktemp -d)"
-trap 'rm -rf "$tmp_home"' EXIT
-HOME="$tmp_home" bash "$ROOT/setup.sh" validate >/tmp/oh-my-agent-env-validate.out
-grep -q '=== oh-my-agent-env validate ===' /tmp/oh-my-agent-env-validate.out
+tmp_home="$TMP/home"; mkdir -p "$tmp_home"
+HOME="$tmp_home" bash "$ROOT/setup.sh" validate >"$TMP/validate.out"
+grep -q '=== oh-my-agent-env validate ===' "$TMP/validate.out"
 
 echo "[6] oma subcommand isolated smoke (stubbed bunx, no network)"
-oma_tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp_home" "$oma_tmp"' EXIT
+oma_tmp="$TMP/oma"
 stub_bin="$oma_tmp/bin"; mkdir -p "$stub_bin" "$oma_tmp/home"
 # offline stub: oma install just materializes .agents/ in the project cwd
 cat > "$stub_bin/bunx" <<'STUB'
@@ -67,5 +87,119 @@ cp "$oma_proj/.claude/settings.local.json" "$oma_tmp/sl1"
 run_oma
 cmp -s "$oma_proj/.claude/settings.local.json" "$oma_tmp/sl1"
 cmp -s "$oma_proj/.agents/oma-config.yaml" "$ROOT/templates/oma/oma-config.yaml"
+
+echo "[7] Claude hook manifest contract"
+# The defect this step exists to catch: runtimes/claude/hooks/ once held six
+# hooks while only three were wired into settings.json, so three shipped as
+# silent dead code on any machine that had not been hand-edited. Nothing failed.
+manifest="$ROOT/runtimes/claude/hooks/manifest.json"
+test -f "$manifest" || fail "hook manifest missing: $manifest"
+python3 -m json.tool "$manifest" >/dev/null || fail "hook manifest is not valid JSON"
+
+# a) every manifest entry names a script that actually ships
+python3 - "$manifest" "$ROOT/runtimes/claude/hooks" <<'PY' || fail "manifest lists a script that does not exist"
+import json, sys
+from pathlib import Path
+manifest, hooks_dir = Path(sys.argv[1]), Path(sys.argv[2])
+missing = [h["script"] for h in json.loads(manifest.read_text())["hooks"]
+           if not (hooks_dir / h["script"]).is_file()]
+if missing:
+    print("missing:", ", ".join(missing)); sys.exit(1)
+PY
+
+# b) every shipped non-test hook is claimed by the manifest — this is the
+#    direction that actually catches "added a hook, forgot to register it"
+python3 - "$manifest" "$ROOT/runtimes/claude/hooks" <<'PY' || fail "a shipped hook is absent from the manifest"
+import json, sys
+from pathlib import Path
+manifest, hooks_dir = Path(sys.argv[1]), Path(sys.argv[2])
+listed = {h["script"] for h in json.loads(manifest.read_text())["hooks"]}
+shipped = {p.name for p in hooks_dir.glob("*.js") if not p.name.startswith("test-")}
+unclaimed = sorted(shipped - listed)
+if unclaimed:
+    print("shipped but unregistered:", ", ".join(unclaimed)); sys.exit(1)
+if any(s.startswith("test-") for s in listed):
+    print("manifest must not list test fixtures"); sys.exit(1)
+PY
+
+# c) reconcile against a settings.json holding foreign hooks: ours all land,
+#    foreign survive untouched, and a second run is a byte-identical no-op
+hook_cfg="$TMP/hookcfg"; mkdir -p "$hook_cfg/hooks"
+cat > "$hook_cfg/settings.json" <<JSON
+{"statusLine":{"command":"keep-me"},
+ "hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"rtk hook claude"}]}],
+          "SessionStart":[{"hooks":[{"type":"command","command":"$hook_cfg/hooks/foreign-tool.mjs"}]}]}}
+JSON
+(
+  SCRIPT_DIR="$ROOT" CONFIG_DIR="$hook_cfg"
+  export SCRIPT_DIR CONFIG_DIR
+  log_and_print() { echo "$@"; }
+  # shellcheck disable=SC1091
+  source "$ROOT/lib/common.sh" 2>/dev/null || true
+  ensure_rules_enforcement_hooks >/dev/null
+  cp "$hook_cfg/settings.json" "$TMP/hooks-after1.json"
+  ensure_rules_enforcement_hooks >/dev/null
+) || fail "ensure_rules_enforcement_hooks errored"
+cmp -s "$TMP/hooks-after1.json" "$hook_cfg/settings.json" \
+  || fail "hook reconcile is not idempotent"
+python3 - "$manifest" "$hook_cfg/settings.json" <<'PY' || fail "hook reconcile produced wrong settings.json"
+import json, sys
+from pathlib import Path
+manifest, settings = Path(sys.argv[1]), Path(sys.argv[2])
+d = json.loads(settings.read_text())
+cmds = [x.get("command", "") for arr in d["hooks"].values() for g in arr for x in g.get("hooks", [])]
+for h in json.loads(manifest.read_text())["hooks"]:
+    if sum(h["script"] in c for c in cmds) != 1:
+        print(f"{h['script']} not registered exactly once"); sys.exit(1)
+if not any("rtk hook claude" == c for c in cmds): print("foreign rtk hook lost"); sys.exit(1)
+if not any("foreign-tool.mjs" in c for c in cmds): print("foreign SessionStart hook lost"); sys.exit(1)
+if d.get("statusLine", {}).get("command") != "keep-me": print("non-hook key clobbered"); sys.exit(1)
+PY
+
+echo "[8] managed-block assembly preserves user content"
+# The defect this step exists to catch: global rule assembly used to be a
+# truncating `> "$target"` over ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md and
+# ~/.gemini/GEMINI.md, so anything the user added there died on the next sync.
+mb="$TMP/mb"; mkdir -p "$mb"
+printf 'BODY v1\n' > "$mb/body1"
+printf 'BODY v2\n' > "$mb/body2"
+(
+  SCRIPT_DIR="$ROOT"; export SCRIPT_DIR
+  log_and_print() { echo "$@"; }
+  # shellcheck disable=SC1091
+  source "$ROOT/lib/common.sh" 2>/dev/null || true
+
+  write_managed_block "$mb/t.md" "$mb/body1"
+  cp "$mb/t.md" "$mb/snap1"
+  write_managed_block "$mb/t.md" "$mb/body1"
+  cmp -s "$mb/snap1" "$mb/t.md" || { echo "managed block not idempotent"; exit 1; }
+
+  printf '\n## user note\nkeep this\n' >> "$mb/t.md"
+  write_managed_block "$mb/t.md" "$mb/body2"
+  grep -q 'keep this' "$mb/t.md" || { echo "user content outside markers destroyed"; exit 1; }
+  grep -q 'BODY v2'   "$mb/t.md" || { echo "managed body not refreshed"; exit 1; }
+  ! grep -q 'BODY v1' "$mb/t.md" || { echo "stale managed body left behind"; exit 1; }
+
+  printf 'legacy user content\n' > "$mb/legacy.md"
+  write_managed_block "$mb/legacy.md" "$mb/body1" >/dev/null
+  ls "$mb"/legacy.md.bak.* >/dev/null 2>&1 || { echo "pre-marker file not backed up"; exit 1; }
+) || fail "managed-block assembly regressed"
+
+echo "[9] Obsidian work-journal (fake vault, never the real one)"
+# Runs entirely against $TMP. The real vault is Syncthing-backed and holds the
+# user's notes; a test must never be one typo away from writing into it.
+jv="$TMP/vault"; mkdir -p "$jv"
+OMA_VAULT="$TMP/no-such-vault" bash "$ROOT/scripts/journal.sh" add "x" >/dev/null 2>&1 \
+  || fail "journal must fail open when the vault is absent"
+OMA_VAULT="$jv" bash "$ROOT/scripts/journal.sh" add "first" --outcome done >/dev/null 2>&1
+jf="$(OMA_VAULT="$jv" bash "$ROOT/scripts/journal.sh" path)"
+test -f "$jf" || fail "journal file not created"
+grep -q 'OMA-WORK-JOURNAL:BEGIN' "$jf" || fail "journal managed block missing"
+printf '\n## user note\nkeep me\n' >> "$jf"
+OMA_VAULT="$jv" bash "$ROOT/scripts/journal.sh" add "second" >/dev/null 2>&1
+grep -q 'keep me' "$jf" || fail "journal clobbered user text outside its block"
+[ "$(grep -c '^- ' "$jf")" = 2 ] || fail "journal did not accumulate entries"
+# It must never touch the user's daily note folder.
+test ! -d "$jv/Planner/Daily" || fail "journal wrote into the daily-note folder"
 
 echo "smoke-refactor OK"
