@@ -198,12 +198,22 @@ check "leakage catches an id in two splits" '[ "$RC" -eq 1 ]'
 mv data/valid_s.csv data/valid_s.hidden
 lab data leakage --name qm9
 check "leakage on an unreadable split exits 2, not 0" '[ "$RC" -eq 2 ]'
+# One split means no pair to compare, so the loop never runs and the command
+# used to exit 0 having printed nothing — indistinguishable from a clean run.
+lab data register --name lonely --id-column id --split only=data/train_s.csv
+lab data leakage --name lonely
+check "leakage with a single split exits 2, not a silent 0" '[ "$RC" -eq 2 ]'
 mv data/valid_s.hidden data/valid_s.csv
 
+# Compare against the count taken just before, not against a literal: an
+# absolute number silently becomes wrong the moment a registration is added
+# anywhere above, and then it is testing the edit rather than the refusal.
+# shellcheck disable=SC2034  # read inside check()'s eval, which shellcheck cannot follow
+rows_before="$(wc -l < .oma-lab/datasets.jsonl)"
 lab data register --name bogus --id-column id --key-column nosuch --split train=data/train_s.csv
 check "registering a missing key column is refused" '[ "$RC" -eq 2 ]'
 check "the refused registration wrote no row" \
-      '[ "$(wc -l < .oma-lab/datasets.jsonl)" -eq 1 ]'
+      '[ "$(wc -l < .oma-lab/datasets.jsonl)" -eq "$rows_before" ]'
 
 # Three ways a CSV silently produces the wrong fingerprint or a hollow pass.
 # A header with no rows is a failed export; left alone, leakage would call it

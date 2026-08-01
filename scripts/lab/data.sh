@@ -226,6 +226,12 @@ def col(path, name):
         return {row[name] or "" for row in rd}
 
 labels = sorted(sp)
+# One split has no pairs to compare, so the loop below never runs and the
+# command exits 0 having printed nothing — which any caller reads as "no
+# leakage". Same rule as a missing file: not looking is not a pass.
+if len(labels) < 2:
+    sys.stderr.write("lab: %s has %d split(s) — nothing to compare\n" % (r.get("name"), len(labels)))
+    sys.exit(2)
 bad = 0
 for i in range(len(labels)):
     for j in range(i + 1, len(labels)):
