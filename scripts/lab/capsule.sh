@@ -40,6 +40,14 @@ while [ $# -gt 0 ]; do
 done
 
 ROOT="${LAB_ROOT:-$(lab_repo_root)}"
+# --config/--output and the path `whence` looks up are relative to the REPO,
+# not to the caller's cwd. Without this, `capsule save --repo target --output
+# out/model.txt` run from anywhere else fingerprinted a file that was never
+# there and recorded "missing:out/model.txt" — a capsule that records the
+# absence of the artifact it exists to pin. Set LAB_ROOT too, so the state path
+# and the git helpers resolve against the same repo we just moved into.
+LAB_ROOT="$ROOT"; export LAB_ROOT
+cd "$ROOT" || lab_die "cannot enter repo root: $ROOT"
 RUNS_DIR="$(lab_state_dir)/runs"
 INDEX="$(lab_state_dir)/capsules.jsonl"
 

@@ -69,11 +69,20 @@ lab_set_current_run_id() {
 
 # --- git state -------------------------------------------------------------
 
-lab_git_commit() { git rev-parse HEAD 2>/dev/null || printf 'no-head'; }
+# Every git read is aimed at the repo the state belongs to, not at wherever the
+# caller happens to be standing. --repo sets LAB_ROOT, but it used to redirect
+# only the state PATH: a Slurm job launched from the submit directory wrote its
+# ledger into the target repo while stamping every row with the LAUNCHER's
+# commit and diff hash. That is worse than not recording it, because the row
+# looks authoritative and answers "which code produced this number" with the
+# wrong commit. Verified: launcher HEAD appeared in the target's ledger.
+lab_git() { git -C "${LAB_ROOT:-.}" "$@"; }
+
+lab_git_commit() { lab_git rev-parse HEAD 2>/dev/null || printf 'no-head'; }
 
 lab_git_dirty() {
-  git rev-parse --show-toplevel >/dev/null 2>&1 || { printf 'false'; return; }
-  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then printf 'true'; else printf 'false'; fi
+  lab_git rev-parse --show-toplevel >/dev/null 2>&1 || { printf 'false'; return; }
+  if [ -n "$(lab_git status --porcelain 2>/dev/null)" ]; then printf 'true'; else printf 'false'; fi
 }
 
 # Content fingerprint of uncommitted work. Two runs at the same commit are not
@@ -83,10 +92,10 @@ lab_git_dirty() {
 # fingerprint — so the very next check would conclude "the tree changed since"
 # and wave through a retry that is certain to fail identically.
 lab_diff_hash() {
-  git rev-parse --show-toplevel >/dev/null 2>&1 || { printf 'nogit'; return; }
+  lab_git rev-parse --show-toplevel >/dev/null 2>&1 || { printf 'nogit'; return; }
   {
-    git diff HEAD -- . ":(exclude)$LAB_STATE_DIRNAME" 2>/dev/null
-    git ls-files --others --exclude-standard 2>/dev/null | grep -v "^$LAB_STATE_DIRNAME/"
+    lab_git diff HEAD -- . ":(exclude)$LAB_STATE_DIRNAME" 2>/dev/null
+    lab_git ls-files --others --exclude-standard 2>/dev/null | grep -v "^$LAB_STATE_DIRNAME/"
   } | sha256sum | cut -c1-16
 }
 
@@ -207,7 +216,12 @@ lab_cmd_hash() {
 # and there is nothing to ignore.
 lab_ensure_gitignore() {
   local gitdir
-  gitdir="$(git rev-parse --git-dir 2>/dev/null)" || return 0
+  # --absolute-git-dir, not --git-dir: with `-C` aimed at another repo the plain
+  # form still answers ".git", which resolves against the CALLER's cwd. That is
+  # how `run --repo target` came to write its exclude line into the launcher's
+  # repo and none into the target's — the one repo that was about to get a
+  # .oma-lab/ directory was the one left un-excluded.
+  gitdir="$(lab_git rev-parse --absolute-git-dir 2>/dev/null)" || return 0
   local ex="$gitdir/info/exclude"
   mkdir -p "$(dirname "$ex")" 2>/dev/null || return 0
   grep -qxF "$LAB_STATE_DIRNAME/" "$ex" 2>/dev/null && return 0
