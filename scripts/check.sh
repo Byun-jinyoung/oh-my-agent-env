@@ -19,6 +19,13 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT" || { echo "cannot cd to repo root: $ROOT" >&2; exit 2; }
 
+# Read the pinned version out of the workflow rather than restating it here.
+# A second copy of the number is a second thing to forget on a bump, and the
+# whole point of printing it is to expose drift, not to add a new source of it.
+SHELLCHECK_PINNED="$(sed -n 's/.*SHELLCHECK_VERSION:[[:space:]]*v\([0-9.]*\).*/\1/p' \
+  .github/workflows/test.yml 2>/dev/null | head -1)"
+SHELLCHECK_PINNED="${SHELLCHECK_PINNED:-unknown}"
+
 LINT=1
 TESTS=1
 case "${1:-}" in
@@ -82,12 +89,17 @@ if [ "$LINT" = 1 ]; then
   stage "node --check" lint_node_syntax
   stage "json parse"   lint_json
   if command -v shellcheck >/dev/null 2>&1; then
-    stage "shellcheck" lint_shellcheck
+    # Print the version, because shellcheck's diagnostics differ between
+    # releases: a local pass on one version is not evidence about another.
+    # Showing both numbers turns silent drift into a line you can read.
+    sc_have="$(shellcheck --version 2>/dev/null | awk '/^version:/{print $2}')"
+    stage "shellcheck ${sc_have:-unknown} (CI pins $SHELLCHECK_PINNED)" lint_shellcheck
   elif [ "${OMA_REQUIRE_SHELLCHECK:-0}" = 1 ]; then
     echo "  [FAIL] shellcheck required but not installed"
     FAILED=1
   else
-    echo "  [SKIP] shellcheck not installed (CI enforces it; apt install shellcheck)"
+    echo "  [SKIP] shellcheck not installed (CI enforces $SHELLCHECK_PINNED)"
+    echo "         https://github.com/koalaman/shellcheck/releases/tag/v$SHELLCHECK_PINNED"
   fi
 fi
 

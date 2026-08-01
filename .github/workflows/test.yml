@@ -20,8 +20,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      # Pinned, not apt. scripts/check.sh promises that local green and CI green
+      # mean the same thing, and an unpinned linter breaks exactly that promise:
+      # a runner image bump can fail the build on code nobody touched, and the
+      # failure does not reproduce locally. Bump this deliberately, after running
+      # the same version yourself.
+      - name: Install shellcheck (pinned)
+        env:
+          SHELLCHECK_VERSION: v0.10.0
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
+            | tar -xJ
+          echo "$PWD/shellcheck-${SHELLCHECK_VERSION}" >> "$GITHUB_PATH"
       - name: Lint
         env:
           OMA_REQUIRE_SHELLCHECK: "1"
