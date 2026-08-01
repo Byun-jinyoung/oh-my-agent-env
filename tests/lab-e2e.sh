@@ -143,21 +143,112 @@ lab fail resolve --cmd "python3 train.py --bogus" --note "fixed"
 lab fail check --cmd "python3 train.py --bogus"
 check "a resolved failure is cleared to run" '[ "$RC" -eq 0 ]'
 
+# --- data: which split produced the number, and is it still that split? ------
+# A commit hash cannot answer this: the splits are gitignored, so the tree is
+# clean whatever the CSVs say.
+printf 'id,scaffold,y\nm1,A,1.0\nm2,B,2.0\nm3,A,3.0\n' > data/train_s.csv
+printf 'id,scaffold,y\nm4,C,4.0\nm5,D,5.0\n'           > data/valid_s.csv
+lab data register --name qm9 --id-column id --key-column scaffold \
+  --split train=data/train_s.csv --split valid=data/valid_s.csv
+check "register records the dataset" '[ "$(wc -l < .oma-lab/datasets.jsonl)" -eq 1 ]'
+# The point of recording it at all is the join back to the run that consumed it.
+check "the registration joins to the current run" \
+      'grep -q "\"run_id\": \"$(cat .oma-lab/CURRENT)\"" .oma-lab/datasets.jsonl'
+lab data check --name qm9
+check "check passes on unchanged splits" '[ "$RC" -eq 0 ]'
+
+# These two assertions only mean something together. Either alone is satisfied
+# by a plain file hash, which is what makes them worth writing:
+#
+#   reordering rows changes every byte of the file but changes no assignment,
+#   so a file hash cries drift and this must not;
+#   permuting the assignment leaves the id set, the value set and the row count
+#   identical, so anything short of the id->value pair hash misses it.
+python3 - <<'REORDER'
+rows = open("data/train_s.csv").read().splitlines()
+open("data/train_s.csv", "w").write("\n".join([rows[0]] + rows[1:][::-1]) + "\n")
+REORDER
+lab data check --name qm9
+check "reordering rows is not drift" '[ "$RC" -eq 0 ]'
+
+printf 'id,scaffold,y\nm1,B,1.0\nm2,A,2.0\nm3,A,3.0\n' > data/train_s.csv
+drift_out="$(bash "$OMA_LAB" data check --name qm9 2>&1)"; drift_rc=$?
+check "permuting the scaffold assignment is drift" '[ "'"$drift_rc"'" -ne 0 ]'
+# Name the field that fired. "exits nonzero" would pass if the row count or the
+# id hash had moved, which would mean the pair hash is doing no work at all.
+check "and it is the pair hash that fires, not the id set" \
+      'printf "%s" "'"$drift_out"'" | grep -q "scaffold pairs changed"'
+check "the id set is reported unchanged" \
+      '! printf "%s" "'"$drift_out"'" | grep -q "ids changed"'
+
+# leakage: the failure that silently inflates every number downstream.
+printf 'id,scaffold,y\nm4,C,4.0\nm2,B,9.9\n' > data/valid_s.csv
+lab data leakage --name qm9
+check "leakage catches an id in two splits" '[ "$RC" -eq 1 ]'
+# Fail-closed. A gate that reports clean because it could not look is worse
+# than no gate, and exit 0 here would read as "no leakage" to any caller.
+mv data/valid_s.csv data/valid_s.hidden
+lab data leakage --name qm9
+check "leakage on an unreadable split exits 2, not 0" '[ "$RC" -eq 2 ]'
+mv data/valid_s.hidden data/valid_s.csv
+
+lab data register --name bogus --id-column id --key-column nosuch --split train=data/train_s.csv
+check "registering a missing key column is refused" '[ "$RC" -eq 2 ]'
+check "the refused registration wrote no row" \
+      '[ "$(wc -l < .oma-lab/datasets.jsonl)" -eq 1 ]'
+
 # --- --repo: state must land in ONE repo, the named one ----------------------
 # The ledger path used to be resolved before --repo was parsed, so a run
 # launched from elsewhere split its state: ledger.jsonl in the caller's repo,
 # CURRENT in the target. Launched from the harness, that wrote into the harness.
 launcher="$TMP/launcher"; target="$TMP/target"
 mkdir -p "$launcher" "$target"
-(cd "$launcher" && git init -q .)
-(cd "$target"   && git init -q .)
+# Distinct commits in each. Without them both repos answer "no-head" and the
+# "whose commit got recorded" assertion below is true no matter what the code
+# does — the tautology that let this bug through the first round.
+for d in "$launcher" "$target"; do
+  ( cd "$d" && git init -q . && git config user.email e2e@local && git config user.name e2e \
+    && printf '%s\n' "$d" > marker.txt && git add marker.txt && git commit -qm "$(basename "$d")" )
+done
+# shellcheck disable=SC2034  # read inside check()'s eval, which shellcheck cannot follow
+target_head="$(cd "$target" && git rev-parse HEAD)"
+# shellcheck disable=SC2034  # read inside check()'s eval, which shellcheck cannot follow
+launcher_excl_before="$(sha256sum < "$launcher/.git/info/exclude" 2>/dev/null)"
+
 ( cd "$launcher" && bash "$OMA_LAB" run --repo "$target" --no-gate --reason e2e -- true ) >/dev/null 2>&1
 check "--repo keeps the ledger out of the caller's repo" '[ ! -e "$launcher/.oma-lab/ledger.jsonl" ]'
 check "--repo puts the ledger in the named repo"         '[ -f "$target/.oma-lab/ledger.jsonl" ]'
 check "--repo keeps CURRENT with the ledger"             '[ -f "$target/.oma-lab/CURRENT" ]'
+# Landing the FILE in the right repo is not the same as describing the right
+# repo. The row's whole purpose is answering "which code produced this", and it
+# used to answer with the launcher's commit while sitting in the target's ledger.
+check "--repo records the target's commit, not the caller's" \
+      'grep -q "$target_head" "$target/.oma-lab/ledger.jsonl"'
+# Same split, invisible to git status: the exclude line went to the caller and
+# the repo that actually gained a .oma-lab/ got none.
+check "--repo excludes state in the target, not the caller" \
+      '[ "$(sha256sum < "$launcher/.git/info/exclude" 2>/dev/null)" = "$launcher_excl_before" ] &&
+       grep -qxF ".oma-lab/" "$target/.git/info/exclude"'
+
 # A typo'd --repo must not silently record against the caller instead.
-( cd "$launcher" && bash "$OMA_LAB" fail record --repo "$TMP/no-such-repo" --cmd false ) >/dev/null 2>&1
+lab fail record --repo "$TMP/no-such-repo" --cmd false
+# Both halves matter: exiting nonzero without writing is correct, but so is a
+# broken no-op that writes nothing and exits 0, and only the exit code tells
+# them apart.
+check "a bad --repo exits nonzero"              '[ "$RC" -ne 0 ]'
 check "a bad --repo is refused, not redirected" '[ ! -e "$launcher/.oma-lab/failures.jsonl" ]'
+
+# capsule resolves --config/--output against the repo, not the caller's cwd.
+# It recorded "missing:" for a file that was sitting in the target all along.
+mkdir -p "$target/out"; printf 'weights\n' > "$target/out/model.txt"
+( cd "$TMP" && bash "$OMA_LAB" capsule save --repo "$target" --output out/model.txt --note e2e ) >/dev/null 2>&1
+check "capsule --repo fingerprints the target's artifact" \
+      '! grep -q "missing:out/model.txt" "$target/.oma-lab/capsules.jsonl"'
+# ...and still reports a genuinely absent file as missing, so the assertion
+# above cannot be satisfied by dropping the check altogether.
+( cd "$TMP" && bash "$OMA_LAB" capsule save --repo "$target" --output out/ghost.txt --note e2e ) >/dev/null 2>&1
+check "capsule still reports a truly absent artifact as missing" \
+      'grep -q "missing:out/ghost.txt" "$target/.oma-lab/capsules.jsonl"'
 
 # --- a write that cannot happen must not report success ----------------------
 # root ignores the write bit, so the setup would not actually block anything and
@@ -168,10 +259,14 @@ else
   blocked="$TMP/blocked"; mkdir -p "$blocked"
   (cd "$blocked" && git init -q .)
   chmod u-w "$blocked"
-  ( cd "$blocked" && bash "$OMA_LAB" board claim --id nope ) >/dev/null 2>&1
+  blocked_out="$( cd "$blocked" && bash "$OMA_LAB" board claim --id nope 2>&1 )"
   blocked_rc=$?
   chmod u+w "$blocked"
   check "an unwritable repo fails loudly" '[ "'"$blocked_rc"'" -ne 0 ]'
+  # Nonzero alone is satisfied by any unrelated error — an argument-parsing
+  # slip would pass while the write silently still succeeded elsewhere.
+  check "and it names the write it could not do" \
+        'printf "%s" "'"$blocked_out"'" | grep -qE "cannot (write|create)"'
 
   # ...except after the command has already run. That append is the one place
   # where dying would trade a real result for a record of it: `run` promises to
