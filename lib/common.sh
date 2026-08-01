@@ -131,8 +131,14 @@ ensure_user_npm_prefix() {
   # value handles paths with spaces; the assignment must be bash-c safe.
   # Consumed by run_with_timeout, which passes it to `bash -c` — the quoting is
   # honoured there, not by word splitting here.
+  # printf %q rather than wrapping in single quotes by hand: a hand-rolled
+  # 'value' is correct for spaces and wrong for a value containing a quote,
+  # which closes the string early and leaves bash -c parsing the rest of the
+  # path as code. %q emits a form that is safe to re-read as bash input for
+  # every character, so the guarantee no longer depends on which characters
+  # happen to appear in $HOME.
   # shellcheck disable=SC2089
-  NPM_USER_ENV="npm_config_prefix='$USER_NPM_PREFIX'"
+  printf -v NPM_USER_ENV 'npm_config_prefix=%q' "$USER_NPM_PREFIX"
   # shellcheck disable=SC2090
   export USER_NPM_PREFIX NPM_USER_ENV
   log "  USER_NPM_PREFIX=$USER_NPM_PREFIX (npm reported: ${cur:-<unset>}, mode locked to 0700)"

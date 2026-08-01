@@ -394,9 +394,12 @@ echo "[12] NPM_USER_ENV survives the bash -c it is built for"
 # outside $HOME — the failure is silent and needs root to undo.
 #
 # So pin the contract rather than the implementation: build the prefix under a
-# HOME containing a space (the case the quoting exists for) and assert the value
-# arrives intact on the far side of a real `bash -c`.
-np="$TMP/np dir"; mkdir -p "$np"
+# hostile HOME and assert the value arrives intact on the far side of a real
+# `bash -c`. Both shapes are checked. A space is the case the quoting was
+# written for; a single quote is the case it originally got wrong, closing the
+# quoted string early and leaving the rest of the path to be parsed as code.
+for np_leaf in "np dir" "np'q dir"; do
+np="$TMP/$np_leaf"; mkdir -p "$np"
 (
   HOME="$np"; export HOME
   LOG_FILE="$TMP/np.log"
@@ -415,7 +418,8 @@ np="$TMP/np dir"; mkdir -p "$np"
     echo "prefix mangled through bash -c: got '$got' want '$USER_NPM_PREFIX'"; exit 1; }
   [ -d "$USER_NPM_PREFIX/bin" ] && [ -d "$USER_NPM_PREFIX/lib" ] || {
     echo "prefix dirs not created"; exit 1; }
-) || fail "NPM_USER_ENV no longer delivers the prefix it promises"
+) || fail "NPM_USER_ENV no longer delivers the prefix it promises (HOME=$np_leaf)"
+done
 
 # [13] A download that never happened must not read as a successful install.
 # `curl ... | bash` hides a failed fetch: curl exits nonzero and writes nothing,
