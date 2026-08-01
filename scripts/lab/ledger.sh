@@ -129,12 +129,20 @@ if prev:
     code=$?
     dur=$(( $(date +%s) - start ))
 
-    lab_append_jsonl "$(lab_ledger_path)" "$(lab_json_obj \
+    # The only append that happens AFTER the command ran, and the only one that
+    # must not be fatal. lab_append_jsonl exits on a write it cannot make, which
+    # is right everywhere else — but here the caller is waiting on $code, and
+    # that status may be the entire result of a job that ran for hours. Losing
+    # it to a bookkeeping failure trades a real result for a record of it. The
+    # subshell contains the exit; the warning makes the loss impossible to miss.
+    if ! ( lab_append_jsonl "$(lab_ledger_path)" "$(lab_json_obj \
       ts "$(lab_now)" run_id "$RID" cmd "$CMD_STR" cmd_hash "$(lab_cmd_hash "$CMD_STR")" \
       commit "$(lab_git_commit)" dirty "$(lab_git_dirty)" \
       git_state "$(lab_git_commit | cut -c1-12):$(lab_diff_hash)" \
       exit "$code" duration_s "$dur" gate "$gate" tag "$TAG" \
-      slurm_job "${SLURM_JOB_ID:-}" metrics "$METRICS" repo "$root")"
+      slurm_job "${SLURM_JOB_ID:-}" metrics "$METRICS" repo "$root")" ); then
+      lab_warn "the run finished (exit $code) but could NOT be recorded in the ledger"
+    fi
 
     # A failed run is worth remembering across sessions, not just recording.
     if [ "$code" -ne 0 ]; then

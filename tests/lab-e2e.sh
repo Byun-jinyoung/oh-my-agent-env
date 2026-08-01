@@ -160,13 +160,33 @@ check "--repo keeps CURRENT with the ledger"             '[ -f "$target/.oma-lab
 check "a bad --repo is refused, not redirected" '[ ! -e "$launcher/.oma-lab/failures.jsonl" ]'
 
 # --- a write that cannot happen must not report success ----------------------
-blocked="$TMP/blocked"; mkdir -p "$blocked"
-(cd "$blocked" && git init -q .)
-chmod u-w "$blocked"
-( cd "$blocked" && bash "$OMA_LAB" board claim --id nope ) >/dev/null 2>&1
-blocked_rc=$?
-chmod u+w "$blocked"
-check "an unwritable repo fails loudly" '[ "'"$blocked_rc"'" -ne 0 ]'
+# root ignores the write bit, so the setup would not actually block anything and
+# the assertion would pass for the wrong reason. Skip rather than lie.
+if [ "$(id -u)" -eq 0 ]; then
+  echo "  SKIP  unwritable-repo checks (running as root; chmod u-w has no effect)"
+else
+  blocked="$TMP/blocked"; mkdir -p "$blocked"
+  (cd "$blocked" && git init -q .)
+  chmod u-w "$blocked"
+  ( cd "$blocked" && bash "$OMA_LAB" board claim --id nope ) >/dev/null 2>&1
+  blocked_rc=$?
+  chmod u+w "$blocked"
+  check "an unwritable repo fails loudly" '[ "'"$blocked_rc"'" -ne 0 ]'
+
+  # ...except after the command has already run. That append is the one place
+  # where dying would trade a real result for a record of it: `run` promises to
+  # exit with the command's status, and on a long job that status is the result.
+  ec="$TMP/exitcode"; mkdir -p "$ec"
+  (cd "$ec" && git init -q .)
+  ( cd "$ec" && bash "$OMA_LAB" run --no-gate --reason setup -- true ) >/dev/null 2>&1
+  chmod 0444 "$ec/.oma-lab/ledger.jsonl"
+  ec_out="$( cd "$ec" && bash "$OMA_LAB" run --no-gate --reason probe -- sh -c 'exit 7' 2>&1 )"
+  ec_rc=$?
+  chmod 0644 "$ec/.oma-lab/ledger.jsonl"
+  check "an unwritable ledger does not swallow the command's exit code" '[ "'"$ec_rc"'" -eq 7 ]'
+  check "and it says so out loud" \
+        'printf "%s" "'"$ec_out"'" | grep -q "could NOT be recorded"'
+fi
 
 # --- containment --------------------------------------------------------------
 check "state lands in the target repo" '[ -d "$WORK/.oma-lab" ]'
