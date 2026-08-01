@@ -19,13 +19,14 @@ sync_claude() {
     echo "[2] Claude hooks"
     mkdir -p "$CONFIG_DIR/hooks"
     local script
-    for script in $(hook_manifest_scripts); do
+    while IFS= read -r script; do
+      [ -n "$script" ] || continue
       if [ -f "$hooks_src/$script" ]; then
         make_link "$hooks_src/$script" "$CONFIG_DIR/hooks/$script"
       else
         log_and_print "    [WARN] manifest lists $script but $hooks_src/$script is missing"
       fi
-    done
+    done < <(hook_manifest_scripts)
   fi
 
   # [2b] Rules-enforcement: compressed-rule file + settings.json hook wiring.

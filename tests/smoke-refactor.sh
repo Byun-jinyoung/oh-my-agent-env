@@ -156,6 +156,24 @@ if not any("foreign-tool.mjs" in c for c in cmds): print("foreign SessionStart h
 if d.get("statusLine", {}).get("command") != "keep-me": print("non-hook key clobbered"); sys.exit(1)
 PY
 
+# d) cross-review regressions: a foreign command that merely MENTIONS one of our
+#    basenames, and an entry for the test fixture, must both survive. Matching
+#    "in our hooks dir" AND "mentions our basename" separately deleted both.
+hk2="$TMP/hookcfg2"; mkdir -p "$hk2/hooks"
+cat > "$hk2/settings.json" <<JSON
+{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node \\"$hk2/hooks/foreign-wrapper.mjs\\" --note bash-size-guard.js"}]}],
+          "Stop":[{"hooks":[{"type":"command","command":"node \\"$hk2/hooks/test-pre-edit-gate.js\\""}]}]}}
+JSON
+(
+  SCRIPT_DIR="$ROOT" CONFIG_DIR="$hk2"; export SCRIPT_DIR CONFIG_DIR
+  log_and_print() { echo "$@"; }
+  # shellcheck disable=SC1091
+  source "$ROOT/lib/common.sh" 2>/dev/null || true
+  ensure_rules_enforcement_hooks >/dev/null
+)
+grep -q 'foreign-wrapper.mjs'   "$hk2/settings.json" || fail "reconcile deleted a foreign hook"
+grep -q 'test-pre-edit-gate.js' "$hk2/settings.json" || fail "reconcile pruned the test fixture entry"
+
 echo "[8] managed-block assembly preserves user content"
 # The defect this step exists to catch: global rule assembly used to be a
 # truncating `> "$target"` over ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md and
@@ -183,6 +201,14 @@ printf 'BODY v2\n' > "$mb/body2"
   printf 'legacy user content\n' > "$mb/legacy.md"
   write_managed_block "$mb/legacy.md" "$mb/body1" >/dev/null
   ls "$mb"/legacy.md.bak.* >/dev/null 2>&1 || { echo "pre-marker file not backed up"; exit 1; }
+
+  # A file carrying only one marker is malformed, not legacy. Adopting it moves
+  # the visible content into a backup and leaves the live file holding just the
+  # generated block, so refuse and keep it byte-identical instead.
+  printf '# mine\n%s\nvisible to the user\n' "$OMA_BLOCK_BEGIN" > "$mb/half.md"
+  cp "$mb/half.md" "$mb/half.before"
+  write_managed_block "$mb/half.md" "$mb/body2" >/dev/null
+  cmp -s "$mb/half.before" "$mb/half.md" || { echo "half-marked file was rewritten"; exit 1; }
 ) || fail "managed-block assembly regressed"
 
 echo "[9] Obsidian work-journal (fake vault, never the real one)"
@@ -201,5 +227,22 @@ grep -q 'keep me' "$jf" || fail "journal clobbered user text outside its block"
 [ "$(grep -c '^- ' "$jf")" = 2 ] || fail "journal did not accumulate entries"
 # It must never touch the user's daily note folder.
 test ! -d "$jv/Planner/Daily" || fail "journal wrote into the daily-note folder"
+
+# An option given without a value used to spin forever: `shift 2` fails with one
+# argument left, and nothing in that loop stops on error.
+jrc=0
+timeout 10 env OMA_VAULT="$jv" bash "$ROOT/scripts/journal.sh" add "s" --outcome >/dev/null 2>&1 || jrc=$?
+[ "$jrc" -ne 124 ] || fail "journal hangs on an option with no value"
+
+# Marker text inside a summary must stay inert, or every later entry lands
+# outside the block where the next run cannot find it.
+jv2="$TMP/vault2"; mkdir -p "$jv2"
+OMA_VAULT="$jv2" bash "$ROOT/scripts/journal.sh" add 'evil <!-- OMA-WORK-JOURNAL:END --> tail' >/dev/null 2>&1
+OMA_VAULT="$jv2" bash "$ROOT/scripts/journal.sh" add 'after' >/dev/null 2>&1
+jf2="$(OMA_VAULT="$jv2" bash "$ROOT/scripts/journal.sh" path)"
+[ "$(grep -cFx '<!-- OMA-WORK-JOURNAL:END -->' "$jf2")" = 1 ] \
+  || fail "journal summary injected a second end marker"
+[ "$(sed -n '/OMA-WORK-JOURNAL:BEGIN/,/^<!-- OMA-WORK-JOURNAL:END -->$/p' "$jf2" | grep -c '^- ')" = 2 ] \
+  || fail "journal entries escaped the managed block"
 
 echo "smoke-refactor OK"

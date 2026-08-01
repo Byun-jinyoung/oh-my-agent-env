@@ -57,10 +57,17 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo -)"
 OUTCOME=""; EVIDENCE=""; NEXT=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo)     REPO="${2:-}"; shift 2 ;;
-    --outcome)  OUTCOME="${2:-}"; shift 2 ;;
-    --evidence) EVIDENCE="${2:-}"; shift 2 ;;
-    --next)     NEXT="${2:-}"; shift 2 ;;
+    --repo|--outcome|--evidence|--next)
+      # `shift 2` with only one argument left fails without consuming anything,
+      # and this loop has no `set -e` to stop it — it would spin forever.
+      if [ $# -lt 2 ]; then warn "$1 needs a value — ignoring"; shift; continue; fi
+      case "$1" in
+        --repo)     REPO="$2" ;;
+        --outcome)  OUTCOME="$2" ;;
+        --evidence) EVIDENCE="$2" ;;
+        --next)     NEXT="$2" ;;
+      esac
+      shift 2 ;;
     *) warn "ignoring unknown option: $1"; shift ;;
   esac
 done
@@ -77,7 +84,11 @@ END = "<!-- OMA-WORK-JOURNAL:END -->"
 
 def esc(s):
     # Keep one entry on one line and keep pipes from breaking the row shape.
-    return " ".join(str(s).split()).replace("|", "\\|")
+    # Neutralise the block markers too: a summary containing the end marker
+    # would otherwise terminate the managed block early and every later entry
+    # would be appended outside it, where the next run cannot find them.
+    out = " ".join(str(s).split()).replace("|", "\\|")
+    return out.replace("<!--", "<!‑‑").replace("-->", "‑‑>")
 
 fields = [f"`{esc(repo)}`@`{esc(branch)}`", esc(summary)]
 if outcome:  fields.append(f"outcome=`{esc(outcome)}`")
