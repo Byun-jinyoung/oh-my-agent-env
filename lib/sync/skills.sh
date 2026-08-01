@@ -65,6 +65,19 @@ for rt, d in dirs.items():
 PYEOF
   fi
 
+  # [5b] Lab tools on PATH. These run inside research repos, so they need a
+  # name rather than an absolute path into this checkout — an agent that has to
+  # spell out ~/.oh-my-agent-env/scripts/lab/... will simply not use them.
+  echo "[5b] Lab experiment tools"
+  if [ -f "$SCRIPT_DIR/scripts/oma-lab" ]; then
+    mkdir -p "$HOME/.local/bin"
+    make_link "$SCRIPT_DIR/scripts/oma-lab" "$HOME/.local/bin/oma-lab"
+    case ":$PATH:" in
+      *":$HOME/.local/bin:"*) ;;
+      *) log_and_print "    [WARN] \$HOME/.local/bin is not on PATH — 'oma-lab' will not resolve" ;;
+    esac
+  fi
+
   # Statusline
   echo "[6] Statusline"
   if [ -f "$SCRIPT_DIR/ui/statusline/my-statusline.mjs" ]; then

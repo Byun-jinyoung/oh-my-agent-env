@@ -67,6 +67,8 @@ oh-my-agent-env/
 ├── scripts/                              # Helper shell scripts
 │   ├── check.sh                          #   verification gate (lint + tests); CI runs this
 │   ├── journal.sh                        #   Obsidian work-journal entries
+│   ├── oma-lab                           #   experiment tools entry point (→ ~/.local/bin)
+│   ├── lab/                              #   ledger, capsule, board, fail + shared lib
 │   └── ...                               #   apply-project-template, snapshot, ...
 └── tests/
     └── smoke-refactor.sh                 # Source graph, isolated HOME, hook contract, journal
@@ -113,6 +115,45 @@ is required in CI and skipped with a notice locally.
 
 The smoke suite sandboxes `HOME`, `XDG_*`, `TMPDIR` and git config into one temp
 root, so running it never touches your real `~/.claude` or vault.
+
+## Experiment Tools (`oma-lab`)
+
+Run inside a research repo, not here. `setup.sh sync` links `oma-lab` into
+`~/.local/bin`; all state goes to `<repo>/.oma-lab/`, excluded from git through
+`.git/info/exclude` so your tracked `.gitignore` stays clean.
+
+```bash
+oma-lab run --metrics 'rmse=0.42' --tag baseline -- python train.py --seed 1
+oma-lab top --metric rmse --min        # best known baseline, as a lookup
+oma-lab board claim --id lr-sweep-01 --hypothesis "3e-4 beats 1e-3"
+oma-lab capsule save --config config.yaml --output ckpt-best.pt
+oma-lab capsule whence ckpt-best.pt    # which run produced this checkpoint?
+oma-lab fail check --cmd "python train.py"
+```
+
+| Tool | What it prevents |
+|---|---|
+| `run` / `top` | Re-deriving a baseline from memory, and losing what was tried |
+| `board` | Two sessions starting the same experiment |
+| `capsule` | A checkpoint nobody can trace back to code |
+| `fail` | Re-running a command that already failed unchanged |
+
+Three things actually block rather than advise:
+
+- `run` executes the research repo's own `scripts/check.sh` first, and a failing
+  gate aborts before the command starts. Skipping it needs `--no-gate --reason`,
+  and the reason is recorded. That gate is what stops hours of GPU time going
+  into code that was already broken. It must never call `oma-lab` back.
+- `board claim` refuses an id that is already active. A stale *claim* can be
+  taken over after `OMA_BOARD_CLAIM_TTL` (default 1 day); a *running* one never
+  can, because a training job outliving its session is normal and stealing its
+  id would put two jobs on the same checkpoints.
+- `fail check` exits 3 when the same command already failed and the tree has not
+  changed since. After edits it only warns — the edits may be the fix.
+
+`rules/70-analysis.md` has always required measuring before claiming. These are
+the first mechanisms behind that rule; before them the harness had the norms and
+no enforcement.
 
 ## Work Journal
 

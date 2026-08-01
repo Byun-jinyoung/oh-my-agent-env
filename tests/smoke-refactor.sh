@@ -258,4 +258,64 @@ jf3="$(OMA_VAULT="$jv3" bash "$ROOT/scripts/journal.sh" path)"
 # it to machines where it means nothing.
 [ -z "$(find "$jv3" -name '*.lock' 2>/dev/null)" ] || fail "journal lock written inside the vault"
 
+echo "[10] lab experiment tools (throwaway git repo)"
+# All four tools run against a temp repo, never this one: they write .oma-lab/
+# into whatever repo they are invoked from.
+lab_repo="$TMP/labrepo"; mkdir -p "$lab_repo"
+(
+  cd "$lab_repo"
+  git init -q -b main && git config user.email t@t && git config user.name t
+  printf 'lr: 1e-3\n' > config.yaml && git add -A && git commit -qm init
+
+  O() { bash "$ROOT/scripts/oma-lab" "$@"; }
+
+  # ledger: records, mirrors the exit code, and refuses to launch behind a
+  # failing gate — the property that saves the GPU hours.
+  O run --metrics 'rmse=0.42' -- python3 -c 'print(1)' >/dev/null 2>&1 || exit 1
+  O run -- python3 -c 'raise SystemExit(7)' >/dev/null 2>&1
+  [ "$?" = 7 ] || { echo "ledger did not mirror the command exit code"; exit 1; }
+
+  mkdir -p scripts
+  printf '#!/usr/bin/env bash\nexit 1\n' > scripts/check.sh && chmod +x scripts/check.sh
+  O run -- python3 -c "open('SHOULD_NOT_EXIST','w')" >/dev/null 2>&1
+  [ ! -e SHOULD_NOT_EXIST ] || { echo "failing gate did not stop the launch"; exit 1; }
+  O run --no-gate -- python3 -c 'print(1)' >/dev/null 2>&1 \
+    && { echo "--no-gate was accepted without --reason"; exit 1; }
+  rm -f scripts/check.sh
+
+  # fail: an unchanged retry is refused, a retry after edits is only warned.
+  O fail record --cmd 'python train.py' --exit 1 >/dev/null 2>&1
+  O fail check --cmd 'python   train.py' >/dev/null 2>&1
+  [ "$?" = 3 ] || { echo "fail-ledger did not refuse an unchanged retry"; exit 1; }
+  printf 'edit\n' >> config.yaml
+  O fail check --cmd 'python train.py' >/dev/null 2>&1 || { echo "fail-ledger blocked a retry after edits"; exit 1; }
+
+  # board: a second claim is refused, and a running experiment is never
+  # reclaimed no matter how stale the TTL says it is.
+  O board claim --id e1 >/dev/null 2>&1 || { echo "first claim failed"; exit 1; }
+  O board claim --id e1 >/dev/null 2>&1 && { echo "duplicate claim was allowed"; exit 1; }
+  O board start --id e1 --job 0012345 >/dev/null 2>&1
+  OMA_BOARD_CLAIM_TTL=0 O board claim --id e1 >/dev/null 2>&1 \
+    && { echo "a running experiment was reclaimed"; exit 1; }
+  O board list 2>/dev/null | grep -q '0012345' || { echo "job id lost its leading zero"; exit 1; }
+  O board finish --id e1 --result ok >/dev/null 2>&1
+  O board claim --id e1 >/dev/null 2>&1 || { echo "could not reclaim a finished id"; exit 1; }
+
+  # capsule: an output is traceable back to the run that wrote it.
+  O run -- python3 -c "open('ckpt.pt','w').write('v1')" >/dev/null 2>&1
+  O capsule save --config config.yaml --output ckpt.pt --note v1 >/dev/null 2>&1
+  O capsule whence ckpt.pt >/dev/null 2>&1 || { echo "whence could not find a saved output"; exit 1; }
+  echo unrelated > other.pt
+  O capsule whence other.pt >/dev/null 2>&1 && { echo "whence matched a file it never saw"; exit 1; }
+
+  # State stays in the project and git ignores it — via .git/info/exclude, so
+  # the user's tracked .gitignore never grows harness residue.
+  [ -d .oma-lab ] || { echo ".oma-lab not created"; exit 1; }
+  grep -qxF '.oma-lab/' .git/info/exclude || { echo ".oma-lab/ not excluded"; exit 1; }
+  [ ! -e .gitignore ] || { echo "the tools created or edited .gitignore"; exit 1; }
+  [ -z "$(git status --porcelain | grep oma-lab)" ] || { echo ".oma-lab is visible to git"; exit 1; }
+) || fail "lab experiment tools regressed"
+# and nothing leaked into this repo
+test ! -e "$ROOT/.oma-lab" || fail "lab tools wrote into the harness repo"
+
 echo "smoke-refactor OK"

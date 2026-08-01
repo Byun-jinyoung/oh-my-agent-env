@@ -116,7 +116,11 @@ for k in it:
                 out[k] = f if math.isfinite(f) else v
             except ValueError: out[k] = v
     # a value that only looks numeric must stay a string when the key says so
-    if k in ("cmd", "run_id", "commit", "id", "note", "reason", "repo") and out[k] is not None:
+    # job/tag/id are identifiers, not quantities: a Slurm job id read back as an
+    # int loses leading zeros and blows up on string concatenation downstream.
+    if k in ("cmd", "run_id", "commit", "id", "note", "reason", "repo",
+             "job", "tag", "slurm_job", "metrics", "result", "next",
+             "hypothesis", "owner", "cmd_hash", "git_state") and out[k] is not None:
         out[k] = v
 print(json.dumps(out, ensure_ascii=False, sort_keys=True, allow_nan=False))
 ' "$@"
@@ -178,11 +182,19 @@ lab_cmd_hash() {
   printf '%s' "$*" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//' | sha256sum | cut -c1-16
 }
 
+# Keep run state out of git without touching the user's .gitignore.
+#
+# .gitignore is a tracked file: appending to it puts harness residue in the
+# user's commits and in every collaborator's checkout, for a directory that is
+# purely local. .git/info/exclude is the same mechanism, private to this
+# checkout, and needs no permission. If it is missing we are not in a git repo,
+# and there is nothing to ignore.
 lab_ensure_gitignore() {
-  local root="${LAB_ROOT:-$(lab_repo_root)}"
-  local gi="$root/.gitignore"
-  [ -e "$gi" ] || return 0
-  grep -qxF "$LAB_STATE_DIRNAME/" "$gi" 2>/dev/null && return 0
-  printf '%s/\n' "$LAB_STATE_DIRNAME" >> "$gi"
-  lab_warn "added $LAB_STATE_DIRNAME/ to .gitignore"
+  local gitdir
+  gitdir="$(git rev-parse --git-dir 2>/dev/null)" || return 0
+  local ex="$gitdir/info/exclude"
+  mkdir -p "$(dirname "$ex")" 2>/dev/null || return 0
+  grep -qxF "$LAB_STATE_DIRNAME/" "$ex" 2>/dev/null && return 0
+  printf '%s/\n' "$LAB_STATE_DIRNAME" >> "$ex"
+  lab_warn "excluded $LAB_STATE_DIRNAME/ via .git/info/exclude (your .gitignore is untouched)"
 }

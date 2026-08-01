@@ -44,6 +44,9 @@ stage() {
 
 shell_files() {
   printf '%s\n' setup.sh
+  # oma-lab is named explicitly: it has no .sh extension, so the glob below
+  # skips it and it would ship unlinted.
+  [ -f scripts/oma-lab ] && printf '%s\n' scripts/oma-lab
   find lib scripts tests -name '*.sh' -type f 2>/dev/null | sort
 }
 
