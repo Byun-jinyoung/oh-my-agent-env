@@ -71,7 +71,8 @@ oh-my-agent-env/
 │   ├── lab/                              #   ledger, capsule, board, fail + shared lib
 │   └── ...                               #   apply-project-template, snapshot, ...
 └── tests/
-    └── smoke-refactor.sh                 # Source graph, isolated HOME, hook contract, journal
+    ├── smoke-refactor.sh                 # Source graph, isolated HOME, hook contract, journal
+    └── fixtures/layer-a-sections.txt  # checked-in Layer A baseline for step [11]
 ```
 
 `setup.sh` is intentionally kept as the stable user-facing entrypoint. The
@@ -115,6 +116,28 @@ is required in CI and skipped with a notice locally.
 
 The smoke suite sandboxes `HOME`, `XDG_*`, `TMPDIR` and git config into one temp
 root, so running it never touches your real `~/.claude` or vault.
+
+## Where a Rule Should Live
+
+Rules sit in one of three places, and they are not interchangeable: resident
+(`~/.claude/CLAUDE.md`, assembled from `rules/*.md` + `tools.md`), per-turn
+(`rules-core.md`, injected by a `UserPromptSubmit` hook), or on-demand (a skill,
+loaded only if something calls `Skill`).
+
+```bash
+scripts/measure-uptake.sh     # reads ~/.claude/projects, prints aggregates only
+```
+
+The obvious way to shrink the resident file is to push rules into skills. Across
+179 tool-using transcripts, `Skill` was called 14 times in 9 sessions (5%) — and
+every call was a slash command the user typed. Nothing was observed loading a
+skill on its own; the ToDo tools, which have a Stop hook behind them, appear in
+13%. A rule moved out of the resident file stops being applied, so that
+restructuring is not on the table until this number changes.
+
+`tests/smoke-refactor.sh` step [11] guards the related trap: `rules/*.md` feeds
+Claude, Codex *and* Antigravity, so a module moved into a Claude-only skill
+silently drops the rule for the other two.
 
 ## Experiment Tools (`oma-lab`)
 
