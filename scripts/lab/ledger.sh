@@ -24,6 +24,15 @@ verb="${1:-}"; shift || true
 
 METRICS="" TAG="" NOGATE=0 REASON="" LIMIT=20 METRIC="" ORDER=max
 
+# Render the header up to the first non-comment line. `oma-lab` routes `run`
+# and `top` straight here as the verb, so --help arrived as an option and died
+# on "unknown option" — the help block below the dispatch was unreachable from
+# the only spelling a user would try.
+ledger_usage() {
+  awk '/^set -/{exit} NR>1 && /^#/{sub(/^# ?/, ""); print}' \
+    "$(readlink -f "${BASH_SOURCE[0]}")"
+}
+
 parse_common() {
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -39,6 +48,7 @@ parse_common() {
           --repo)    LAB_ROOT="$(cd "$2" && pwd -P)" || lab_die "no such repo: $2"; export LAB_ROOT ;;
         esac
         shift 2 ;;
+      -h|--help) ledger_usage; exit 0 ;;
       --no-gate) NOGATE=1; shift ;;
       --min) ORDER=min; shift ;;
       --max) ORDER=max; shift ;;
@@ -154,9 +164,7 @@ for v, r in scored[:n]:
 ' "$METRIC" "$ORDER" "$LIMIT"
     ;;
 
-  ""|-h|--help|help)
-    sed -n '2,17p' "$(readlink -f "${BASH_SOURCE[0]}")" | sed 's/^# \?//'
-    ;;
+  ""|-h|--help|help) ledger_usage ;;
 
   *) lab_die "unknown verb: $verb" ;;
 esac

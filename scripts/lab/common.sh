@@ -32,10 +32,14 @@ lab_repo_root() {
   (cd "$root" && pwd -P)
 }
 
+# Path only — creating the directory is the writer's job, not the reader's.
+# When this also ran mkdir, asking a read-only question created state: running
+# `oma-lab fail --help` or `board list` in any directory left an empty
+# .oma-lab/ behind, including in the harness checkout itself. Every writer
+# already creates what it needs (lab_append_jsonl, capsule.sh's runs dir), so
+# there is nothing for this to fall back on.
 lab_state_dir() {
-  local d="${LAB_ROOT:-$(lab_repo_root)}/$LAB_STATE_DIRNAME"
-  mkdir -p "$d" || lab_die "cannot create state dir: $d"
-  printf '%s' "$d"
+  printf '%s' "${LAB_ROOT:-$(lab_repo_root)}/$LAB_STATE_DIRNAME"
 }
 
 lab_ledger_path()      { printf '%s/ledger.jsonl'      "$(lab_state_dir)"; }
@@ -58,7 +62,9 @@ lab_current_run_id() {
 }
 
 lab_set_current_run_id() {
-  printf '%s\n' "$1" > "$(lab_state_dir)/CURRENT"
+  local d; d="$(lab_state_dir)"
+  mkdir -p "$d" || lab_die "cannot create state dir: $d"
+  printf '%s\n' "$1" > "$d/CURRENT"
 }
 
 # --- git state -------------------------------------------------------------
