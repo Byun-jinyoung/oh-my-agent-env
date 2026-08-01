@@ -108,6 +108,13 @@ fi
 if [ "$TESTS" = 1 ]; then
   echo "[tests]"
   stage "smoke-refactor"  bash tests/smoke-refactor.sh
+  # Separate from the smoke suite because it fails for different reasons: the
+  # smoke suite asks whether the harness is assembled right, this one asks
+  # whether the experiment tools work when actually driven at a repo. Every
+  # structural check passed while read-only verbs were creating state on disk.
+  if [ -f tests/lab-e2e.sh ]; then
+    stage "lab e2e" bash tests/lab-e2e.sh
+  fi
   if [ -f runtimes/claude/hooks/test-pre-edit-gate.js ]; then
     stage "pre-edit-gate fixtures" node runtimes/claude/hooks/test-pre-edit-gate.js
   fi
