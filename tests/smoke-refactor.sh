@@ -334,6 +334,13 @@ echo "[11] Layer A rules reach every runtime, not just Claude"
 # module also empties the expectation, so the first version of this step passed
 # its own negative control. Retiring a section now means editing the fixture on
 # purpose.
+#
+# Both directions are asserted, because a checked-in baseline has its own way to
+# rot. The first fixture held 11 of the 16 headings: it was generated with a
+# bare `sort -u`, and under en_US.UTF-8 collation that considers several of these
+# Korean headings equal and silently drops them. The check meant to catch that
+# used the same pipeline, so it agreed. Comparison is done in python here for the
+# same reason — this must not depend on the caller's locale.
 ra="$TMP/rules-assemble"; mkdir -p "$ra"
 (
   SCRIPT_DIR="$ROOT"; export SCRIPT_DIR
@@ -346,18 +353,34 @@ ra="$TMP/rules-assemble"; mkdir -p "$ra"
   # shellcheck disable=SC1091
   source "$ROOT/lib/common.sh" 2>/dev/null || true
   assemble_global_rules >/dev/null 2>&1
+) || { echo "assembly failed"; fail "Layer A rules are no longer CLI-agnostic"; }
 
-  missing=0
-  while IFS= read -r heading; do
-    for t in "$CONFIG_DIR/CLAUDE.md" "$CODEX_DIR/AGENTS.md" "$GEMINI_DIR/GEMINI.md"; do
-      [ -f "$t" ] || { echo "not assembled: $t"; exit 1; }
-      grep -qxF "$heading" "$t" || {
-        echo "Layer A heading missing from $(basename "$t"): $heading"
-        missing=1
-      }
-    done
-  done < <(grep '^## ' "$ROOT/tests/fixtures/layer-a-sections.txt")
-  [ "$missing" = 0 ] || exit 1
-) || fail "Layer A rules are no longer CLI-agnostic"
+python3 - "$ROOT" "$ra" <<'PY' || fail "Layer A rules are no longer CLI-agnostic"
+import glob, os, sys
+root, ra = sys.argv[1], sys.argv[2]
+
+fixture = [l.rstrip("\n") for l in
+           open(os.path.join(root, "tests/fixtures/layer-a-sections.txt"), encoding="utf-8")
+           if l.startswith("## ")]
+current = {l.rstrip("\n") for p in sorted(glob.glob(os.path.join(root, "rules/*.md")))
+           for l in open(p, encoding="utf-8") if l.startswith("## ")}
+
+bad = False
+# 1. the baseline must still cover Layer A — a new section that never reaches the
+#    fixture is a rule nothing will ever check
+for h in sorted(current - set(fixture)):
+    print(f"heading absent from the fixture baseline: {h}"); bad = True
+
+# 2. every baseline heading must be reachable from all three runtimes
+for target in ("claude/CLAUDE.md", "codex/AGENTS.md", "gemini/GEMINI.md"):
+    path = os.path.join(ra, target)
+    if not os.path.isfile(path):
+        print(f"not assembled: {target}"); bad = True; continue
+    body = open(path, encoding="utf-8").read().split("\n")
+    for h in fixture:
+        if h not in body:
+            print(f"Layer A heading missing from {os.path.basename(target)}: {h}"); bad = True
+sys.exit(1 if bad else 0)
+PY
 
 echo "smoke-refactor OK"

@@ -129,11 +129,15 @@ scripts/measure-uptake.sh     # reads ~/.claude/projects, prints aggregates only
 ```
 
 The obvious way to shrink the resident file is to push rules into skills. Across
-179 tool-using transcripts, `Skill` was called 14 times in 9 sessions (5%) — and
-every call was a slash command the user typed. Nothing was observed loading a
-skill on its own; the ToDo tools, which have a Stop hook behind them, appear in
-13%. A rule moved out of the resident file stops being applied, so that
-restructuring is not on the table until this number changes.
+179 tool-using transcripts, `Skill` was called 14 times in 9 sessions (5%). Of
+those, 12 were slash commands the user typed; 2 were model-initiated. The ToDo
+tools, which have a Stop hook behind them, appear in 13%.
+
+Two autonomous loads in 179 sessions is not a channel a rule can depend on, so
+that restructuring is not on the table until the number changes. The measurement
+does not control for relevance — a session where no skill applied looks the same
+as one where a relevant skill was ignored — so it bounds the upside rather than
+proving the mechanism.
 
 `tests/smoke-refactor.sh` step [11] guards the related trap: `rules/*.md` feeds
 Claude, Codex *and* Antigravity, so a module moved into a Claude-only skill

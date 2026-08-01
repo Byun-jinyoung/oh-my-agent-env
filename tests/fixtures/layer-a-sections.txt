@@ -1,14 +1,25 @@
 # Layer A section headings — checked-in baseline for smoke step [11].
+#
 # Regenerate deliberately when a section is genuinely renamed or retired:
-#   grep -h '^## ' rules/*.md | sort -u >> tests/fixtures/layer-a-sections.txt
-## 기록
-## 의사결정 지원
-## 컨텍스트 명확화
-## 신뢰성 규약
-## 비교의 공정성
-## 편집 규칙
-## 최종 응답 규칙
-## 코드 변경 전 분석
-## 명령 및 도구 사용
+#   grep -h '^## ' rules/*.md | LC_ALL=C sort -u
+#
+# LC_ALL=C is not optional. Under en_US.UTF-8 collation `sort -u` considers
+# several of these Korean headings equal and drops them: the first version of
+# this file held 11 of 16 for exactly that reason, and the check that was
+# supposed to catch it used the same pipeline, so both were wrong the same way.
 ## Spec Gate — 코드보다 명세 먼저
 ## Subagent 규칙
+## 기록
+## 리뷰 규칙
+## 명령 및 도구 사용
+## 비교의 공정성
+## 신뢰성 규약
+## 의사결정 지원
+## 최종 응답 규칙
+## 측정 우선
+## 컨텍스트 명확화
+## 컨텍스트 연속성
+## 코드 변경 전 분석
+## 편집 규칙
+## 해석의 절제
+## 핵심 원칙

@@ -41,6 +41,10 @@ todo_sessions = set()
 skills = collections.Counter()
 tools = collections.Counter()
 inject_records = collections.Counter()   # per session
+skill_user_initiated = 0
+skill_autonomous = 0
+autonomous_examples = []
+last_user = ""
 
 for path in files:
     sid = os.path.basename(path)
@@ -67,6 +71,23 @@ for path in files:
                     if u not in seen_uuid:
                         seen_uuid.add(u)
                         inject_records[sid] += 1
+            if '"type":"user"' in line and '"tool_use"' not in line:
+                # Remember what the user last said, so a Skill call can be
+                # attributed. Cross-review was right that "every call was a
+                # slash command" is an inference from the skill names unless
+                # something actually checks the prompt that preceded it.
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    rec = None
+                if rec is not None and rec.get("type") == "user":
+                    content = (rec.get("message") or {}).get("content")
+                    if isinstance(content, str):
+                        last_user = content
+                    elif isinstance(content, list):
+                        last_user = " ".join(
+                            b.get("text", "") for b in content
+                            if isinstance(b, dict) and b.get("type") == "text")
             if '"tool_use"' not in line:
                 continue
             try:
@@ -80,8 +101,18 @@ for path in files:
                 tools[name] += 1
                 tool_sessions.add(sid)
                 if name == "Skill":
-                    skills[(c.get("input") or {}).get("skill", "?")] += 1
+                    sk = (c.get("input") or {}).get("skill", "?")
+                    skills[sk] += 1
                     skill_sessions.add(sid)
+                    # A slash invocation names the skill in the prompt itself.
+                    # Absent that, the model reached for it on its own — the
+                    # only case that matters for "can a rule live in a skill".
+                    leaf = sk.split(":")[-1]
+                    if leaf and ("/" + leaf) in last_user:
+                        skill_user_initiated += 1
+                    else:
+                        skill_autonomous += 1
+                        autonomous_examples.append(f"{sk} ({sid[:8]})")
                 elif name in TODO:
                     todo_sessions.add(sid)
 
@@ -99,6 +130,10 @@ for name, count in skills.most_common(10):
     print(f"    {name:34s} {count}")
 if not skills:
     print("    (none)")
+print(f"  user-invoked (slash) : {skill_user_initiated}")
+print(f"  model-initiated      : {skill_autonomous}")
+for ex in autonomous_examples[:5]:
+    print(f"      {ex}")
 print()
 print("-- for contrast: a rule that has a hook behind it --")
 print(f"ToDo-tool sessions   : {len(todo_sessions)} ({pct(len(todo_sessions))})")
@@ -112,7 +147,12 @@ if worst:
     print(f"worst session        : {count} injections ({sid[:8]}…)")
 print("bytes per injection  : wc -c runtimes/claude/rules-core.md")
 print()
-print("Reading: a low Skill rate means a rule moved out of the resident file")
-print("stops being applied. Compare against the ToDo rate, which is enforced by")
-print("a Stop hook rather than by prose.")
+print("Reading: what decides whether a rule can live in a skill is the")
+print("model-initiated count, not the total — a slash invocation says the user")
+print("knew the skill existed, not that the harness would have reached it.")
+print()
+print("Confound this does NOT control for: a session where no skill was")
+print("relevant produces the same zero as one where a relevant skill was")
+print("ignored. To separate them you would have to label sessions by whether a")
+print("skill applied, and measure the rate only within that subset.")
 PYEOF
