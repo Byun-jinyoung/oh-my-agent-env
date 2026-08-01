@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# One entry point for the experiment tools, so a research repo needs one name on
+# PATH instead of four absolute paths into this harness.
+#
+#   oma-lab run <cmd>...        record a run: gate, execute, append to the ledger
+#   oma-lab top --metric KEY    rank past runs by a recorded metric
+#   oma-lab capsule <verb>      reproducibility bundle for a run
+#   oma-lab board <verb>        claim an experiment id so two sessions cannot duplicate it
+#   oma-lab fail <verb>         cross-session memory of failed commands
+#
+# Every tool writes into the CURRENT repo (.runs/ and docs/EXPERIMENTS.jsonl),
+# never into this harness.
+set -uo pipefail
+
+LAB_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lab" && pwd -P)"
+export LAB_DIR
+
+usage() {
+  sed -n '2,12p' "$(readlink -f "${BASH_SOURCE[0]}")" | sed 's/^# \?//'
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  run|top)  exec bash "$LAB_DIR/ledger.sh"  "$cmd" "$@" ;;
+  capsule)  exec bash "$LAB_DIR/capsule.sh" "$@" ;;
+  board)    exec bash "$LAB_DIR/board.sh"   "$@" ;;
+  fail)     exec bash "$LAB_DIR/fail.sh"    "$@" ;;
+  ""|-h|--help|help) usage; exit 0 ;;
+  *) printf 'oma-lab: unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
+esac
