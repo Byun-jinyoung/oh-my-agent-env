@@ -196,6 +196,11 @@ Three things actually block rather than advise:
   read the data is worse than no gate, since the caller reads exit 0 as "no
   leakage found".
 
+`--key-column` means *no value in this column may appear in two splits* — the
+contract for a grouping column (scaffold, cluster, patient, assay). It is the
+wrong flag for a label like `class`, which belongs in every split and would be
+reported as leakage.
+
 `data check` compares the id set, each key column's value set, and a hash over
 the sorted `id → value` pairs. The pair hash is the one that earns its keep:
 permute which scaffold each molecule belongs to and the ids, the values and the

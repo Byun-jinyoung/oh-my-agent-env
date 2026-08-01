@@ -21,6 +21,12 @@
 #
 # leakage is fail-closed: a missing file or a missing key column exits 2 rather
 # than reporting clean. A gate that passes by skipping is worse than no gate.
+#
+# --key-column means "no value in this column may appear in two splits". That
+# is the contract for a GROUPING column — scaffold, cluster, patient, assay —
+# where a shared value is leakage. It is the wrong flag for a label like class
+# or species, which is supposed to appear in every split and would be reported
+# as leakage. If a column is legitimately shared, do not pass it.
 set -uo pipefail
 
 # shellcheck disable=SC1091
@@ -86,10 +92,25 @@ key_cols = [k for k in sys.argv[2].split(",") if k]
 out = {}
 
 def sha(parts):
+    # Length-prefixed framing, NOT newline-terminated. A CSV field may legally
+    # contain a newline and DictReader reads it correctly, so terminating parts
+    # on one makes ["A\nB", "C"] and ["A", "B\nC"] the same byte stream: two
+    # different splits with the same row count hash identically and `check`
+    # reports "unchanged". Reproduced before this framing existed — a false
+    # green in the one mechanism this tool exists to provide.
     h = hashlib.sha256()
     for p in parts:
-        h.update(p.encode("utf-8")); h.update(b"\n")
+        b = p.encode("utf-8")
+        h.update(b"%d:" % len(b)); h.update(b)
     return h.hexdigest()[:16]
+
+def sha_pairs(pairs):
+    # The same ambiguity one level up: joining an id to a value with a tab is
+    # unframed for any value containing a tab. Frame both members instead.
+    flat = []
+    for a, b in pairs:
+        flat.append(a); flat.append(b)
+    return sha(flat)
 
 for spec in sys.argv[3:]:
     if "=" not in spec:
@@ -125,7 +146,7 @@ for spec in sys.argv[3:]:
             n += 1
             ids.append(row[id_col] or "")
             for k in key_cols:
-                keyed[k].append("%s\t%s" % (row[id_col] or "", row[k] or ""))
+                keyed[k].append((row[id_col] or "", row[k] or ""))
     # A split with a header and no rows is a failed export, not a split — and
     # left alone it is a false green downstream: `leakage` would report it
     # disjoint from everything, which is true and useless, and reads as a
@@ -134,8 +155,8 @@ for spec in sys.argv[3:]:
         sys.stderr.write("lab: split %s (%s) has no rows\n" % (label, path)); sys.exit(2)
     entry = {"rows": n, "ids": sha(sorted(ids)), "path": path}
     for k in key_cols:
-        entry[k] = {"pairs": sha(sorted(keyed[k])),
-                    "values": sha(sorted({p.split("\t", 1)[1] for p in keyed[k]}))}
+        entry[k] = {"pairs": sha_pairs(sorted(keyed[k])),
+                    "values": sha(sorted({v for _, v in keyed[k]}))}
     out[label] = entry
 print(json.dumps(out, sort_keys=True))
 PY
@@ -178,8 +199,12 @@ case "$verb" in
 import json, shlex, sys
 r = json.load(sys.stdin)
 sp = json.loads(r.get("splits") or "{}")
-print("ID_COLUMN=%s" % shlex.quote(r.get("id_column") or "id"))
-print("KEY_COLUMNS=(%s)" % " ".join(shlex.quote(k) for k in (r.get("key_columns") or "").split(",") if k))
+# str(): lab_json_obj turns a numeric-looking value into an int unless the key
+# is on its identifier allow-list, and id_column/key_columns are not on it. A
+# column literally named 2024 came back as int, so shlex.quote and .split(",")
+# were handed a number and check died in a traceback.
+print("ID_COLUMN=%s" % shlex.quote(str(r.get("id_column") or "id")))
+print("KEY_COLUMNS=(%s)" % " ".join(shlex.quote(k) for k in str(r.get("key_columns") or "").split(",") if k))
 print("SPLITS=(%s)" % " ".join(shlex.quote("%s=%s" % (l, v["path"])) for l, v in sorted(sp.items())))
 ')"
     now="$(fingerprint)" || exit $?
@@ -212,8 +237,8 @@ sys.exit(1 if drift else 0)
 import csv, json, sys
 r = json.load(sys.stdin)
 sp = json.loads(r.get("splits") or "{}")
-id_col = r.get("id_column") or "id"
-keys = [k for k in (r.get("key_columns") or "").split(",") if k]
+id_col = str(r.get("id_column") or "id")     # see check: JSON coercion makes 2024 an int
+keys = [k for k in str(r.get("key_columns") or "").split(",") if k]
 
 def col(path, name):
     try: fh = open(path, newline="", encoding="utf-8")

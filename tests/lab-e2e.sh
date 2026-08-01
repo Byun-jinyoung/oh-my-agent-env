@@ -136,7 +136,7 @@ check "whence traces the checkpoint back" \
 mkdir -p sub/out; printf 'w\n' > sub/out/local.pt
 ( cd sub && bash "$OMA_LAB" capsule save --output out/local.pt --note subdir ) >/dev/null 2>&1
 check "capsule resolves a path against the caller's cwd when no --repo is given" \
-      '! grep -q "missing:out/local.pt" .oma-lab/capsules.jsonl'
+      'grep -qE "[0-9a-f]{16}:out/local.pt" .oma-lab/capsules.jsonl'
 
 # --- fail: the retry loop across sessions ------------------------------------
 lab fail record --cmd "python3 train.py --bogus" --exit 2 --note "no such flag"
@@ -190,9 +190,18 @@ check "the id set is reported unchanged" \
       '! printf "%s" "'"$drift_out"'" | grep -q "ids changed"'
 
 # leakage: the failure that silently inflates every number downstream.
-printf 'id,scaffold,y\nm4,C,4.0\nm2,B,9.9\n' > data/valid_s.csv
-lab data leakage --name qm9
-check "leakage catches an id in two splits" '[ "$RC" -eq 1 ]'
+#
+# The scaffold values here (Z) appear in NO train row on purpose. An earlier
+# fixture shared both an id and a scaffold, so the id check could have been
+# broken entirely and the assertion would still have passed on the key check
+# alone. Isolating them means only the id comparison can fire.
+printf 'id,scaffold,y\nm4,Z,4.0\nm2,Z,9.9\n' > data/valid_s.csv
+leak_out="$(bash "$OMA_LAB" data leakage --name qm9 2>&1)"; leak_rc=$?
+check "leakage catches an id in two splits" '[ "'"$leak_rc"'" -eq 1 ]'
+check "and it is the id comparison that fired" \
+      'printf "%s" "'"$leak_out"'" | grep -q "LEAKAGE\[ids\]"'
+check "with the key comparison reporting disjoint" \
+      '! printf "%s" "'"$leak_out"'" | grep -q "LEAKAGE\[key"'
 # Fail-closed. A gate that reports clean because it could not look is worse
 # than no gate, and exit 0 here would read as "no leakage" to any caller.
 mv data/valid_s.csv data/valid_s.hidden
@@ -214,6 +223,49 @@ lab data register --name bogus --id-column id --key-column nosuch --split train=
 check "registering a missing key column is refused" '[ "$RC" -eq 2 ]'
 check "the refused registration wrote no row" \
       '[ "$(wc -l < .oma-lab/datasets.jsonl)" -eq "$rows_before" ]'
+
+# A newline inside a quoted field is legal CSV and DictReader reads it right,
+# which is exactly what makes the hash framing matter: ["A\nB","C"] and
+# ["A","B\nC"] are different id sets with the same row count, and a hash that
+# merely newline-terminates each part cannot tell them apart. Swapping one for
+# the other must be drift.
+python3 - <<'NLCSV'
+import csv
+def w(p, ids):
+    with open(p, "w", newline="") as fh:
+        c = csv.writer(fh); c.writerow(["id", "y"])
+        for i in ids: c.writerow([i, "1"])
+w("data/nl_a.csv", ["A\nB", "C"])
+w("data/nl_b.csv", ["A", "B\nC"])
+NLCSV
+lab data register --name nlframe --split train=data/nl_a.csv
+cp data/nl_b.csv data/nl_a.csv
+lab data check --name nlframe
+check "an embedded newline cannot collide two different id sets" '[ "$RC" -eq 1 ]'
+# Negative control: put the original set back and the drift must clear, so the
+# assertion above is not satisfied by a hash that simply always differs.
+python3 - <<'NLCSV'
+import csv
+with open("data/nl_a.csv", "w", newline="") as fh:
+    c = csv.writer(fh); c.writerow(["id", "y"])
+    for i in ["A\nB", "C"]: c.writerow([i, "1"])
+NLCSV
+lab data check --name nlframe
+check "and the same set still compares equal" '[ "$RC" -eq 0 ]'
+
+# lab_json_obj coerces a numeric-looking value to a number unless the key is on
+# its identifier allow-list, and id_column/key_columns are not. A column
+# literally named 2024 registered fine and then died in a traceback on read
+# back — the failure lands on `check`, i.e. on the run that was trying to
+# confirm its data, which is the worst place for it.
+printf '2024,y\nm1,1\nm2,2\n' > data/numcol.csv
+lab data register --name numcol --id-column 2024 --key-column y --split t=data/numcol.csv
+check "a numeric column name registers" '[ "$RC" -eq 0 ]'
+lab data check --name numcol
+check "and reads back without a traceback" '[ "$RC" -eq 0 ]'
+printf '2024,y\nm1,9\nm2,2\n' > data/numcol.csv
+lab data check --name numcol
+check "and still detects drift under it" '[ "$RC" -eq 1 ]'
 
 # Three ways a CSV silently produces the wrong fingerprint or a hollow pass.
 # A header with no rows is a failed export; left alone, leakage would call it
@@ -288,8 +340,10 @@ check "a bad --repo is refused, not redirected" '[ ! -e "$launcher/.oma-lab/fail
 # It recorded "missing:" for a file that was sitting in the target all along.
 mkdir -p "$target/out"; printf 'weights\n' > "$target/out/model.txt"
 ( cd "$TMP" && bash "$OMA_LAB" capsule save --repo "$target" --output out/model.txt --note e2e ) >/dev/null 2>&1
+# Assert the sha is PRESENT, not merely that "missing:" is absent — dropping
+# the outputs field altogether would satisfy the negative form.
 check "capsule --repo fingerprints the target's artifact" \
-      '! grep -q "missing:out/model.txt" "$target/.oma-lab/capsules.jsonl"'
+      'grep -qE "[0-9a-f]{16}:out/model.txt" "$target/.oma-lab/capsules.jsonl"'
 # ...and still reports a genuinely absent file as missing, so the assertion
 # above cannot be satisfied by dropping the check altogether.
 ( cd "$TMP" && bash "$OMA_LAB" capsule save --repo "$target" --output out/ghost.txt --note e2e ) >/dev/null 2>&1
