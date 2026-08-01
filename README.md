@@ -68,7 +68,7 @@ oh-my-agent-env/
 │   ├── check.sh                          #   verification gate (lint + tests); CI runs this
 │   ├── journal.sh                        #   Obsidian work-journal entries
 │   ├── oma-lab                           #   experiment tools entry point (→ ~/.local/bin)
-│   ├── lab/                              #   ledger, capsule, board, fail + shared lib
+│   ├── lab/                              #   ledger, capsule, board, fail, data + shared lib
 │   └── ...                               #   apply-project-template, snapshot, ...
 └── tests/
     ├── smoke-refactor.sh                 # Source graph, isolated HOME, hook contract, journal
@@ -156,6 +156,10 @@ oma-lab board claim --id lr-sweep-01 --hypothesis "3e-4 beats 1e-3"
 oma-lab capsule save --config config.yaml --output ckpt-best.pt
 oma-lab capsule whence ckpt-best.pt    # which run produced this checkpoint?
 oma-lab fail check --cmd "python train.py"
+oma-lab data register --name qm9 --id-column smiles --key-column scaffold \
+  --split train=data/train.csv --split valid=data/valid.csv
+oma-lab data leakage --name qm9        # do the splits share ids or scaffolds?
+oma-lab data check --name qm9          # are the splits still what they were?
 ```
 
 | Tool | What it prevents |
@@ -164,6 +168,16 @@ oma-lab fail check --cmd "python train.py"
 | `board` | Two sessions starting the same experiment |
 | `capsule` | A checkpoint nobody can trace back to code |
 | `fail` | Re-running a command that already failed unchanged |
+| `data` | A number attributed to a split that has since changed underneath it |
+
+`--repo PATH` points any of them at another repo, for a job launched from a
+submit directory. It redirects the git reads and relative paths too, not just
+where state is written.
+
+Split paths in `data` are relative to the repo root. Registration records the
+current run id, so a dataset joins back to the run that consumed it — the link
+the ledger cannot make on its own, because the splits are gitignored and a
+commit hash is blind to them by construction.
 
 Three things actually block rather than advise:
 
@@ -177,10 +191,26 @@ Three things actually block rather than advise:
   id would put two jobs on the same checkpoints.
 - `fail check` exits 3 when the same command already failed and the tree has not
   changed since. After edits it only warns — the edits may be the fix.
+- `data leakage` exits 1 on overlap and **2 when it cannot look** — a missing
+  file or column is not a pass. A gate that reports clean because it could not
+  read the data is worse than no gate, since the caller reads exit 0 as "no
+  leakage found".
+
+`data check` compares the id set, each key column's value set, and a hash over
+the sorted `id → value` pairs. The pair hash is the one that earns its keep:
+permute which scaffold each molecule belongs to and the ids, the values and the
+row count are all identical while the experiment is measuring something else.
+It is also insensitive to row order, so rewriting a file without changing an
+assignment is correctly not drift.
 
 `rules/70-analysis.md` has always required measuring before claiming. These are
 the first mechanisms behind that rule; before them the harness had the norms and
 no enforcement.
+
+`data` was adapted from a colleague's harness. [`docs/ADOPTION.md`](docs/ADOPTION.md)
+records what else was reviewed from it, what was refused, and why — including
+the one component held back because the number justifying it could not be
+measured.
 
 ## Work Journal
 
