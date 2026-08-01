@@ -129,6 +129,14 @@ check "capsule index gained a row"       '[ "$(wc -l < .oma-lab/capsules.jsonl)"
 check "capsule list reports it"          'bash "$OMA_LAB" capsule list | grep -qv "(0 capsule"'
 check "whence traces the checkpoint back" \
       'bash "$OMA_LAB" capsule whence ckpt/model_seed2.pt | grep -q run='
+# Without --repo, a path means what the caller meant: relative to where they
+# are standing. Fixing the --repo case by moving to the repo root
+# unconditionally broke this, and the damage was silent — a capsule that
+# records "missing:" still saves, still exits 0, and still lists.
+mkdir -p sub/out; printf 'w\n' > sub/out/local.pt
+( cd sub && bash "$OMA_LAB" capsule save --output out/local.pt --note subdir ) >/dev/null 2>&1
+check "capsule resolves a path against the caller's cwd when no --repo is given" \
+      '! grep -q "missing:out/local.pt" .oma-lab/capsules.jsonl'
 
 # --- fail: the retry loop across sessions ------------------------------------
 lab fail record --cmd "python3 train.py --bogus" --exit 2 --note "no such flag"

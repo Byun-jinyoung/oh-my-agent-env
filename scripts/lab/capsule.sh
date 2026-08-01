@@ -19,7 +19,7 @@ set -uo pipefail
 # shellcheck disable=SC1091
 . "${LAB_DIR:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")}/common.sh"
 
-RID="" NOTE="" ; CONFIGS=() ; OUTPUTS=()
+RID="" NOTE="" REPO_GIVEN=0 ; CONFIGS=() ; OUTPUTS=()
 verb="${1:-list}"; shift || true
 POSITIONAL=""
 while [ $# -gt 0 ]; do
@@ -31,7 +31,8 @@ while [ $# -gt 0 ]; do
         --config) CONFIGS+=("$2") ;;
         --output) OUTPUTS+=("$2") ;;
         --note)   NOTE="$2" ;;
-        --repo)   LAB_ROOT="$(cd "$2" && pwd -P)" || lab_die "no such repo: $2"; export LAB_ROOT ;;
+        --repo)   LAB_ROOT="$(cd "$2" && pwd -P)" || lab_die "no such repo: $2"; export LAB_ROOT
+                  REPO_GIVEN=1 ;;
       esac
       shift 2 ;;
     -*) lab_die "unknown option: $1" ;;
@@ -40,14 +41,21 @@ while [ $# -gt 0 ]; do
 done
 
 ROOT="${LAB_ROOT:-$(lab_repo_root)}"
-# --config/--output and the path `whence` looks up are relative to the REPO,
-# not to the caller's cwd. Without this, `capsule save --repo target --output
-# out/model.txt` run from anywhere else fingerprinted a file that was never
-# there and recorded "missing:out/model.txt" — a capsule that records the
-# absence of the artifact it exists to pin. Set LAB_ROOT too, so the state path
-# and the git helpers resolve against the same repo we just moved into.
+# Only --repo moves us. It means "act as if you are standing in that repo", so
+# --config/--output and the path `whence` takes resolve there: without this,
+# `capsule save --repo target --output out/model.txt` run from anywhere else
+# fingerprinted a file that was never there and recorded "missing:out/model.txt"
+# — a capsule recording the absence of the artifact it exists to pin.
+#
+# Without --repo we stay put. Moving to the repo root unconditionally was the
+# obvious-looking version and it was wrong: `capsule save --output out/model.pt`
+# from a subdirectory had always meant the caller's cwd, and rebasing it on the
+# root turned a working capsule into "missing:" for the common case. Verified
+# against the previous revision before and after.
 LAB_ROOT="$ROOT"; export LAB_ROOT
-cd "$ROOT" || lab_die "cannot enter repo root: $ROOT"
+if [ "$REPO_GIVEN" = 1 ]; then
+  cd "$ROOT" || lab_die "cannot enter repo root: $ROOT"
+fi
 RUNS_DIR="$(lab_state_dir)/runs"
 INDEX="$(lab_state_dir)/capsules.jsonl"
 
