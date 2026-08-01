@@ -205,6 +205,34 @@ check "registering a missing key column is refused" '[ "$RC" -eq 2 ]'
 check "the refused registration wrote no row" \
       '[ "$(wc -l < .oma-lab/datasets.jsonl)" -eq 1 ]'
 
+# Three ways a CSV silently produces the wrong fingerprint or a hollow pass.
+# A header with no rows is a failed export; left alone, leakage would call it
+# disjoint from everything and that reads as a clean bill of health.
+printf 'id,scaffold,y\n' > data/norows.csv
+lab data register --name norows --split train=data/norows.csv
+check "a split with no rows is refused" '[ "$RC" -eq 2 ]'
+# DictReader keeps the last value for a repeated header, so this would
+# fingerprint the second 'id' column without saying so.
+printf 'id,id,y\nm1,m9,1.0\n' > data/dup.csv
+lab data register --name dup --split train=data/dup.csv
+check "duplicate columns are refused" '[ "$RC" -eq 2 ]'
+# A BOM must be transparent, not merely tolerated: pandas writes one on
+# request, and it binds to the first header cell. Equality with the plain file
+# is the assertion — "exits 0" would pass while hashing "﻿id" as the id.
+printf '\xef\xbb\xbfid,scaffold,y\nm1,A,1.0\nm2,B,2.0\n' > data/bom.csv
+printf 'id,scaffold,y\nm1,A,1.0\nm2,B,2.0\n'             > data/nobom.csv
+lab data register --name bom   --split train=data/bom.csv   --key-column scaffold
+lab data register --name nobom --split train=data/nobom.csv --key-column scaffold
+check "a BOM fingerprints identically to the same file without one" \
+      'python3 -c "
+import json
+d={}
+for l in open(\".oma-lab/datasets.jsonl\"):
+    r=json.loads(l); d[str(r[\"name\"])]=json.loads(r[\"splits\"])
+import sys
+a=dict(d[\"bom\"][\"train\"]); b=dict(d[\"nobom\"][\"train\"])
+a.pop(\"path\"); b.pop(\"path\")   # the filenames differ; nothing else may
+sys.exit(0 if a==b else 1)"'
 # --- --repo: state must land in ONE repo, the named one ----------------------
 # The ledger path used to be resolved before --repo was parsed, so a run
 # launched from elsewhere split its state: ledger.jsonl in the caller's repo,

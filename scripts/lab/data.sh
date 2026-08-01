@@ -41,9 +41,15 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || lab_die "$1 needs a value"
       case "$1" in
         --name)       NAME="$2" ;;
-        --id-column)  ID_COLUMN="$2" ;;
+        # Column names are stored comma-joined, so one containing a comma would
+        # come back as two columns that happen to exist and quietly fingerprint
+        # the wrong thing. Refusing is honest; the CSV would need a quoted
+        # header for this to be legal in the first place.
+        --id-column)  case "$2" in *,*) lab_die "column name cannot contain a comma: $2" ;; esac
+                      ID_COLUMN="$2" ;;
+        --key-column) case "$2" in *,*) lab_die "column name cannot contain a comma: $2" ;; esac
+                      KEY_COLUMNS+=("$2") ;;
         --split)      SPLITS+=("$2") ;;
-        --key-column) KEY_COLUMNS+=("$2") ;;
         --repo)       LAB_ROOT="$(cd "$2" && pwd -P)" || lab_die "no such repo: $2"
                       export LAB_ROOT ;;
       esac
@@ -90,12 +96,23 @@ for spec in sys.argv[3:]:
         sys.stderr.write("lab: --split needs LABEL=FILE, got %r\n" % spec); sys.exit(2)
     label, path = spec.split("=", 1)
     try:
-        fh = open(path, newline="", encoding="utf-8")
+        # utf-8-sig, not utf-8: pandas writes a BOM whenever it is told
+        # encoding="utf-8-sig", and the BOM binds to the first header cell, so
+        # the id column reads as "﻿id" and every split fails with "no id
+        # column" naming a column that is plainly there. No-op without a BOM.
+        fh = open(path, newline="", encoding="utf-8-sig")
     except OSError as e:
         sys.stderr.write("lab: cannot read split %s: %s\n" % (label, e)); sys.exit(2)
     with fh:
         rd = csv.DictReader(fh)
         cols = rd.fieldnames or []
+        # DictReader keeps the LAST value for a repeated header, so a file with
+        # two "id" columns fingerprints the second one without a word. A
+        # fingerprint nobody can tell is of the wrong column is worse than none.
+        dupes = sorted({c for c in cols if cols.count(c) > 1})
+        if dupes:
+            sys.stderr.write("lab: split %s has duplicate columns: %s\n"
+                             % (label, ",".join(dupes))); sys.exit(2)
         if id_col not in cols:
             sys.stderr.write("lab: split %s has no id column %r (has: %s)\n"
                              % (label, id_col, ",".join(cols))); sys.exit(2)
@@ -109,6 +126,12 @@ for spec in sys.argv[3:]:
             ids.append(row[id_col] or "")
             for k in key_cols:
                 keyed[k].append("%s\t%s" % (row[id_col] or "", row[k] or ""))
+    # A split with a header and no rows is a failed export, not a split — and
+    # left alone it is a false green downstream: `leakage` would report it
+    # disjoint from everything, which is true and useless, and reads as a
+    # clean bill of health for a split that contains nothing.
+    if n == 0:
+        sys.stderr.write("lab: split %s (%s) has no rows\n" % (label, path)); sys.exit(2)
     entry = {"rows": n, "ids": sha(sorted(ids)), "path": path}
     for k in key_cols:
         entry[k] = {"pairs": sha(sorted(keyed[k])),
