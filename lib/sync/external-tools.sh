@@ -176,11 +176,21 @@ sync_external_tools() {
     # read provider configs, model defaults, or any embedded data.
     # `npm prefix -g` inside install.sh also reads this env var, so its
     # post-install path resolution lines up with the actual install location.
-    run_with_timeout "codex-gemini-mcp install" \
-      "$NPM_USER_ENV curl -sL https://raw.githubusercontent.com/Byun-jinyoung/codex-gemini-mcp/main/install.sh | $NPM_USER_ENV bash" \
-      | tail -3 || true
+    # `set -o pipefail` and curl's `-f` are both load-bearing. Without -f, curl
+    # exits 0 on a 404 and pipes the error page into bash; without pipefail,
+    # bash's own 0 masks a curl that failed outright. Either way the install
+    # "succeeds" having done nothing, and the WARN below then blames PATH
+    # shadowing for what was really a download that never happened.
+    local install_out install_rc=0
+    install_out="$(run_with_timeout "codex-gemini-mcp install" \
+      "set -o pipefail; $NPM_USER_ENV curl -fsSL https://raw.githubusercontent.com/Byun-jinyoung/codex-gemini-mcp/main/install.sh | $NPM_USER_ENV bash")" \
+      || install_rc=$?
+    [ -n "$install_out" ] && printf '%s\n' "$install_out" | tail -3
     if verify_codex_gemini_mcp; then
       log_and_print "    [OK] Byun-jinyoung fork installed and verified"
+    elif [ "$install_rc" -ne 0 ]; then
+      log_and_print "    [WARN] fork install command itself failed (exit=$install_rc) — see $LOG_FILE"
+      log_and_print "           Check network access to raw.githubusercontent.com before suspecting PATH."
     else
       log_and_print "    [WARN] fork install ran but integrity still failing — see $LOG_FILE"
       log_and_print "           Most likely cause: system-wide /usr/bin/{codex,gemini}-mcp symlinks shadowing fork on PATH"

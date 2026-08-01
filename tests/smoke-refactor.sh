@@ -417,4 +417,34 @@ np="$TMP/np dir"; mkdir -p "$np"
     echo "prefix dirs not created"; exit 1; }
 ) || fail "NPM_USER_ENV no longer delivers the prefix it promises"
 
+# [13] A download that never happened must not read as a successful install.
+# `curl ... | bash` hides a failed fetch: curl exits nonzero and writes nothing,
+# bash reads empty stdin and exits 0, and the pipeline reports success. The
+# caller then blames PATH shadowing for a package that was never downloaded.
+# Stubbed curl, so this asserts the shell contract without touching the network.
+pf="$TMP/pipefail"; mkdir -p "$pf/bin"
+cat > "$pf/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+echo "curl: (7) Failed to connect" >&2
+exit 7
+STUB
+chmod +x "$pf/bin/curl"
+(
+  PATH="$pf/bin:$PATH"; export PATH
+  SCRIPT_DIR="$ROOT"; export SCRIPT_DIR
+  LOG_FILE="$pf/log"; STEP_TIMEOUT=20
+  # shellcheck disable=SC1091
+  source "$ROOT/lib/common.sh" 2>/dev/null || true
+
+  if run_with_timeout "pipefail probe" \
+       "set -o pipefail; curl -fsSL http://example.invalid/i.sh | bash" >/dev/null 2>&1
+  then
+    echo "a failed download still reports success"; exit 1
+  fi
+) || fail "curl|bash install no longer propagates a failed fetch"
+
+# The installer this protects must keep both guards; either one alone leaks.
+grep -q 'set -o pipefail; \$NPM_USER_ENV curl -fsSL' "$ROOT/lib/sync/external-tools.sh" \
+  || fail "codex-gemini-mcp install lost its pipefail/curl -f guard"
+
 echo "smoke-refactor OK"
