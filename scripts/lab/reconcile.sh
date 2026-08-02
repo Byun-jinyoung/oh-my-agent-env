@@ -53,12 +53,22 @@ usage() {
 # Refuse rather than report a clean board we never looked at. Without a way to
 # query Slurm, "no finished jobs" and "no idea" produce the same output, and the
 # caller acts on the first reading. This is the same rule `data leakage` follows.
+#
+# `command -v` answers "is the binary on PATH", which is not the question. With
+# slurmdbd down, sacct is installed and fails every query: the presence check
+# passed, every job came back UNKNOWN, and apply printed "0 newly finished, N
+# still open" — word for word what it prints when the jobs really are running.
+# So ask a question whose answer does not depend on any particular job: job 0
+# never exists, and a healthy sacct answers that with no rows and exit 0.
 require_slurm() {
-  command -v "$SACCT" >/dev/null 2>&1 && return 0
-  command -v "$SQUEUE" >/dev/null 2>&1 && return 0
-  printf 'reconcile: neither %s nor %s is available — cannot tell finished from running\n' \
+  command -v "$SACCT"  >/dev/null 2>&1 &&
+    "$SACCT"  -n -X -j 0 --format=State >/dev/null 2>&1 && return 0
+  command -v "$SQUEUE" >/dev/null 2>&1 &&
+    "$SQUEUE" -h -o '%T' >/dev/null 2>&1 && return 0
+  printf 'reconcile: cannot query Slurm — %s and %s are both missing or failing\n' \
     "$SACCT" "$SQUEUE" >&2
-  printf '           (override with OMA_SACCT_CMD / OMA_SQUEUE_CMD)\n' >&2
+  printf '           A job that cannot be looked up has not been shown to be running.\n' >&2
+  printf '           (override the binaries with OMA_SACCT_CMD / OMA_SQUEUE_CMD)\n' >&2
   exit 2
 }
 
@@ -77,22 +87,26 @@ for r in rows:
 # "<state>\t<exit>\t<elapsed>\t<source>" for one id.
 #
 # sacct first: a finished job leaves squeue but stays in the accounting db, so
-# asking squeue first would report a completed run as simply absent. sacct also
-# returns one line per step (batch, extern); the job line is the first.
+# asking squeue first would report a completed run as simply absent.
+#
+# sacct returns one row per step — "12345", "12345.batch", "12345.extern" — and
+# their states differ. Taking whichever came first meant a step's outcome could
+# be filed as the job's, so JobID is asked for and matched exactly. That is the
+# only field that distinguishes them, and it was not being requested at all.
 job_state() {
   local jid="$1" line="" st
   if command -v "$SACCT" >/dev/null 2>&1; then
-    line="$("$SACCT" -j "$jid" --format=State,ExitCode,Elapsed -n -P 2>/dev/null \
-            | awk -F'|' 'NF>=1 && $1!="" {print; exit}')"
+    line="$("$SACCT" -j "$jid" --format=JobID,State,ExitCode,Elapsed -n -P 2>/dev/null \
+            | awk -F'|' -v want="$jid" '$1 == want { print; exit }')"
     if [ -n "$line" ]; then
       # Trim the edges, keep the inside. `tr -d ' '` turns sacct's
       # "CANCELLED by 1000" into "CANCELLEDby1000", which then matches nothing
       # in is_terminal — so a cancelled job stayed "still open" forever and was
       # never recorded, which is the one thing this tool exists to prevent.
       printf '%s\t%s\t%s\tsacct\n' \
-        "$(printf '%s' "$line" | cut -d'|' -f1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')" \
-        "$(printf '%s' "$line" | cut -d'|' -f2)" \
-        "$(printf '%s' "$line" | cut -d'|' -f3)"
+        "$(printf '%s' "$line" | cut -d'|' -f2 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')" \
+        "$(printf '%s' "$line" | cut -d'|' -f3)" \
+        "$(printf '%s' "$line" | cut -d'|' -f4)"
       return 0
     fi
   fi

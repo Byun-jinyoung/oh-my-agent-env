@@ -419,6 +419,16 @@ check "and a non-submitter's stdout is never scanned for one" '[ -z "$(sj notsub
 check "and sbatch's own output still reaches the caller" \
       'printf "%s" "'"$sub_out"'" | grep -q "Submitted batch job 998877"'
 
+# If the capture cannot be set up, the old code shrugged and submitted anyway:
+# the job entered the queue, the row recorded slurm_job="", and reconcile could
+# never find it again. Refusing costs a rerun; the alternative is a running job
+# nothing can account for, which is the state this whole tool exists to remove.
+mk_rc=0
+(cd "$WORK" && PATH="$SL:$PATH" TMPDIR="$WORK/no-such-tmpdir" \
+   bash "$OMA_LAB" run --tag mktempfail -- sbatch train.sh) >/dev/null 2>&1 || mk_rc=$?
+check "a job is not submitted when its id could not be captured" '[ "'"$mk_rc"'" -ne 0 ]'
+check "and the refusal happened before sbatch ran, not after" '[ "$(sj mktempfail)" = "NO-ROW" ]'
+
 printf '#!/usr/bin/env bash\necho "112233;cluster0"\n' > "$SL/sbatch"; chmod +x "$SL/sbatch"
 (cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" run --tag par -- sbatch --parsable t.sh) >/dev/null 2>&1
 check "--parsable's bare id form is captured too" '[ "$(sj par)" = "112233" ]'
@@ -433,17 +443,61 @@ fc_rc=0
   >/dev/null 2>&1 || fc_rc=$?
 check "reconcile refuses when it cannot query Slurm at all" '[ "'"$fc_rc"'" -eq 2 ]'
 
-printf '#!/usr/bin/env bash\nexit 1\n'            > "$SL/sacct";  chmod +x "$SL/sacct"
-printf '#!/usr/bin/env bash\necho RUNNING\n'      > "$SL/squeue"; chmod +x "$SL/squeue"
+# The harder half, and the one a presence check gets wrong: sacct installed and
+# on PATH, slurmdbd down, so every query fails. Absence was handled; failure was
+# not, and "0 newly finished, N still open" is what it printed — indistinguishable
+# from the jobs genuinely still running.
+printf '#!/usr/bin/env bash\necho "sacct: error: slurm_persist_conn_open failed" >&2\nexit 1\n' \
+  > "$SL/sacct"; chmod +x "$SL/sacct"
+dead_rc=0
+(cd "$WORK" && PATH="$SL:/usr/bin:/bin" OMA_SQUEUE_CMD=nope bash "$OMA_LAB" reconcile apply) \
+  >/dev/null 2>&1 || dead_rc=$?
+check "and when Slurm is installed but failing every query" '[ "'"$dead_rc"'" -eq 2 ]'
+
+# A faithful sacct: exit 0 whether or not it knows the job, rows only for the
+# one asked about, JobID first. A stub that exits 1 for an unknown job is a
+# Slurm that is DOWN — a different scenario, and now correctly refused above.
+mk_sacct() {   # $1 = the job id it knows about, $2 = "State|ExitCode|Elapsed"
+  { printf '#!/usr/bin/env bash\n'
+    printf '[ "$2" = "%s" ] && printf "%%s|%%s\\n" "%s" "%s"\n' "$1" "$1" "$2"
+    printf 'exit 0\n'
+  } > "$SL/sacct"
+  chmod +x "$SL/sacct"
+}
+
+mk_sacct 000000 'COMPLETED|0:0|00:00:01'   # knows nothing in this ledger
+printf '#!/usr/bin/env bash\necho RUNNING\n' > "$SL/squeue"; chmod +x "$SL/squeue"
 (cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply) >/dev/null 2>&1
 check "a job still running is not recorded as an outcome" \
       '[ ! -s "$WORK/.oma-lab/reconciled.jsonl" ]'
 
-# Answers for 998877 only. An unconditional stub finishes every job in the
-# ledger, including 112233, and then the "not yet reconciled" assertion below
-# has nothing left to observe — it passed by having no unfinished job to find.
-printf '#!/usr/bin/env bash\n[ "$2" = 998877 ] || exit 1\necho "OUT_OF_MEMORY|0:125|00:41:12"\n' \
-  > "$SL/sacct"; chmod +x "$SL/sacct"
+# sacct returns one row per step and their states differ. Without JobID in the
+# format there is nothing to tell "909090" from "909090.batch", and whichever
+# came first was filed as the job's outcome. The step row is emitted first here
+# precisely because that is the ordering the old code got wrong.
+#
+# A job id of its own, not one already in the ledger: reconciling 112233 here
+# would leave the "not yet reconciled" assertion below with nothing unfinished
+# to observe, and it would pass by having nothing to look at.
+{ printf '#!/usr/bin/env bash\n'
+  printf '[ "$2" = 909090 ] || exit 0\n'
+  printf 'echo "909090.batch|FAILED|1:0|00:00:02"\n'
+  printf 'echo "909090|COMPLETED|0:0|00:10:00"\n'
+  printf 'exit 0\n'
+} > "$SL/sacct"; chmod +x "$SL/sacct"
+(cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply --job 909090) >/dev/null 2>&1
+check "a step row is not filed as the job's outcome" \
+      'python3 -c "
+import json,sys
+for l in open(sys.argv[1]):
+    r = json.loads(l)
+    if str(r.get(\"slurm_job\")) == \"909090\":
+        sys.exit(0 if r.get(\"state\") == \"COMPLETED\" else 1)
+sys.exit(1)" "$WORK/.oma-lab/reconciled.jsonl"'
+
+# Answers for 998877 only, so 112233 stays unreconciled for the assertions that
+# need an unfinished job to observe.
+mk_sacct 998877 'OUT_OF_MEMORY|0:125|00:41:12'
 (cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply) >/dev/null 2>&1
 check "and once it ends, the ending is recorded" \
       'grep -q OUT_OF_MEMORY "$WORK/.oma-lab/reconciled.jsonl"'
@@ -457,8 +511,7 @@ check "reconciling twice does not record it twice" \
 # terminal — so the job reads as still running, forever, and the tool silently
 # does the opposite of its job. Only a multi-word state exercises this; every
 # other Slurm state is a single token and passes either way.
-printf '#!/usr/bin/env bash\n[ "$2" = 424242 ] || exit 1\necho "CANCELLED by 1000|0:15|00:02:11"\n' \
-  > "$SL/sacct"; chmod +x "$SL/sacct"
+mk_sacct 424242 'CANCELLED by 1000|0:15|00:02:11'
 (cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply --job 424242) >/dev/null 2>&1
 check "a multi-word terminal state still counts as finished" \
       'grep -q "\"slurm_job\": \"424242\"" "$WORK/.oma-lab/reconciled.jsonl"'
@@ -469,8 +522,7 @@ check "and the reason it was cancelled is kept, not squashed out" \
 # stored as the int 0 — and `x or "?"` turns the one exit code we are surest
 # about into the symbol for "unknown". sacct's ExitCode is normally "0:0", so
 # this needs a stub to reach, which is exactly why it would have gone unnoticed.
-printf '#!/usr/bin/env bash\n[ "$2" = 777001 ] || exit 1\necho "COMPLETED|0|00:00:09"\n' \
-  > "$SL/sacct"; chmod +x "$SL/sacct"
+mk_sacct 777001 'COMPLETED|0|00:00:09'
 zl="$(cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply --job 777001 >/dev/null 2>&1
       cd "$WORK" && bash "$OMA_LAB" reconcile list -n 50 2>/dev/null)"
 check "a clean exit prints as 0, not as unknown" \
@@ -481,8 +533,7 @@ check "a clean exit prints as 0, not as unknown" \
 # and then "unknown" would never be sayable. 112233 cannot serve as this pair:
 # it was never reconciled, so asserting anything about its row passes by the
 # row not existing.
-printf '#!/usr/bin/env bash\n[ "$2" = 777002 ] || exit 1\necho "CANCELLED||00:00:03"\n' \
-  > "$SL/sacct"; chmod +x "$SL/sacct"
+mk_sacct 777002 'CANCELLED||00:00:03'
 (cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply --job 777002) >/dev/null 2>&1
 zl2="$(cd "$WORK" && bash "$OMA_LAB" reconcile list -n 50 2>/dev/null)"
 check "and an outcome that carries no exit code prints unknown" \

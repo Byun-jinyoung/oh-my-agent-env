@@ -168,7 +168,15 @@ if prev:
     submitter=0
     case "$(basename "${CMD_ARGV[0]}")" in sbatch) submitter=1 ;; esac
     cap=""
-    [ "$submitter" = 1 ] && { cap="$(mktemp)" || cap=""; }
+    if [ "$submitter" = 1 ]; then
+      # Degrading to "run it anyway without capturing" was wrong: the job goes
+      # into the queue, the row records slurm_job="", and reconcile can never
+      # find it again. An untrackable job is the exact state this tool exists
+      # to prevent, and it would be created silently, before anything ran.
+      cap="$(mktemp)" || lab_die "cannot create a temp file to capture the job id — refusing to submit an untrackable job"
+      # The command may be killed; the temp file must not outlive this process.
+      trap 'rm -f "$cap"' EXIT INT TERM
+    fi
 
     start=$(date +%s)
     if [ -n "$cap" ]; then
