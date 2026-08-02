@@ -38,3 +38,41 @@ sync_claude() {
   echo "[2b] Rules-enforcement hooks (settings.json)"
   ensure_rules_enforcement_hooks
 }
+
+# [2c] Machine snapshot. Three agent-facing surfaces tell the agent to read
+# ~/.oh-my-agent-env/local/machine.md when compute, GPU/CUDA or Slurm matter —
+# templates/project-ml-AGENTS.md:15 and :56, skills/multi-agent-review/SKILL.md:27,
+# and apply-project-template.sh:139 stamps the path into every scaffolded
+# PROJECT.md. The writer existed and local/ is gitignored on purpose ("generated
+# per machine, never synced"), but nothing ever ran it: the file was absent here
+# while all four surfaces pointed at it.
+#
+# Written only when missing. Regenerating on every sync would re-probe hardware
+# that has not changed; `write-machine-snapshot.sh` is the way to refresh it after
+# a hardware or driver change, which is what its own header already says.
+#
+# The path is the writer's own default and is NOT overridden here. All four
+# surfaces hardcode ~/.oh-my-agent-env/local/machine.md, so pinning it to
+# $SCRIPT_DIR/local would manage a different file than the agent is told to read
+# on any machine where the harness is checked out somewhere else. They happen to
+# be the same path here, which is exactly how that would have gone unnoticed.
+sync_machine_snapshot() {
+  local writer="$SCRIPT_DIR/scripts/write-machine-snapshot.sh"
+  local out="$HOME/.oh-my-agent-env/local/machine.md"
+  echo "[2c] Machine snapshot"
+  if [ ! -f "$writer" ]; then
+    log_and_print "  [FAIL] missing $writer"
+    ERRORS=$((ERRORS+1))
+    return
+  fi
+  if [ -f "$out" ]; then
+    log_and_print "  [SKIP] $out exists — refresh with scripts/write-machine-snapshot.sh"
+    return
+  fi
+  if bash "$writer" >/dev/null 2>&1; then
+    log_and_print "  [OK] wrote $out"
+  else
+    log_and_print "  [FAIL] could not write $out"
+    ERRORS=$((ERRORS+1))
+  fi
+}

@@ -77,6 +77,9 @@ cmd_sync() {
   sync_claude
   sync_agent_rules
   sync_skills_statusline
+  # Local-only, so it runs before the --skip-network branch below: the snapshot
+  # is machine state, not something fetched.
+  sync_machine_snapshot
 
   # Network-dependent steps (skip with --skip-network)
   if $SKIP_NETWORK; then
