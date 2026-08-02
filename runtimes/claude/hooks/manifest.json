@@ -45,6 +45,13 @@
       "enforces": "rules-core rule 6 — token efficiency; staged by on-disk size, bounded reads pass"
     },
     {
+      "event": "PostToolUseFailure",
+      "matcher": "Bash",
+      "script": "fail-ledger.js",
+      "enforces": "70-analysis 'oma-lab fail check first' — records failed commands and surfaces a repeat, without the model having to volunteer",
+      "requires": "a Claude Code that sends PostToolUseFailure; present in 2.1.217+, verified against the schema shipped in 2.1.220"
+    },
+    {
       "event": "Stop",
       "matcher": null,
       "script": "stop-verify-gate.js",

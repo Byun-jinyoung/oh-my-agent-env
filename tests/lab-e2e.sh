@@ -612,6 +612,80 @@ check "run list shows the real ending next to the submit row's exit=0" \
 check "and a job with no outcome yet says so rather than reading clean" \
       'printf "%s" "'"$rl"'" | grep -q "112233: not yet reconciled"'
 
+# --- the fail ledger's delivery path ------------------------------------------
+# `oma-lab fail` could remember broken commands from the day it was written and
+# nothing called it: ledger.sh:215 covers commands run under `oma-lab run --`,
+# and everything else depended on the model volunteering to type it, which
+# mid-failure-loop it does not. The PostToolUseFailure hook is that caller, so
+# what is exercised here is the whole path — payload in, ledger row out, prior
+# failure surfaced on the next occurrence.
+#
+# The payload shape is not invented: it is the one the shipped CLI sends
+# (session_id/transcript_path/cwd + tool_name/tool_input/tool_use_id/error/
+# is_interrupt). Getting it wrong would make every assertion below vacuous.
+HOOK="$ROOT/runtimes/claude/hooks/fail-ledger.js"
+if ! command -v node >/dev/null 2>&1; then
+  echo "  [SKIP] fail-ledger hook: node missing"
+elif [ ! -f "$HOOK" ]; then
+  bad "fail-ledger hook exists"
+else
+  # $1 cwd, $2 command, $3 error, $4 is_interrupt (true/false), $5 tool_name
+  hookrun() {
+    python3 -c '
+import json, sys
+print(json.dumps({"session_id": "e2e", "transcript_path": "/dev/null", "cwd": sys.argv[1],
+                  "hook_event_name": "PostToolUseFailure", "tool_name": sys.argv[5],
+                  "tool_input": {"command": sys.argv[2]}, "tool_use_id": "t1",
+                  "error": sys.argv[3], "is_interrupt": sys.argv[4] == "true"}))
+' "$1" "$2" "$3" "$4" "$5" | (cd "$1" && node "$HOOK"); HRC=$?
+  }
+
+  rm -f "$WORK/.oma-lab/failures.jsonl"
+  BROKEN='python train.py --resume ckpt/missing.pt'
+
+  hookrun "$WORK" "$BROKEN" 'FileNotFoundError: ckpt/missing.pt' false Bash >"$TMP/hook1.out" 2>&1
+  check "a failed Bash command is recorded without the model asking" \
+        'grep -q "resume ckpt/missing.pt" "$WORK/.oma-lab/failures.jsonl"'
+  check "the hook exits 0 — it reports, it never blocks" '[ "'"$HRC"'" = 0 ]'
+  # Silence on first sight is the whole reason this is safe to leave on: a hook
+  # that speaks after every failed command is one the model learns to skim.
+  check "and says nothing the first time, having nothing to say" \
+        '[ ! -s "$TMP/hook1.out" ]'
+
+  hookrun "$WORK" "$BROKEN" 'FileNotFoundError: ckpt/missing.pt' false Bash >"$TMP/hook2.out" 2>&1
+  # Bare stdout from PostToolUseFailure is transcript-only in the shipped CLI;
+  # only hookSpecificOutput.additionalContext reaches the model. A hook that
+  # prints its warning as plain text does everything right and is never read.
+  check "the repeat is delivered where the model can see it" \
+        'python3 -c "import json,sys; d=json.load(open(sys.argv[1])); h=d[\"hookSpecificOutput\"]; sys.exit(0 if h[\"hookEventName\"]==\"PostToolUseFailure\" and h[\"additionalContext\"].strip() else 1)" "$TMP/hook2.out"'
+  check "and it says this already failed with nothing changed since" \
+        'grep -q "already failed" "$TMP/hook2.out"'
+  # The error string is the only description of the failure in the payload.
+  # Dropped, the next warning can only say that something broke.
+  check "carrying what broke, not just that something did" \
+        'grep -q "FileNotFoundError" "$TMP/hook2.out"'
+
+  rows_before="$(wc -l < "$WORK/.oma-lab/failures.jsonl")"
+  hookrun "$WORK" 'sleep 600' 'interrupted by user' true Bash >/dev/null 2>&1
+  check "a command the user interrupted is not a broken command" \
+        '[ "$(wc -l < "$WORK/.oma-lab/failures.jsonl")" -eq "'"$rows_before"'" ]'
+  # `fail check` exits 3 by design, which IS a failed Bash command. Unfiltered,
+  # the ledger records its own refusals and then refuses those.
+  hookrun "$WORK" "bash $OMA_LAB fail check --cmd '$BROKEN'" 'exit 3' false Bash >/dev/null 2>&1
+  check "the ledger does not record its own refusals" \
+        '[ "$(wc -l < "$WORK/.oma-lab/failures.jsonl")" -eq "'"$rows_before"'" ]'
+  hookrun "$WORK" "$BROKEN" 'file not found' false Read >/dev/null 2>&1
+  check "and only Bash failures are commands at all" \
+        '[ "$(wc -l < "$WORK/.oma-lab/failures.jsonl")" -eq "'"$rows_before"'" ]'
+
+  # A repo that never opted in must not acquire lab state because a command
+  # failed in it. The hook runs everywhere; the ledger is not everywhere.
+  unadopted="$TMP/unadopted"; mkdir -p "$unadopted"; (cd "$unadopted" && git init -q .)
+  hookrun "$unadopted" 'make test' 'exit 2' false Bash >/dev/null 2>&1
+  check "a failure in an unadopted repo creates no state there" \
+        '[ ! -e "'"$unadopted"'/.oma-lab" ]'
+fi
+
 # --- containment --------------------------------------------------------------
 check "state lands in the target repo" '[ -d "$WORK/.oma-lab" ]'
 check "no state in the harness"        '[ ! -e "$ROOT/.oma-lab" ]'
