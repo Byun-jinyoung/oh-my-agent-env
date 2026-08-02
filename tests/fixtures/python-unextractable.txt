@@ -1,0 +1,15 @@
+# Embedded-Python sites check.sh's extractor cannot reach — checked in, because
+# a blind spot nobody wrote down is indistinguishable from one that does not
+# exist. Entries are matched by file and kind, not by line, so ordinary edits
+# above them do not churn this file; a SECOND unreachable site of the same kind
+# in the same file still fails, because the count has to match too.
+#
+# heredoc-expanded: the marker is unquoted (`python3 << PYEOF`), so the shell
+# expands $vars before python ever sees it. What is on disk is a template, not
+# a program, and compiling it would be checking something that never runs.
+# Quoting the marker would make these reachable — that is a real fix, not done
+# here because it changes runtime behaviour and belongs in its own change.
+#
+# Verify a line is still needed:  ./scripts/check.sh   (a stale entry fails too)
+setup.sh [heredoc-expanded]
+lib/sync/skills.sh [heredoc-expanded]

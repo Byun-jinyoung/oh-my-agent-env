@@ -76,6 +76,99 @@ lint_node_syntax() {
   done
 }
 
+# The Python this harness embeds in shell — 37 sites and not one of them linted.
+# Reproduced before writing this: breaking hook_manifest_scripts' program left
+# check.sh reporting PASS, and the damage was worse than a crash. Its `2>/dev/null
+# && return 0` swallows the SyntaxError and falls through to the glob, so the
+# manifest stops being the SSOT for which hooks get installed and the output
+# still looks like a list of hooks.
+#
+# tests/ is excluded deliberately: its Python runs on every `check.sh`, so a
+# syntax error there already fails loudly, and its shell-inside-shell assertions
+# are the only shapes this extractor gets wrong.
+lint_python_syntax() {
+  # The file list goes in argv, not a pipe: `python3 -` reads its PROGRAM from
+  # stdin, and the heredoc below is that program. Piping the list in as well
+  # silently loses it — first attempt did exactly that and reported 0 blocks.
+  local files; mapfile -t files < <(shell_files | grep -v '^tests/')
+  python3 - tests/fixtures/python-unextractable.txt "${files[@]}" << 'PYEOF'
+import pathlib, re, sys
+from collections import Counter
+
+# An invocation, not a mention: `command -v python3` and log lines about python
+# do not run any. `-m json.tool` carries no source of ours.
+INVOKE  = re.compile(r"(?<!command -v )python3\s+(-c\s|-\s|<<)")
+HEREDOC = re.compile(r"<<-?\s*(?P<q>['\"]?)(?P<marker>[A-Za-z_]\w*)(?P=q)")
+OPENERS = (re.compile(r"python3\s+-c\s+'"), re.compile(r"\blab_jsonl_query\b[^']*'"))
+
+def sites(path):
+    """(kind, line_no, source|None) for each embedded-Python site in one file."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    i = 0
+    while i < len(lines):
+        start, line = i, lines[i]
+        # A `python3 - "$a" "$b" \` invocation can carry its heredoc marker onto
+        # the continuation line; joining first is what makes those reachable.
+        while line.rstrip().endswith("\\") and i + 1 < len(lines):
+            i += 1; line = line.rstrip()[:-1] + lines[i]
+        h = HEREDOC.search(line)
+        opener = next((m for r in OPENERS if (m := r.search(line))), None)
+        if INVOKE.search(line) and h:
+            marker, quoted = h.group("marker"), bool(h.group("q"))
+            body, i = [], i + 1
+            while i < len(lines) and lines[i].strip() != marker:
+                body.append(lines[i]); i += 1
+            i += 1
+            # An unquoted marker means the shell expands $vars inside, so what is
+            # on disk is a template and never was a Python program.
+            yield (("heredoc", start + 1, "\n".join(body)) if quoted
+                   else ("heredoc-expanded", start + 1, None))
+            continue
+        if opener:
+            rest = line[opener.end():]
+            body = [rest] if rest.strip() else []
+            closed, i = rest.strip().startswith("'"), i + 1
+            while i < len(lines) and not closed:
+                if lines[i].lstrip().startswith("'"): closed = True; i += 1; break
+                body.append(lines[i]); i += 1
+            yield (("inline", start + 1, "\n".join(body)) if closed
+                   else ("inline-unterminated", start + 1, None))
+            continue
+        if INVOKE.search(line):
+            yield ("unrecognised", start + 1, None)
+        i += 1
+
+allowed = Counter()
+for raw in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    line = raw.split("#", 1)[0].strip()
+    if line: allowed[line] += 1
+
+checked = 0; bad = []; blind = Counter()
+for name in sys.argv[2:]:
+    for kind, lineno, src in sites(pathlib.Path(name)):
+        if src is None:
+            blind["%s [%s]" % (name, kind)] += 1; continue
+        checked += 1
+        try: compile(src, "%s:%d" % (name, lineno), "exec")
+        except (SyntaxError, ValueError) as exc:
+            bad.append("%s:%d: %s" % (name, lineno, exc))
+
+rc = 0
+for b in bad: print("python syntax error: %s" % b); rc = 1
+# A site this extractor cannot reach is a blind spot, not a pass. Listing it is
+# allowed; growing the list by accident is not.
+for site, n in sorted((blind - allowed).items()):
+    print("unreachable Python site not in the allow-list: %s (x%d)" % (site, n)); rc = 1
+for site, n in sorted((allowed - blind).items()):
+    print("allow-list entry no longer present, delete it: %s (x%d)" % (site, n)); rc = 1
+# Finding nothing and having nothing to find print the same way otherwise.
+if not checked:
+    print("no embedded Python found — the extractor stopped matching"); rc = 1
+print("python syntax: %d block(s), %d allowed-unreachable" % (checked, sum(allowed.values())))
+sys.exit(rc)
+PYEOF
+}
+
 lint_json() {
   local f
   while IFS= read -r f; do
@@ -88,6 +181,7 @@ if [ "$LINT" = 1 ]; then
   stage "bash -n"      lint_bash_syntax
   stage "node --check" lint_node_syntax
   stage "json parse"   lint_json
+  stage "python syntax" lint_python_syntax
   if command -v shellcheck >/dev/null 2>&1; then
     # Print the version, because shellcheck's diagnostics differ between
     # releases: a local pass on one version is not evidence about another.
