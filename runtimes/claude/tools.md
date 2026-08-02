@@ -27,6 +27,26 @@ auto-compact이 작업 도중에 터져 맥락이 끊기는 것을 막는다. Pr
      The mechanism this documents is therefore still unmanaged — losing that
      machine's ~/.claude/hooks/ loses the hooks while this text survives. -->
 
+## 실패 명령 원장 — 자동 기록
+
+`rules/70-analysis.md`는 "이미 깨진 것으로 판명된 명령은 `oma-lab fail check`로
+먼저 확인한다"고 요구한다. Claude Code에서는 그 기록이 자동이다.
+`PostToolUseFailure` 훅(`fail-ledger.js`)이 실패한 Bash 명령을 `oma-lab fail
+record`로 남기고, **같은 명령이 트리 변경 없이 다시 실패하면** 이전 실패를
+컨텍스트로 돌려준다.
+
+- 첫 실패에는 아무 말도 하지 않는다. 반복일 때만 말한다.
+- 명령을 막지 않는다. 이미 실행된 뒤에 도는 훅이다.
+- `.oma-lab/`이 있는 repo에서만 기록한다. 그 외 repo에는 상태를 만들지 않는다.
+- 끄려면 `OMA_FAIL_LEDGER_HOOK=0`.
+
+트리가 바뀌면 경고로 낮아지므로(수정이 곧 해결일 수 있어서) 재시도는 막히지
+않는다. 고친 것이 확실하면 `oma-lab fail resolve --cmd "..."`로 닫는다. 훅은
+무엇이 고쳐졌는지 알 수 없어 이것만은 수동이다.
+
+> Codex·Antigravity에는 이 훅이 없다. 그 쪽에서는 `fail check`/`fail record`를
+> 직접 호출해야 한다.
+
 ## context-mode
 
 context-mode MCP tools are available and a PreToolUse hook routes token-heavy

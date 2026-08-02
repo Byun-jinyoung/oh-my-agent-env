@@ -16,7 +16,7 @@ by component". It had not, and the sentence was doing real damage: it read as a
 completed survey, which is the one claim that stops anyone from looking again.
 
 Measured against the clone: `scripts/*.sh` is **78 files, 24,519 lines**. Read
-in substance — enough to reach a verdict — were ten of them:
+in substance — enough to reach a verdict — were twelve of them:
 
 | | lines | |
 |---|---|---|
@@ -30,20 +30,23 @@ in substance — enough to reach a verdict — were ten of them:
 | `agent-ml-context.sh` | 273 | refused |
 | `run-reconcile.sh` | 253 | → `oma-lab reconcile` |
 | `provider-contract.sh` | 237 | partly adopted |
+| `fail-ledger-hook.sh` | 87 | → `runtimes/claude/hooks/fail-ledger.js` |
+| `check-python.sh` | 43 | → `check.sh` `python syntax` |
 
-That is **10 of 78 files (13%)** and **4,449 of 24,519 lines (18%)**. A
+That is **12 of 78 files (15%)** and **4,579 of 24,519 lines (19%)**. A
 mechanical pass — extracting subcommand verbs and `die` call sites — ran across
 all 78, but that is inventory, not review: it can say two tools share a verb
 list and cannot say whether they defend the same failure.
 
-So the honest statement of coverage is that **82% of the colleague's script
+So the honest statement of coverage is that **81% of the colleague's script
 lines have never been examined**, and nothing on this page should be read as a
 verdict on them. The components below were selected because a gap was
-reproduced here first, not because the other 68 files were cleared.
+reproduced here first, not because the other 66 files were cleared.
 
-Note what the shape of that table says: six of the ten became `oma-lab`. The
-reading was not a survey that happened to find things worth taking — it was
-driven by the porting, and stopped where the porting stopped.
+Note what the shape of that table says: six of the twelve became `oma-lab` and
+two more became gates. The reading was not a survey that happened to find
+things worth taking — it was driven by the porting, and stopped where the
+porting stopped.
 
 ## Two waves, not one
 
@@ -120,6 +123,8 @@ was already there:
 |---|---|---|
 | `run-ledger.sh` | **Adopted, rewritten** | `rules/70-analysis.md` demanded measurement and nothing recorded any. Shipped as `oma-lab run` / `top`. |
 | `fail-ledger.sh` | **Adopted, rewritten** | A command known to be broken was rediscovered every session. Shipped as `oma-lab fail`. |
+| `fail-ledger-hook.sh` | **Adopted, reimplemented** | Ours shipped failing criterion 3: the only automatic caller was `ledger.sh:215`, so anything not run under `oma-lab run --` was remembered only if the model volunteered. Shipped as `runtimes/claude/hooks/fail-ledger.js`. |
+| `check-python.sh` | **Concept adopted, no code** | Theirs checks standalone `.py` files; we have none. The gap here was the 39 Python programs embedded in shell, none of them compiled. Shipped as `check.sh`'s `python syntax` stage. |
 | `experiment-board.sh` | **Adopted, rewritten** | Two sessions could start the same experiment and neither would find out. Shipped as `oma-lab board`. |
 | `run-capsule.sh` | **Adopted, rewritten** | "Which run produced this checkpoint" had no answer. Shipped as `oma-lab capsule`. |
 | `data-manifest.sh` | **Adopted, rewritten** | Scaffold-level leakage is real in a one-person repo, and the ledger had no dataset field at all (`scripts/lab/ledger.sh`). Shipped as `oma-lab data`. |
@@ -264,6 +269,46 @@ Known limit: `sacct -n -X -j 0` is the health probe, and whether every Slurm
 version answers job 0 without erroring **has not been verified against a real
 cluster** — there is none on this machine. If some version errors on it, a
 healthy cluster would be refused. Worth one command to check.
+
+## Adopted, reimplemented: the two hook-shaped gaps
+
+Triaging all 78 of the colleague's `scripts/*.sh` left seven candidates, and
+five of them were hooks. That is the finding, not the count: what this harness
+was missing was rarely a capability and usually a *delivery path* — criterion 3
+above, failed by our own tools.
+
+**`fail-ledger-hook.sh` → `runtimes/claude/hooks/fail-ledger.js`.** Same idea,
+different facts. The payload shape was read out of the shipped CLI (2.1.220)
+instead of assumed, and two of the original's decisions do not survive contact
+with it:
+
+- It reads `tool_response.exit_code`. `PostToolUseFailure` sends
+  `{tool_name, tool_input, tool_use_id, error: string, is_interrupt?,
+  duration_ms?}` — no exit code at all; `tool_response` belongs to
+  `PostToolUse`, which the binary's own docs define as the **success** event.
+  So its exit code is always the `1` fallback and its 130/141/143 interrupt
+  filter is unreachable. Ours drops interrupts by the `is_interrupt` flag and
+  does not claim to know an exit code it was not given.
+- It prints to stdout, on the stated assumption that "hook stdout becomes agent
+  context". For this event stdout is transcript-only; the model never sees it.
+  Ours returns `hookSpecificOutput.additionalContext`, which the settings
+  schema accepts for `PostToolUseFailure`.
+
+It is silent the first time a command fails and speaks only on a repeat with an
+unchanged tree, it never records its own refusals — `fail check` exits 3 by
+design, which is itself a failed Bash command — and it will not create
+`.oma-lab/` in a repo that never opted in.
+
+**`check-python.sh` → `check.sh`'s `python syntax` stage.** No code crossed:
+theirs compiles standalone `.py` files and this repo has none. The reproduced
+defect was ours and worse than a crash — a syntax error injected into
+`hook_manifest_scripts` left `check.sh` printing PASS, because `2>/dev/null &&
+return 0` swallows the `SyntaxError` and falls through to a glob, so
+`manifest.json` quietly stops being the SSOT for which hooks get installed
+while the output still looks like a list of hooks. What was taken is the one
+idea their script has that a naive version lacks: *if nothing was checked, that
+is a failure too.* Ours extends it — an unreachable site fails unless it is
+named in a checked-in list, and a stale name in that list fails as well.
 
 ## Partly adopted, partly unassessed: `provider-contract.sh`
 
