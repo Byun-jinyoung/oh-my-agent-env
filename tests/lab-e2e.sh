@@ -686,6 +686,47 @@ print(json.dumps({"session_id": "e2e", "transcript_path": "/dev/null", "cwd": sy
         '[ ! -e "'"$unadopted"'/.oma-lab" ]'
 fi
 
+# --- CURRENT is a join key, so it has to resolve ------------------------------
+# Its own repo, not $WORK: writing a bogus CURRENT into the shared one would
+# poison every assertion after this point.
+CUR="$TMP/current-repo"; mkdir -p "$CUR"
+( cd "$CUR" && git init -q . && git config user.email t@t && git config user.name t \
+  && echo x > f.txt && git add f.txt && git commit -qm init ) >/dev/null 2>&1
+( cd "$CUR" && bash "$OMA_LAB" run -- true ) >/dev/null 2>&1
+GOOD_ID="$(head -n1 "$CUR/.oma-lab/CURRENT")"
+
+# Baseline: the guard must not be a blanket refusal. If this passes only because
+# capsule save always fails, the assertions below prove nothing.
+# $? read inside check()'s eval is the eval's own status, not this command's —
+# the tautology this file warns about at the top. Capture it here instead.
+( cd "$CUR" && env -u OMA_RUN_ID bash "$OMA_LAB" capsule save ) >/dev/null 2>&1
+# shellcheck disable=SC2034  # read inside check()'s eval, which shellcheck cannot follow
+RC=$?
+check "capsule save works when CURRENT resolves" '[ "$RC" = 0 ]'
+# shellcheck disable=SC2034  # read inside check()'s eval, which shellcheck cannot follow
+ROWS_BEFORE="$(wc -l < "$CUR/.oma-lab/capsules.jsonl" 2>/dev/null || printf 0)"
+
+echo "run-does-not-exist" > "$CUR/.oma-lab/CURRENT"
+( cd "$CUR" && env -u OMA_RUN_ID bash "$OMA_LAB" capsule save ) >/dev/null 2>&1
+# shellcheck disable=SC2034  # read inside check()'s eval, which shellcheck cannot follow
+RC=$?
+# Before the check: it reported success, created .oma-lab/runs/run-does-not-exist/,
+# and stamped a capsule row whose run_id matched nothing in the ledger.
+check "a dangling CURRENT stops capsule save" '[ "$RC" != 0 ]'
+check "a dangling CURRENT stamps no row" \
+      '[ "$(wc -l < "$CUR/.oma-lab/capsules.jsonl" 2>/dev/null || printf 0)" = "$ROWS_BEFORE" ]'
+check "a dangling CURRENT creates no run dir" \
+      '[ ! -e "$CUR/.oma-lab/runs/run-does-not-exist" ]'
+
+# OMA_RUN_ID is deliberately not validated: `run` exports it before the wrapped
+# command and appends the ledger row after, so inside a run the id has no row yet.
+# Validating it would break every nested call — which is what this asserts.
+printf '%s\n' "$GOOD_ID" > "$CUR/.oma-lab/CURRENT"
+( cd "$CUR" && bash "$OMA_LAB" run -- bash -c "cd '$CUR' && bash '$OMA_LAB' capsule save" ) >/dev/null 2>&1
+# shellcheck disable=SC2034  # read inside check()'s eval, which shellcheck cannot follow
+RC=$?
+check "a capsule saved from inside a run still works" '[ "$RC" = 0 ]'
+
 # --- containment --------------------------------------------------------------
 check "state lands in the target repo" '[ -d "$WORK/.oma-lab" ]'
 check "no state in the harness"        '[ ! -e "$ROOT/.oma-lab" ]'

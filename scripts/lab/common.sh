@@ -52,13 +52,41 @@ lab_new_run_id() {
   printf '%s-%s' "$(date -u +%Y%m%dT%H%M%SZ)" "$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
 }
 
+# Is this id one the ledger actually knows? Parsed, not grepped, because the row
+# is JSON and a substring match would also hit a run_id quoted inside cmd.
+lab_run_id_in_ledger() {
+  [ -n "${1:-}" ] || return 1
+  local n
+  n="$(lab_jsonl_query "$(lab_ledger_path)" '
+print(sum(1 for r in rows if r.get("run_id") == args[0]))
+' "$1")"
+  [ "${n:-0}" != "0" ]
+}
+
 # The join key. Explicit --run-id beats the environment, which beats the last
 # run recorded in this repo.
+#
+# The CURRENT fallback is verified against the ledger; OMA_RUN_ID is not, and the
+# asymmetry is the point. `oma-lab run` writes CURRENT and exports OMA_RUN_ID at
+# ledger.sh:155-156, before the wrapped command, and appends the row at :204 after
+# it exits — so inside a run the id legitimately has no row yet, and the export is
+# what callers see. Reaching the file branch instead means the run is over, and
+# then a pointer the ledger cannot resolve is a dangling join key: reproduced by
+# writing a bogus id into CURRENT, after which `capsule save` reported success,
+# created .oma-lab/runs/<bogus>/, and stamped a row whose run_id matched nothing.
 lab_current_run_id() {
   if [ -n "${OMA_RUN_ID:-}" ]; then printf '%s' "$OMA_RUN_ID"; return 0; fi
   local f; f="$(lab_state_dir)/CURRENT"
-  [ -f "$f" ] && head -n1 "$f" && return 0
-  return 1
+  [ -f "$f" ] || return 1
+  local id; id="$(head -n1 "$f")"
+  [ -n "$id" ] || return 1
+  if ! lab_run_id_in_ledger "$id"; then
+    printf 'lab: %s/CURRENT names run %s but the ledger has no such run.\n' \
+      "$(lab_state_dir)" "$id" >&2
+    printf '     Pass --run-id explicitly, or start a new run with `oma-lab run`.\n' >&2
+    return 1
+  fi
+  printf '%s' "$id"
 }
 
 lab_set_current_run_id() {
