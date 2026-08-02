@@ -13,6 +13,13 @@
     "events that take no matcher; script = basename inside runtimes/claude/hooks/.",
     "Order is the order entries are appended to a fresh settings.json.",
     "",
+    "'run' is optional: a command template where {path} expands to the installed",
+    "hook path. Omit it and the command is `node \"{path}\"`, which is what every JS",
+    "hook wants. It exists because a bash hook, an env prefix, or a subcommand",
+    "argument cannot be expressed by the node default — the compact-gate entries",
+    "need all three. Note the matcher for PreCompact/PostCompact is matched against",
+    "the compaction `trigger`, and for SessionEnd against `reason`, not a tool name.",
+    "",
     "'retired' lists hooks this repo used to ship. Ownership is decided by asking",
     "whether the repo has the file, so a hook deleted outright stops looking like",
     "ours and its settings.json entry would linger forever. Naming it here keeps it",
@@ -62,6 +69,20 @@
       "matcher": null,
       "script": "stop-todo-gate.js",
       "enforces": "rules-core rule 3 — blocks a long multi-edit turn that never used the ToDo tools"
+    },
+    {
+      "event": "PreCompact",
+      "matcher": "auto|manual",
+      "script": "precompact-gate.sh",
+      "run": "COMPACT_HARD_CEILING=550000 COMPACT_MAX_DEFERS=2 COMPACT_MARKER_TTL_MIN=90 bash \"{path}\"",
+      "enforces": "10-context 압축 게이트 — defers auto-compaction to a work-unit boundary; exit 2 blocks, every failure path allows. One entry, not one per trigger: the manifest contract is one registration per script, and the script itself allows immediately when trigger is manual"
+    },
+    {
+      "event": "SessionEnd",
+      "matcher": null,
+      "script": "compact-gate",
+      "run": "bash \"{path}\" sessionend",
+      "enforces": "clears a busy marker the session forgot to release; no matcher, so it covers exit/clear/logout/prompt_input_exit"
     }
   ]
 }

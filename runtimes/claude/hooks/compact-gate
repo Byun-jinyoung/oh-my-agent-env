@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Work-unit marker CLI for the PreCompact gate.
+#
+#   compact-gate busy [label]   mark this directory as "work unit in progress"
+#                               -> auto-compaction is deferred. Re-running it
+#                                  REFRESHES the marker (resets the TTL), so a
+#                                  long work unit should re-issue it per step.
+#   compact-gate done           clear the marker -> compaction may run now
+#   compact-gate status         marker state, remaining TTL, gate log tail
+#   compact-gate sessionend     SessionEnd hook entry point: reads the hook JSON
+#                               on stdin and clears that session's cwd marker
+#
+# The marker is keyed by CURRENT DIRECTORY + SESSION ID, which the hook (from its
+# stdin payload) and this CLI (from $CLAUDE_CODE_SESSION_ID) derive independently
+# to the same path. Keying on cwd alone was measured to break: two sessions in one
+# directory shared a marker, so a SessionEnd in either one deleted a work unit the
+# other was still inside, and the gate went quietly dead.
+# No session id available -> the old cwd-only path, which still works, just shared.
+#
+# Safety net ordering, weakest to strongest:
+#   1. `done` at a task boundary          (intended path)
+#   2. SessionEnd hook clears the marker  (covers a forgotten `done`)
+#   3. TTL expiry deletes the marker      (covers a crashed session)
+#   4. defer budget / token ceiling       (covers everything else)
+
+set -u
+GATE_DIR="${COMPACT_GATE_DIR:-$HOME/.claude/compact-gate}"
+TTL_MIN="${COMPACT_MARKER_TTL_MIN:-90}"
+mkdir -p "$GATE_DIR"
+
+cmd="${1:-status}"
+
+# $1 = cwd, $2 = session id ("-" when unknown)
+marker_path() {
+  local slug; slug=$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '-')
+  if [ "${2:--}" != "-" ]; then printf '%s/%s.%s.busy' "$GATE_DIR" "$slug" "$2"
+  else printf '%s/%s.busy' "$GATE_DIR" "$slug"; fi
+}
+
+# SessionEnd runs as a hook: the working directory is not ours to trust, so the
+# cwd comes from the hook payload on stdin.
+if [ "$cmd" = "sessionend" ]; then
+  payload=$(cat)
+  IFS=$'\t' read -r hcwd reason hsid < <(
+    printf '%s' "$payload" | python3 -c '
+import json,sys
+try:
+    d=json.load(sys.stdin)
+    f=lambda k:(str(d.get(k) or "-").replace("\t"," ") or "-")
+    print("\t".join([f("cwd"),f("reason"),f("session_id")]))
+except Exception:
+    print("\t".join(["-","-","-"]))
+' 2>/dev/null
+  ) || { hcwd="-"; reason="-"; hsid="-"; }
+  [ "${hcwd:--}" = "-" ] && exit 0          # fail-open: nothing to clean safely
+  # Only this session's own marker. Without the session id we would be deleting
+  # a marker that may belong to a sibling session still working in this cwd.
+  [ "${hsid:--}" = "-" ] && exit 0
+  marker=$(marker_path "$hcwd" "$hsid")
+  if [ -f "$marker" ]; then
+    rm -f "$marker" 2>/dev/null
+    printf '%s gate=CLEAR:session-end(%s) sid=%s tokens=- ceiling=- marker=%s\n' \
+      "$(date -Is)" "${reason:--}" "$hsid" "$marker" >> "$GATE_DIR/gate.log" 2>/dev/null
+  fi
+  exit 0
+fi
+
+marker=$(marker_path "$PWD" "${CLAUDE_CODE_SESSION_ID:--}")
+
+case "$cmd" in
+  busy)
+    printf '%s %s\n' "$(date -Is)" "${2:-work unit}" > "$marker"
+    echo "busy: $marker  (TTL ${TTL_MIN}m; re-run to refresh)"
+    ;;
+  done|free|clear)
+    rm -f "$marker" && echo "cleared: $marker"
+    ;;
+  status)
+    if [ -f "$marker" ]; then
+      mtime=$(stat -c %Y "$marker" 2>/dev/null || echo "")
+      if [ -n "$mtime" ]; then
+        age=$(( ($(date +%s) - mtime) / 60 ))
+        left=$(( TTL_MIN - age ))
+        if [ "$left" -le 0 ]; then
+          echo "STALE $marker  (age ${age}m >= TTL ${TTL_MIN}m — next compaction will clear it)"
+        else
+          echo "BUSY  $marker  (age ${age}m, ${left}m left)"
+        fi
+      else
+        echo "BUSY  $marker  (age unknown)"
+      fi
+      echo "      $(cat "$marker" 2>/dev/null)"
+    else
+      echo "FREE  $marker"
+    fi
+    if [ -f "$GATE_DIR/gate.log" ]; then
+      echo "--- gate.log (tail) ---"; tail -5 "$GATE_DIR/gate.log"
+    fi
+    ;;
+  *)
+    echo "usage: compact-gate {busy [label]|done|status|sessionend}" >&2; exit 64
+    ;;
+esac

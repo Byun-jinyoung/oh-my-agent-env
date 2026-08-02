@@ -870,7 +870,12 @@ for item in want:
     if not (repo_hooks / script).is_file():
         missing.append(script)
         continue
-    group = {"hooks": [{"type": "command", "command": f'node "{hooks_dir}/{script}"'}]}
+    # `run` lets a manifest entry express what `node "<path>"` cannot: a bash
+    # script, an env prefix, a subcommand argument. Omitted for every JS hook,
+    # which keeps the default and the existing settings.json byte-identical.
+    template = item.get("run") or 'node "{path}"'
+    command = template.replace("{path}", f"{hooks_dir}/{script}")
+    group = {"hooks": [{"type": "command", "command": command}]}
     if matcher:
         group = {"matcher": matcher, **group}
     hooks.setdefault(event, []).append(group)

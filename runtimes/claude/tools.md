@@ -16,8 +16,8 @@ auto-compact이 작업 도중에 터져 맥락이 끊기는 것을 막는다. Pr
 > 안전장치(약한 것부터): ①경계에서 `done` → ②세션 종료 시 SessionEnd 훅이 마커 정리
 > → ③마커 90분 TTL 만료 시 자동 삭제 → ④세션당 연속 미룸 2회 → ⑤컨텍스트 550k 실링.
 > `done`을 빠뜨려도 세션은 죽지 않으며 압축이 최대 2턴 지연될 뿐이다.
-> 마커는 **cwd 기준**이라 같은 디렉터리의 다른 세션과 공유되지만,
-> 미룸 예산은 **session_id 기준**이라 세션끼리 간섭하지 않는다.
+> 마커와 미룸 예산 모두 **cwd + session_id 기준**이라 같은 디렉터리에서 여러 세션이
+> 돌아도 서로의 작업 단위에 간섭하지 않는다. SessionEnd도 자기 세션 마커만 지운다.
 > 수동 `/compact`은 항상 즉시 실행되며 요약 템플릿만 적용된다.
 
 <!-- This text was written straight into ~/.claude/CLAUDE.md, which the next
@@ -25,10 +25,11 @@ auto-compact이 작업 도중에 터져 맥락이 끊기는 것을 막는다. Pr
      deleted it. It lives here because that is the only placement that survives,
      and here rather than rules/ because compact-gate is a Claude Code hook that
      Codex and Antigravity do not have.
-     Caveat, verified: ~/.claude/hooks/compact-gate and precompact-gate.sh are
-     real files, not symlinks into this harness, and no sync step installs them.
-     The mechanism this documents is therefore still unmanaged — losing that
-     machine's ~/.claude/hooks/ loses the hooks while this text survives. -->
+     That caveat is now closed: both scripts live in runtimes/claude/hooks/ and
+     are listed in manifest.json, so sync symlinks them and wires settings.json
+     from the same source this text ships with. Registering them needed the
+     manifest's optional `run` field — the default `node "{path}"` cannot express
+     a bash hook, an env prefix, or the `sessionend` subcommand. -->
 
 ## 실패 명령 원장 — 자동 기록
 
