@@ -34,6 +34,18 @@ ledger_usage() {
     "$(readlink -f "${BASH_SOURCE[0]}")"
 }
 
+# The job id out of an sbatch submission. "Submitted batch job 12345" is the
+# default banner; `--parsable` prints "12345" or "12345;cluster" instead. The
+# banner is matched first on purpose — a --parsable line is nothing but digits,
+# so trying that pattern first would let any bare number in an ordinary banner
+# (a node count, a queue position) be mistaken for the id.
+slurm_id_from() {
+  local f="$1" id
+  id="$(sed -n 's/.*Submitted batch job \([0-9][0-9]*\).*/\1/p' "$f" | head -1)"
+  [ -n "$id" ] || id="$(sed -n 's/^\([0-9][0-9]*\)\(;.*\)\{0,1\}$/\1/p' "$f" | head -1)"
+  printf '%s' "$id"
+}
+
 parse_common() {
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -69,14 +81,34 @@ case "$verb" in
   run)
     if [ "${1:-}" = "list" ]; then
       shift; parse_common "$@"
+      # A submit row records sbatch exiting 0, which means the submission was
+      # accepted and says nothing about the training. `reconcile` writes the
+      # real ending to a separate file; read it here, because a tool whose
+      # output nothing displays answers a question nobody gets to ask.
       lab_jsonl_query "$(lab_ledger_path)" '
-n = int(args[0])
+import json, os
+n, rec_path = int(args[0]), args[1]
+ended = {}
+if os.path.exists(rec_path):
+    for line in open(rec_path, encoding="utf-8"):
+        line = line.strip()
+        if not line: continue
+        try: e = json.loads(line)
+        except ValueError: continue
+        ended[str(e.get("slurm_job"))] = e
 for r in rows[-n:]:
-    print("%s  %s  exit=%-3s %6.1fs  %s" % (
+    job = str(r.get("slurm_job") or "")
+    if job and job in ended:
+        mark = "  [slurm %s: %s]" % (job, ended[job].get("state", "?"))
+    elif job:
+        mark = "  [slurm %s: not yet reconciled]" % job
+    else:
+        mark = ""
+    print("%s  %s  exit=%-3s %6.1fs  %s%s" % (
         r.get("ts","?"), (r.get("run_id") or "?")[:22], r.get("exit","?"),
-        r.get("duration_s") or 0.0, (r.get("cmd") or "")[:60]))
+        r.get("duration_s") or 0.0, (r.get("cmd") or "")[:60], mark))
 print("(%d runs recorded)" % len(rows))
-' "$LIMIT"
+' "$LIMIT" "$(lab_state_dir)/reconciled.jsonl"
       exit 0
     fi
 
@@ -124,10 +156,36 @@ if prev:
     export OMA_RUN_ID="$RID"
     printf 'run: %s\n' "$RID" >&2
 
+    # A job handed to `sbatch` is the case this ledger was blindest to.
+    # SLURM_JOB_ID is set inside a running job and never in the shell that
+    # submits one, so every submit-from-the-login-node run recorded an empty
+    # slurm_job — and an empty field is not something `reconcile` can chase.
+    #
+    # Only submitters are captured. Putting an arbitrary training command's
+    # stdout through a file would break progress bars and anything that checks
+    # for a tty, and there is no id in that output to find. sbatch prints one
+    # line and exits, so this costs nothing observable. stderr is left alone.
+    submitter=0
+    case "$(basename "${CMD_ARGV[0]}")" in sbatch) submitter=1 ;; esac
+    cap=""
+    [ "$submitter" = 1 ] && { cap="$(mktemp)" || cap=""; }
+
     start=$(date +%s)
-    ( cd "$root" && "${CMD_ARGV[@]}" )
-    code=$?
+    if [ -n "$cap" ]; then
+      ( cd "$root" && "${CMD_ARGV[@]}" ) > "$cap"
+      code=$?
+      cat "$cap"
+    else
+      ( cd "$root" && "${CMD_ARGV[@]}" )
+      code=$?
+    fi
     dur=$(( $(date +%s) - start ))
+
+    # Inside a job the environment already knows; it wins, because a submitter
+    # run nested in a job would otherwise record the child's id as its own.
+    SLURM_ID="${SLURM_JOB_ID:-}"
+    [ -n "$SLURM_ID" ] || [ -z "$cap" ] || SLURM_ID="$(slurm_id_from "$cap")"
+    [ -z "$cap" ] || rm -f "$cap"
 
     # The only append that happens AFTER the command ran, and the only one that
     # must not be fatal. lab_append_jsonl exits on a write it cannot make, which
@@ -140,7 +198,7 @@ if prev:
       commit "$(lab_git_commit)" dirty "$(lab_git_dirty)" \
       git_state "$(lab_git_commit | cut -c1-12):$(lab_diff_hash)" \
       exit "$code" duration_s "$dur" gate "$gate" tag "$TAG" \
-      slurm_job "${SLURM_JOB_ID:-}" metrics "$METRICS" repo "$root")" ); then
+      slurm_job "$SLURM_ID" metrics "$METRICS" repo "$root")" ); then
       lab_warn "the run finished (exit $code) but could NOT be recorded in the ledger"
     fi
 

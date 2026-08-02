@@ -68,7 +68,7 @@ oh-my-agent-env/
 │   ├── check.sh                          #   verification gate (lint + tests); CI runs this
 │   ├── journal.sh                        #   Obsidian work-journal entries
 │   ├── oma-lab                           #   experiment tools entry point (→ ~/.local/bin)
-│   ├── lab/                              #   ledger, capsule, board, fail, data + shared lib
+│   ├── lab/                              #   ledger, capsule, board, fail, data, reconcile + shared lib
 │   └── ...                               #   apply-project-template, snapshot, ...
 └── tests/
     ├── smoke-refactor.sh                 # Source graph, isolated HOME, hook contract, journal
@@ -160,6 +160,8 @@ oma-lab data register --name qm9 --id-column smiles --key-column scaffold \
   --split train=data/train.csv --split valid=data/valid.csv
 oma-lab data leakage --name qm9        # do the splits share ids or scaffolds?
 oma-lab data check --name qm9          # are the splits still what they were?
+oma-lab run --tag sweep -- sbatch train.slurm   # the job id is picked up
+oma-lab reconcile apply                # how did the submitted jobs actually end?
 ```
 
 | Tool | What it prevents |
@@ -169,6 +171,7 @@ oma-lab data check --name qm9          # are the splits still what they were?
 | `capsule` | A checkpoint nobody can trace back to code |
 | `fail` | Re-running a command that already failed unchanged |
 | `data` | A number attributed to a split that has since changed underneath it |
+| `reconcile` | A ledger row claiming `exit=0` for a job that was later killed |
 
 `--repo PATH` points any of them at another repo, for a job launched from a
 submit directory. It redirects the git reads and relative paths too, not just
@@ -191,6 +194,10 @@ Three things actually block rather than advise:
   id would put two jobs on the same checkpoints.
 - `fail check` exits 3 when the same command already failed and the tree has not
   changed since. After edits it only warns — the edits may be the fix.
+- `reconcile apply` exits 2 when neither `sacct` nor `squeue` can be reached.
+  With no way to query Slurm, "nothing finished" and "no idea" print the same
+  thing, and only the first one gets acted on. A job that is merely still
+  running is left alone rather than recorded, because an outcome row is final.
 - `data leakage` exits 1 on overlap and **2 when it cannot look** — a missing
   file or column is not a pass. A gate that reports clean because it could not
   read the data is worse than no gate, since the caller reads exit 0 as "no

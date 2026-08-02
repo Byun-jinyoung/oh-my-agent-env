@@ -383,6 +383,83 @@ else
         'printf "%s" "'"$ec_out"'" | grep -q "could NOT be recorded"'
 fi
 
+# --- slurm: a submitted job's ending, which the launch row cannot know --------
+# `run -- sbatch train.sh` records sbatch's exit, and sbatch exits 0 the moment
+# the queue accepts the script. The row then claims exit=0 for a job that may
+# still be killed an hour later, and before this the ledger had no way to ever
+# learn otherwise: SLURM_JOB_ID is set inside a job and never in the shell that
+# submits one, so slurm_job came out empty and there was nothing to chase.
+SL="$TMP/slurmbin"; mkdir -p "$SL"
+printf '#!/usr/bin/env bash\necho "Submitted batch job 998877"\n' > "$SL/sbatch"
+chmod +x "$SL/sbatch"
+
+sub_out="$(cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" run --tag sub -- sbatch train.sh 2>/dev/null)"
+sj() { python3 -c '
+import json,sys
+rows=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+hit=[r for r in rows if r.get("tag")==sys.argv[2]]
+print(hit[-1].get("slurm_job","") if hit else "NO-ROW")' "$WORK/.oma-lab/ledger.jsonl" "$1"; }
+
+check "a submitted job's id is captured from sbatch's output" '[ "$(sj sub)" = "998877" ]'
+# The pair matters: without this, a version that simply wrote 998877 into every
+# row would pass the line above.
+check "and a run with nothing to find is not given one" \
+      '[ -z "$(cd "$WORK" && bash "$OMA_LAB" run --tag noslurm -- true >/dev/null 2>&1; sj noslurm)" ]'
+
+# ...but that line alone does not test the gate, which is what the comment in
+# ledger.sh justifies at length. Capturing every command's stdout through a
+# file would break progress bars and tty checks, and dropping the `sbatch` case
+# guard passes the assertion above unchanged: `true` prints nothing, so no id
+# is found either way. This one only passes while the gate is real — a
+# non-submitter that happens to print an sbatch banner must not be harvested.
+printf '#!/usr/bin/env bash\necho "Submitted batch job 555000"\n' > "$WORK/echo-banner.sh"
+chmod +x "$WORK/echo-banner.sh"
+(cd "$WORK" && bash "$OMA_LAB" run --tag notsub -- ./echo-banner.sh) >/dev/null 2>&1
+check "and a non-submitter's stdout is never scanned for one" '[ -z "$(sj notsub)" ]'
+check "and sbatch's own output still reaches the caller" \
+      'printf "%s" "'"$sub_out"'" | grep -q "Submitted batch job 998877"'
+
+printf '#!/usr/bin/env bash\necho "112233;cluster0"\n' > "$SL/sbatch"; chmod +x "$SL/sbatch"
+(cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" run --tag par -- sbatch --parsable t.sh) >/dev/null 2>&1
+check "--parsable's bare id form is captured too" '[ "$(sj par)" = "112233" ]'
+
+# Not looking is not a pass. With no way to query Slurm, "nothing finished" and
+# "no idea" print the same thing, and the caller believes the first.
+# Captured here, not read as $? inside check()'s eval: by the time eval runs,
+# $? belongs to whatever check() itself did last. That is the tautology the RC
+# helper at the top of this file exists to avoid, and this assertion had it.
+fc_rc=0
+(cd "$WORK" && OMA_SACCT_CMD=nope OMA_SQUEUE_CMD=nope bash "$OMA_LAB" reconcile apply) \
+  >/dev/null 2>&1 || fc_rc=$?
+check "reconcile refuses when it cannot query Slurm at all" '[ "'"$fc_rc"'" -eq 2 ]'
+
+printf '#!/usr/bin/env bash\nexit 1\n'            > "$SL/sacct";  chmod +x "$SL/sacct"
+printf '#!/usr/bin/env bash\necho RUNNING\n'      > "$SL/squeue"; chmod +x "$SL/squeue"
+(cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply) >/dev/null 2>&1
+check "a job still running is not recorded as an outcome" \
+      '[ ! -s "$WORK/.oma-lab/reconciled.jsonl" ]'
+
+# Answers for 998877 only. An unconditional stub finishes every job in the
+# ledger, including 112233, and then the "not yet reconciled" assertion below
+# has nothing left to observe — it passed by having no unfinished job to find.
+printf '#!/usr/bin/env bash\n[ "$2" = 998877 ] || exit 1\necho "OUT_OF_MEMORY|0:125|00:41:12"\n' \
+  > "$SL/sacct"; chmod +x "$SL/sacct"
+(cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply) >/dev/null 2>&1
+check "and once it ends, the ending is recorded" \
+      'grep -q OUT_OF_MEMORY "$WORK/.oma-lab/reconciled.jsonl"'
+rec_rows="$(wc -l < "$WORK/.oma-lab/reconciled.jsonl" 2>/dev/null || echo 0)"
+(cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply) >/dev/null 2>&1
+check "reconciling twice does not record it twice" \
+      '[ "$(wc -l < "$WORK/.oma-lab/reconciled.jsonl")" -eq "'"$rec_rows"'" ]'
+
+# The consumer is the point. A file nothing reads answers a question nobody
+# gets to ask — the reason artifact-index was refused rather than ported.
+rl="$(cd "$WORK" && bash "$OMA_LAB" run list -n 50 2>/dev/null)"
+check "run list shows the real ending next to the submit row's exit=0" \
+      'printf "%s" "'"$rl"'" | grep -q "998877: OUT_OF_MEMORY"'
+check "and a job with no outcome yet says so rather than reading clean" \
+      'printf "%s" "'"$rl"'" | grep -q "112233: not yet reconciled"'
+
 # --- containment --------------------------------------------------------------
 check "state lands in the target repo" '[ -d "$WORK/.oma-lab" ]'
 check "no state in the harness"        '[ ! -e "$ROOT/.oma-lab" ]'

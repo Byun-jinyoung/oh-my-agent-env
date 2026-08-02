@@ -8,6 +8,7 @@
 #   oma-lab board <verb>        claim an experiment id so two sessions cannot duplicate it
 #   oma-lab fail <verb>         cross-session memory of failed commands
 #   oma-lab data <verb>         fingerprint the splits a number was trained on
+#   oma-lab reconcile <verb>    how did the Slurm jobs the ledger launched end?
 #
 # Every tool writes into the CURRENT repo, never into this harness:
 #
@@ -15,6 +16,7 @@
 #   .oma-lab/experiments.jsonl  claims, from `board`
 #   .oma-lab/failures.jsonl     known-broken commands, from `fail`
 #   .oma-lab/datasets.jsonl     split fingerprints, from `data`
+#   .oma-lab/reconciled.jsonl   terminal Slurm states, from `reconcile`
 #   .oma-lab/capsules.jsonl     capsule index
 #   .oma-lab/runs/<run-id>/     the capsule contents themselves
 #   .oma-lab/CURRENT            the run id the other verbs join against
@@ -43,6 +45,7 @@ case "$cmd" in
   board)    exec bash "$LAB_DIR/board.sh"   "$@" ;;
   fail)     exec bash "$LAB_DIR/fail.sh"    "$@" ;;
   data)     exec bash "$LAB_DIR/data.sh"    "$@" ;;
+  reconcile) exec bash "$LAB_DIR/reconcile.sh" "$@" ;;
   ""|-h|--help|help) usage; exit 0 ;;
   *) printf 'oma-lab: unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
 esac
