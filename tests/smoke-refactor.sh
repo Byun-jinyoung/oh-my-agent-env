@@ -150,8 +150,14 @@ from pathlib import Path
 manifest, settings = Path(sys.argv[1]), Path(sys.argv[2])
 d = json.loads(settings.read_text())
 cmds = [x.get("command", "") for arr in d["hooks"].values() for g in arr for x in g.get("hooks", [])]
+# Count on the full installed path, the same key ensure_rules_enforcement_hooks
+# uses. A bare basename over-counts whenever one script's name is a substring of
+# another's: "compact-gate" appears inside "precompact-gate.sh", so the CLI hook
+# looked registered twice and a correct manifest failed this check.
+hooks_dir = settings.parent / "hooks"
 for h in json.loads(manifest.read_text())["hooks"]:
-    if sum(h["script"] in c for c in cmds) != 1:
+    needle = f"{hooks_dir}/{h['script']}"
+    if sum(needle in c for c in cmds) != 1:
         print(f"{h['script']} not registered exactly once"); sys.exit(1)
 if not any("rtk hook claude" == c for c in cmds): print("foreign rtk hook lost"); sys.exit(1)
 if not any("foreign-tool.mjs" in c for c in cmds): print("foreign SessionStart hook lost"); sys.exit(1)
@@ -527,5 +533,75 @@ chmod +x "$pf/bin/curl"
 # The installer this protects must keep both guards; either one alone leaks.
 grep -q 'set -o pipefail; \$NPM_USER_ENV curl -fsSL' "$ROOT/lib/sync/external-tools.sh" \
   || fail "codex-gemini-mcp install lost its pipefail/curl -f guard"
+
+echo "[16] every installed hook actually runs"
+# `node --check` and `bash -n` prove a hook PARSES. They say nothing about
+# whether it runs: a bad require, a missing helper, a wrong path all pass every
+# gate we had and then the hook dies on first invocation. Reproduced with a
+# `require('module-that-does-not-exist')` in stop-todo-gate.js — node --check
+# OK, doctor OK (file exists, registered), check.sh PASS, hook exit 1 and the
+# gate silently stops enforcing.
+#
+# So drive each manifest hook the way Claude Code will, with a payload shaped
+# like the real one, and require it to survive. Allowed exits are 0 and 2 only:
+# 2 is a real decision (block), while a crashing interpreter gives 1 and a
+# missing command gives 127.
+hp="$TMP/hookprobe"; mkdir -p "$hp/home" "$hp/cwd"; : > "$hp/transcript.jsonl"
+python3 - "$ROOT/runtimes/claude/hooks/manifest.json" > "$TMP/hooks.tsv" <<'PYEOF'
+import json, sys
+# \x1f, not tab: tab is IFS whitespace, so `read` collapses consecutive tabs and
+# an empty matcher silently shifts every later field left. That is not
+# hypothetical — it shipped in the first version of this step, and four hooks
+# (the ones with no matcher) ran `bash -c ""` and passed. A mutation that
+# should have killed the step survived it.
+for h in json.loads(open(sys.argv[1]).read())["hooks"]:
+    print("\x1f".join([h["event"], h["script"], h.get("matcher") or "",
+                       h.get("run") or 'node "{path}"']))
+PYEOF
+[ -s "$TMP/hooks.tsv" ] || fail "hook manifest produced no entries to smoke"
+smoked=0
+while IFS=$'\x1f' read -r event script matcher template; do
+  tool="${matcher%%|*}"
+  [ -n "$template" ] || fail "$event:$script has no command template — the manifest table was misparsed"
+  case "$event" in
+    UserPromptSubmit) body='"prompt":"probe"' ;;
+    PreToolUse)       body="\"tool_name\":\"$tool\",\"tool_input\":{},\"tool_use_id\":\"t\"" ;;
+    PostToolUseFailure)
+                      body="\"tool_name\":\"$tool\",\"tool_input\":{\"command\":\"probe\"},\"tool_use_id\":\"t\",\"error\":\"boom\",\"is_interrupt\":false" ;;
+    Stop|SubagentStop) body='"stop_hook_active":false' ;;
+    PreCompact)       body="\"trigger\":\"${tool:-auto}\",\"custom_instructions\":\"\"" ;;
+    SessionEnd)       body='"reason":"clear"' ;;
+    *)                body='"probe":true' ;;
+  esac
+  payload="{\"session_id\":\"smoke\",\"transcript_path\":\"$hp/transcript.jsonl\",\"cwd\":\"$hp/cwd\",\"hook_event_name\":\"$event\",$body}"
+  cmd="${template//\{path\}/$ROOT/runtimes/claude/hooks/$script}"
+  # HOME and COMPACT_GATE_DIR are redirected because the compact hooks keep
+  # their markers under $HOME/.claude/compact-gate — running them unsandboxed
+  # would clear a live session's busy marker or spend its defer budget.
+  set +e
+  printf '%s' "$payload" | (cd "$hp/cwd" && env HOME="$hp/home" \
+    COMPACT_GATE_DIR="$hp/home/gate" timeout 20 bash -c "$cmd") \
+    >"$TMP/hook.out" 2>"$TMP/hook.err"
+  rc=$?
+  set -e
+  case "$rc" in
+    0|2) ;;
+    *) echo "--- stderr ---"; sed 's/^/    /' "$TMP/hook.err" >&2
+       echo "--- stdout ---"; sed 's/^/    /' "$TMP/hook.out" >&2
+       fail "$event:$script exited $rc — a hook that cannot run is a gate that is off" ;;
+  esac
+  # Deliberately no assertion on the shape of $out here. Every hook is silent
+  # under a nothing-to-say payload, so a stdout check in this loop is one no
+  # mutation can kill — and PreCompact's stdout is compact instructions, not
+  # JSON, so "must be JSON" is wrong besides. Output shape is asserted where it
+  # can actually be provoked: tests/lab-e2e.sh json-parses fail-ledger's
+  # additionalContext (verified — corrupting that write fails lab e2e), and
+  # runtimes/claude/hooks/test-pre-edit-gate.js covers the edit gate.
+  smoked=$((smoked+1))
+done < "$TMP/hooks.tsv"
+# A loop that ran fewer times than there are hooks passes for the wrong reason.
+want_hooks="$(wc -l < "$TMP/hooks.tsv")"
+[ "$smoked" -eq "$want_hooks" ] \
+  || fail "smoked $smoked hooks but the manifest lists $want_hooks"
 
 echo "smoke-refactor OK"

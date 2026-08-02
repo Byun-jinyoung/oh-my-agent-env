@@ -56,6 +56,22 @@ shell_files() {
   # skips it and it would ship unlinted.
   [ -f scripts/oma-lab ] && printf '%s\n' scripts/oma-lab
   find lib scripts tests -name '*.sh' -type f 2>/dev/null | sort
+  # Shell hooks under runtimes/ — outside every directory above, so nothing
+  # linted them. That is not cosmetic: a syntax error makes bash exit 2, and
+  # exit 2 on PreCompact means BLOCK COMPACTION (verified against the shipped
+  # CLI's own hook docs). precompact-gate.sh is built to allow on every failure
+  # path; one typo inverts it into a hard block, and after ~4 blocked attempts
+  # the runtime stops evaluating autocompact for the session — which is the
+  # "Prompt is too long" death the gate exists to prevent. Reproduced: injected
+  # an unterminated `if`, got exit 2, and check.sh printed PASS.
+  #
+  # Selected by shebang rather than extension because `compact-gate` has none,
+  # the same reason scripts/oma-lab is named by hand above.
+  local f
+  while IFS= read -r f; do
+    case "$(head -1 "$f" 2>/dev/null)" in '#!'*sh*) printf '%s\n' "$f" ;; esac
+  done < <(find runtimes -type f ! -name '*.js' ! -name '*.md' ! -name '*.json' \
+             2>/dev/null | sort)
 }
 
 lint_shellcheck() {
