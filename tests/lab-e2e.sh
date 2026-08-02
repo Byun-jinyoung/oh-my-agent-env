@@ -452,6 +452,29 @@ rec_rows="$(wc -l < "$WORK/.oma-lab/reconciled.jsonl" 2>/dev/null || echo 0)"
 check "reconciling twice does not record it twice" \
       '[ "$(wc -l < "$WORK/.oma-lab/reconciled.jsonl")" -eq "'"$rec_rows"'" ]'
 
+# exit_code is not on lab_json_obj's identifier allow-list, so a bare "0" is
+# stored as the int 0 — and `x or "?"` turns the one exit code we are surest
+# about into the symbol for "unknown". sacct's ExitCode is normally "0:0", so
+# this needs a stub to reach, which is exactly why it would have gone unnoticed.
+printf '#!/usr/bin/env bash\n[ "$2" = 777001 ] || exit 1\necho "COMPLETED|0|00:00:09"\n' \
+  > "$SL/sacct"; chmod +x "$SL/sacct"
+zl="$(cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply --job 777001 >/dev/null 2>&1
+      cd "$WORK" && bash "$OMA_LAB" reconcile list -n 50 2>/dev/null)"
+check "a clean exit prints as 0, not as unknown" \
+      'printf "%s" "'"$zl"'" | grep -q "job=777001.*exit=0"'
+
+# The other half. Without a row that genuinely has no exit code, the line above
+# is satisfied by printing every exit_code verbatim, including the empty one —
+# and then "unknown" would never be sayable. 112233 cannot serve as this pair:
+# it was never reconciled, so asserting anything about its row passes by the
+# row not existing.
+printf '#!/usr/bin/env bash\n[ "$2" = 777002 ] || exit 1\necho "CANCELLED||00:00:03"\n' \
+  > "$SL/sacct"; chmod +x "$SL/sacct"
+(cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply --job 777002) >/dev/null 2>&1
+zl2="$(cd "$WORK" && bash "$OMA_LAB" reconcile list -n 50 2>/dev/null)"
+check "and an outcome that carries no exit code prints unknown" \
+      'printf "%s" "'"$zl2"'" | grep -q "job=777002.*exit=?"'
+
 # The consumer is the point. A file nothing reads answers a question nobody
 # gets to ask — the reason artifact-index was refused rather than ported.
 rl="$(cd "$WORK" && bash "$OMA_LAB" run list -n 50 2>/dev/null)"

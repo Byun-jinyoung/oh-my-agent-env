@@ -163,9 +163,15 @@ EOF
     lab_jsonl_query "$RECONCILED" '
 n = int(args[0])
 for r in rows[-n:]:
+    # `or "?"` is wrong here: exit_code is not on lab_json_obj identifier
+    # allow-list, so a bare "0" is stored as the int 0, and 0 is falsy. A job
+    # that exited cleanly would print exit=? — the one value that reads as
+    # "we do not know" is the one we know best. Only absent means unknown.
+    xc = r.get("exit_code")
+    xc = "?" if xc is None or xc == "" else xc
     print("%s  job=%-10s %-14s exit=%-6s %s" % (
         r.get("ts","?"), r.get("slurm_job","?"), r.get("state","?"),
-        r.get("exit_code") or "?", r.get("elapsed") or ""))
+        xc, r.get("elapsed") or ""))
 print("(%d reconciled)" % len(rows))
 ' "$LIMIT"
     ;;
