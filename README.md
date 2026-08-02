@@ -219,10 +219,11 @@ assignment is correctly not drift.
 the first mechanisms behind that rule; before them the harness had the norms and
 no enforcement.
 
-`data` was adapted from a colleague's harness. [`docs/ADOPTION.md`](docs/ADOPTION.md)
-records what else was reviewed from it, what was refused, and why — including
-the one component held back because the number justifying it could not be
-measured.
+`data` and `reconcile` were adapted from a colleague's harness.
+[`docs/ADOPTION.md`](docs/ADOPTION.md) records what was taken from it, what was
+refused, and why — including the one component held back because the number
+justifying it could not be measured, how much of that harness has actually been
+read (12% of its script lines), and what is still unassessed.
 
 ## Work Journal
 
