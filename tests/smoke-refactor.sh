@@ -604,4 +604,36 @@ want_hooks="$(wc -l < "$TMP/hooks.tsv")"
 [ "$smoked" -eq "$want_hooks" ] \
   || fail "smoked $smoked hooks but the manifest lists $want_hooks"
 
+echo "[17] project style is decided by ML use, not by ML being mentioned"
+# apply-project-template.sh feeds this answer straight into which managed block it
+# writes, so a false `ml` installs ML rules into a repo with no model in it. That
+# was live: over 9 real repos the old rules answered `ml` for all 9, including
+# this shell harness (setup.sh names `jaxtyping`; `jax` is a substring) and
+# PROject/data_utils (two commented-out `#import torch` lines).
+#
+# The negative fixtures are the point. `commented`, `keyword-list` and
+# `mention-doc` each reproduce one of the false positives, so widening the match
+# back to a bare substring fails this test rather than silently passing.
+sfx="$TMP/style-fixtures"
+mkdir -p "$sfx"/{manifest-only,import-only,commented,mention-doc,keyword-list,entrypoint,generic-config,empty}
+printf 'numpy\ntorch==2.1.0\n'              > "$sfx/manifest-only/requirements.txt"
+printf 'import os\nimport torch\n'          > "$sfx/import-only/a.py"
+printf '#import torch\n#import torch.nn\n'  > "$sfx/commented/a.py"
+printf '| Type Hints | jaxtyping |\n'       > "$sfx/mention-doc/setup.sh"
+printf 'KEYWORDS = [\n    "torch",\n]\n'    > "$sfx/keyword-list/a.py"
+: > "$sfx/entrypoint/train.py"
+mkdir -p "$sfx/generic-config/configs"; : > "$sfx/generic-config/config.yaml"
+
+# Run each case twice: once as the user has it, once with a PATH that has no rg,
+# because the two branches are separate implementations of the same rule and only
+# one of them was ever exercised here.
+for case in manifest-only:ml import-only:ml commented:general mention-doc:general \
+            keyword-list:general entrypoint:ml generic-config:general empty:general; do
+  want="${case##*:}"
+  got="$(bash "$ROOT/scripts/detect-project-style.sh" "$sfx/${case%%:*}")"
+  [ "$got" = "$want" ] || fail "[17] ${case%%:*}: expected $want, got $got"
+  got="$(env PATH=/usr/bin:/bin bash "$ROOT/scripts/detect-project-style.sh" "$sfx/${case%%:*}")"
+  [ "$got" = "$want" ] || fail "[17] ${case%%:*} (no rg): expected $want, got $got"
+done
+
 echo "smoke-refactor OK"
