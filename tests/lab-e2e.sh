@@ -452,6 +452,19 @@ rec_rows="$(wc -l < "$WORK/.oma-lab/reconciled.jsonl" 2>/dev/null || echo 0)"
 check "reconciling twice does not record it twice" \
       '[ "$(wc -l < "$WORK/.oma-lab/reconciled.jsonl")" -eq "'"$rec_rows"'" ]'
 
+# sacct does not say "CANCELLED". It says "CANCELLED by 1000", and a state
+# normaliser that strips every space turns that into one token matching nothing
+# terminal — so the job reads as still running, forever, and the tool silently
+# does the opposite of its job. Only a multi-word state exercises this; every
+# other Slurm state is a single token and passes either way.
+printf '#!/usr/bin/env bash\n[ "$2" = 424242 ] || exit 1\necho "CANCELLED by 1000|0:15|00:02:11"\n' \
+  > "$SL/sacct"; chmod +x "$SL/sacct"
+(cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply --job 424242) >/dev/null 2>&1
+check "a multi-word terminal state still counts as finished" \
+      'grep -q "\"slurm_job\": \"424242\"" "$WORK/.oma-lab/reconciled.jsonl"'
+check "and the reason it was cancelled is kept, not squashed out" \
+      'grep -q "CANCELLED by 1000" "$WORK/.oma-lab/reconciled.jsonl"'
+
 # exit_code is not on lab_json_obj's identifier allow-list, so a bare "0" is
 # stored as the int 0 — and `x or "?"` turns the one exit code we are surest
 # about into the symbol for "unknown". sacct's ExitCode is normally "0:0", so

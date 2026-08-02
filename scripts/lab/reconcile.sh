@@ -85,8 +85,12 @@ job_state() {
     line="$("$SACCT" -j "$jid" --format=State,ExitCode,Elapsed -n -P 2>/dev/null \
             | awk -F'|' 'NF>=1 && $1!="" {print; exit}')"
     if [ -n "$line" ]; then
+      # Trim the edges, keep the inside. `tr -d ' '` turns sacct's
+      # "CANCELLED by 1000" into "CANCELLEDby1000", which then matches nothing
+      # in is_terminal — so a cancelled job stayed "still open" forever and was
+      # never recorded, which is the one thing this tool exists to prevent.
       printf '%s\t%s\t%s\tsacct\n' \
-        "$(printf '%s' "$line" | cut -d'|' -f1 | tr -d ' ')" \
+        "$(printf '%s' "$line" | cut -d'|' -f1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')" \
         "$(printf '%s' "$line" | cut -d'|' -f2)" \
         "$(printf '%s' "$line" | cut -d'|' -f3)"
       return 0
