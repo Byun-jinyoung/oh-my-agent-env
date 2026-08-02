@@ -209,8 +209,25 @@ printf 'BODY v2\n' > "$mb/body2"
   # generated block, so refuse and keep it byte-identical instead.
   printf '# mine\n%s\nvisible to the user\n' "$OMA_BLOCK_BEGIN" > "$mb/half.md"
   cp "$mb/half.md" "$mb/half.before"
-  write_managed_block "$mb/half.md" "$mb/body2" >/dev/null
+  rc=0; write_managed_block "$mb/half.md" "$mb/body2" >/dev/null || rc=$?
   cmp -s "$mb/half.before" "$mb/half.md" || { echo "half-marked file was rewritten"; exit 1; }
+
+  # Refusing to write is right; refusing SILENTLY is what let a sync report
+  # success with one CLI left on the previous rules. The status is the only
+  # thing a caller can act on, so it is asserted here rather than assumed.
+  #
+  # `set -e` is suppressed inside this subshell — the whole `( ... )` is the
+  # left operand of `|| fail` — so a bare call would swallow the status and
+  # this check would pass no matter what the function returned. Capture it.
+  [ "$rc" -eq 3 ] || { echo "half-marked refusal reported rc=$rc, want 3"; exit 1; }
+
+  rc=0; write_managed_block "$mb/t.md" "$mb/body2" >/dev/null || rc=$?
+  [ "$rc" -eq 0 ] || { echo "an up-to-date target reported rc=$rc, want 0"; exit 1; }
+
+  # A body carrying a marker would make the next run split in the wrong place.
+  printf 'x %s x\n' "$OMA_BLOCK_BEGIN" > "$mb/body-marked"
+  rc=0; write_managed_block "$mb/fresh.md" "$mb/body-marked" >/dev/null || rc=$?
+  [ "$rc" -eq 3 ] || { echo "marker-in-body refusal reported rc=$rc, want 3"; exit 1; }
 ) || fail "managed-block assembly regressed"
 
 echo "[9] Obsidian work-journal (fake vault, never the real one)"
@@ -384,6 +401,52 @@ for target in ("claude/CLAUDE.md", "codex/AGENTS.md", "gemini/GEMINI.md"):
             print(f"Layer A heading missing from {os.path.basename(target)}: {h}"); bad = True
 sys.exit(1 if bad else 0)
 PY
+
+echo "[11b] a partial assembly is reported, not silently survived"
+# Step [11] proves the rules REACH all three runtimes; it cannot prove they are
+# CURRENT there. It assembles into an empty sandbox every time, so the one thing
+# it can never observe is the production failure: a target that already exists,
+# is skipped this run, and keeps serving the previous rules. Reproduced before
+# the fix — sync returned 0, printed [OK] for the two it wrote, and the third
+# CLI stayed on stale text with nothing to say so.
+#
+# Body-only drift is the case that matters. Headings are what step [11] checks,
+# so a divergence that moves no heading is exactly the one already covered
+# nowhere.
+pa="$TMP/partial"; mkdir -p "$pa/src"
+cp -r "$ROOT/rules" "$ROOT/runtimes" "$ROOT/lib" "$pa/src/"
+
+pa_assemble() {
+  ( SCRIPT_DIR="$pa/src"; export SCRIPT_DIR
+    CONFIG_DIR="$pa/claude"; CODEX_DIR="$pa/codex"; GEMINI_DIR="$pa/gemini"
+    LOG_FILE="$pa/sync.log"
+    # shellcheck disable=SC1091
+    source "$pa/src/lib/common.sh" 2>/dev/null || true
+    assemble_global_rules >/dev/null 2>&1 )
+}
+
+rc=0; pa_assemble || rc=$?
+[ "$rc" -eq 0 ] || fail "[11b] a complete assembly must report success (got $rc)"
+
+# Change a rule's BODY only, and drop one runtime's Layer B.
+printf '\nSENTINEL-BODY-DRIFT\n' >> "$pa/src/rules/00-core.md"
+mv "$pa/src/runtimes/antigravity/tools.md" "$pa/src/tools.md.parked"
+rc=0; pa_assemble || rc=$?
+[ "$rc" -ne 0 ] || fail "[11b] a partial assembly reported success — the drift is silent again"
+
+# and the failure named a target that is genuinely behind, not a guess
+grep -q 'SENTINEL-BODY-DRIFT' "$pa/claude/CLAUDE.md" \
+  || fail "[11b] the runtimes that were written did not get the change"
+! grep -q 'SENTINEL-BODY-DRIFT' "$pa/gemini/GEMINI.md" \
+  || fail "[11b] fixture is wrong: the skipped runtime received the change anyway"
+
+# Negative control. Without this the check above passes for a function that
+# fails unconditionally, which would be worse than the bug it replaced.
+mv "$pa/src/tools.md.parked" "$pa/src/runtimes/antigravity/tools.md"
+rc=0; pa_assemble || rc=$?
+[ "$rc" -eq 0 ] || fail "[11b] a repaired tree still reports failure (got $rc)"
+grep -q 'SENTINEL-BODY-DRIFT' "$pa/gemini/GEMINI.md" \
+  || fail "[11b] the repaired run did not catch the skipped runtime up"
 
 echo "[12] NPM_USER_ENV survives the bash -c it is built for"
 # Cross-review's sharpest remaining point: nothing in this suite touches the

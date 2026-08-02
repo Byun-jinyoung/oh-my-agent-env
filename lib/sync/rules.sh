@@ -18,5 +18,8 @@ sync_agent_rules() {
 
   # Global rule files (Layer A + Layer B) — Claude, Codex, Gemini
   echo "[4b] Global rule assembly"
-  assemble_global_rules
+  # A partial assembly leaves the three CLIs disagreeing about what the rules
+  # are, which is worse than none of them being updated. Counted, so cmd_sync's
+  # closing line cannot say "complete" over it.
+  assemble_global_rules || ERRORS=$(( ${ERRORS:-0} + 1 ))
 }

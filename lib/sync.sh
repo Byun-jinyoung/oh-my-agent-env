@@ -19,6 +19,18 @@
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/sync/frameworks.sh"
 
+# The closing line is the only part of a long sync most people read, and it
+# used to say "complete" unconditionally — including on the runs where a domain
+# had just reported that the three CLIs no longer share one rule set. Anything
+# that increments ERRORS now reaches the last line the user sees.
+sync_closing_line() {
+  if [ "${ERRORS:-0}" -gt 0 ]; then
+    echo "=== sync finished with ${ERRORS} problem(s) — search the log for [FAIL] ==="
+  else
+    echo "=== $1 ==="
+  fi
+}
+
 cmd_sync() {
   log "=== oh-my-agent-env sync started ==="
   log "  Platform: $(uname -s) $(uname -m)"
@@ -71,7 +83,7 @@ cmd_sync() {
     log_and_print "[7-10] Skipped (--skip-network)"
     log "=== sync complete (network steps skipped) ==="
     echo ""
-    echo "=== sync complete (network steps skipped). Restart Claude Code to apply. ==="
+    sync_closing_line "sync complete (network steps skipped). Restart Claude Code to apply."
     echo "  Full log: $LOG_FILE"
     return
   fi
@@ -82,6 +94,6 @@ cmd_sync() {
 
   log "=== sync complete ==="
   echo ""
-  echo "=== sync complete. Restart Claude Code to apply. ==="
+  sync_closing_line "sync complete. Restart Claude Code to apply."
   echo "  Full log: $LOG_FILE"
 }
