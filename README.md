@@ -219,11 +219,13 @@ assignment is correctly not drift.
 the first mechanisms behind that rule; before them the harness had the norms and
 no enforcement.
 
-`data` and `reconcile` were adapted from a colleague's harness.
-[`docs/ADOPTION.md`](docs/ADOPTION.md) records what was taken from it, what was
+All six `oma-lab` verbs were adapted from a colleague's harness
+([eightmm/oh-my-setting](https://github.com/eightmm/oh-my-setting)) — this layer
+is derived work, not a local invention, and the founding commit `b9a960e` says
+so. [`docs/ADOPTION.md`](docs/ADOPTION.md) records what was taken, what was
 refused, and why — including the one component held back because the number
 justifying it could not be measured, how much of that harness has actually been
-read (12% of its script lines), and what is still unassessed.
+read (18% of its script lines), and what is still unassessed.
 
 ## Work Journal
 

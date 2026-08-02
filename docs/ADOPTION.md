@@ -16,27 +16,34 @@ by component". It had not, and the sentence was doing real damage: it read as a
 completed survey, which is the one claim that stops anyone from looking again.
 
 Measured against the clone: `scripts/*.sh` is **78 files, 24,519 lines**. Read
-in substance — enough to reach a verdict — were seven of them:
+in substance — enough to reach a verdict — were ten of them:
 
-| | lines |
-|---|---|
-| `artifact-index.sh` | 912 |
-| `data-manifest.sh` | 590 |
-| `experiment-board.sh` | 435 |
-| `change-guard.sh` | 355 |
-| `agent-ml-context.sh` | 273 |
-| `run-reconcile.sh` | 253 |
-| `provider-contract.sh` | 237 |
+| | lines | |
+|---|---|---|
+| `artifact-index.sh` | 912 | refused |
+| `data-manifest.sh` | 590 | → `oma-lab data` |
+| `run-capsule.sh` | 564 | → `oma-lab capsule` |
+| `run-ledger.sh` | 508 | → `oma-lab run` |
+| `experiment-board.sh` | 435 | → `oma-lab board` |
+| `change-guard.sh` | 355 | held |
+| `fail-ledger.sh` | 322 | → `oma-lab fail` |
+| `agent-ml-context.sh` | 273 | refused |
+| `run-reconcile.sh` | 253 | → `oma-lab reconcile` |
+| `provider-contract.sh` | 237 | partly adopted |
 
-That is **7 of 78 files (9%)** and **3,055 of 24,519 lines (12%)**. A mechanical
-pass — extracting subcommand verbs and `die` call sites — ran across all 78, but
-that is inventory, not review: it can say two tools share a verb list and cannot
-say whether they defend the same failure.
+That is **10 of 78 files (13%)** and **4,449 of 24,519 lines (18%)**. A
+mechanical pass — extracting subcommand verbs and `die` call sites — ran across
+all 78, but that is inventory, not review: it can say two tools share a verb
+list and cannot say whether they defend the same failure.
 
-So the honest statement of coverage is that **88% of the colleague's script
+So the honest statement of coverage is that **82% of the colleague's script
 lines have never been examined**, and nothing on this page should be read as a
 verdict on them. The components below were selected because a gap was
-reproduced here first, not because the other 71 files were cleared.
+reproduced here first, not because the other 68 files were cleared.
+
+Note what the shape of that table says: six of the ten became `oma-lab`. The
+reading was not a survey that happened to find things worth taking — it was
+driven by the porting, and stopped where the porting stopped.
 
 ## Two waves, not one
 
@@ -59,6 +66,39 @@ The distinction matters for attribution. The first wave is derived work and the
 commit says so. The second is not, and claiming otherwise in either direction
 would be wrong.
 
+## The `oma-lab` layer is derived work, not a local invention
+
+Read the verdicts below without this and they look like two small adoptions
+made against a large local codebase. The reverse is true, and the page was
+understating it in the direction that flatters us.
+
+Everything under `scripts/lab/` exists because of the colleague's harness. The
+founding commit `b9a960e` opens by saying so — *"Ports four properties from
+eightmm/oh-my-setting's experiment layer, rebuilt for this harness rather than
+copied"* — and the correspondence is one to one:
+
+| `oma-lab` verb | ours | lines | theirs | lines |
+|---|---|---|---|---|
+| `run` / `top` | `lab/ledger.sh` | 249 | `run-ledger.sh` | 508 |
+| `fail` | `lab/fail.sh` | 110 | `fail-ledger.sh` | 322 |
+| `board` | `lab/board.sh` | 131 | `experiment-board.sh` | 435 |
+| `capsule` | `lab/capsule.sh` | 149 | `run-capsule.sh` | 564 |
+| `data` | `lab/data.sh` | 292 | `data-manifest.sh` | 590 |
+| `reconcile` | `lab/reconcile.sh` | 234 | `run-reconcile.sh` | 253 |
+| | | **1,446** | | **2,672** |
+
+The gap it closed was ours. `rules/70-analysis.md` already required measuring
+before claiming and checking for leakage, and **nothing enforced any of it** —
+the norms were prose and the mechanism did not exist. The colleague's experiment
+layer is where the mechanism came from.
+
+All six landed on 2026-08-02, in the sessions that produced this page
+(`b9a960e` → `8762b0e` → `cb88d8a` → `a732756`). `oma-lab` is not prior art the
+comparison was measured against. It is the comparison's largest output.
+
+What stayed local is the 46% that was left behind and the departures recorded
+per component below — each forced by a defect reproduced here, not by taste.
+
 ## The bar a component had to clear
 
 Set before looking at any of them, so the answers could not be fitted to what
@@ -78,6 +118,10 @@ was already there:
 
 | Component | Verdict | Deciding evidence |
 |---|---|---|
+| `run-ledger.sh` | **Adopted, rewritten** | `rules/70-analysis.md` demanded measurement and nothing recorded any. Shipped as `oma-lab run` / `top`. |
+| `fail-ledger.sh` | **Adopted, rewritten** | A command known to be broken was rediscovered every session. Shipped as `oma-lab fail`. |
+| `experiment-board.sh` | **Adopted, rewritten** | Two sessions could start the same experiment and neither would find out. Shipped as `oma-lab board`. |
+| `run-capsule.sh` | **Adopted, rewritten** | "Which run produced this checkpoint" had no answer. Shipped as `oma-lab capsule`. |
 | `data-manifest.sh` | **Adopted, rewritten** | Scaffold-level leakage is real in a one-person repo, and the ledger had no dataset field at all (`scripts/lab/ledger.sh`). Shipped as `oma-lab data`. |
 | `change-guard.sh` | **Held** | Half of it is sound; the value depends on a rate that could not be measured. See below. |
 | `artifact-index.sh` | **Refused** | It indexes artifacts that nothing here produces. |
