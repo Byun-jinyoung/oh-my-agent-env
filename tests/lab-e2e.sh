@@ -457,9 +457,16 @@ check "and when Slurm is installed but failing every query" '[ "'"$dead_rc"'" -e
 # A faithful sacct: exit 0 whether or not it knows the job, rows only for the
 # one asked about, JobID first. A stub that exits 1 for an unknown job is a
 # Slurm that is DOWN — a different scenario, and now correctly refused above.
+#
+# It honours --format, which is the only way a test can notice that JobID stopped
+# being asked for. A stub that prints the id column unconditionally makes the
+# request invisible: drop JobID from the format string and every assertion still
+# passes, while the real sacct would return State in column 1 and no job would
+# ever be matched again.
 mk_sacct() {   # $1 = the job id it knows about, $2 = "State|ExitCode|Elapsed"
   { printf '#!/usr/bin/env bash\n'
-    printf '[ "$2" = "%s" ] && printf "%%s|%%s\\n" "%s" "%s"\n' "$1" "$1" "$2"
+    printf 'case " $* " in *JobID*) pre="%s|" ;; *) pre="" ;; esac\n' "$1"
+    printf '[ "$2" = "%s" ] && printf "%%s%%s\\n" "$pre" "%s"\n' "$1" "$2"
     printf 'exit 0\n'
   } > "$SL/sacct"
   chmod +x "$SL/sacct"
@@ -481,6 +488,7 @@ check "a job still running is not recorded as an outcome" \
 # to observe, and it would pass by having nothing to look at.
 { printf '#!/usr/bin/env bash\n'
   printf '[ "$2" = 909090 ] || exit 0\n'
+  printf 'case " $* " in *JobID*) ;; *) echo "FAILED|1:0|00:00:02"; exit 0 ;; esac\n'
   printf 'echo "909090.batch|FAILED|1:0|00:00:02"\n'
   printf 'echo "909090|COMPLETED|0:0|00:10:00"\n'
   printf 'exit 0\n'
@@ -494,6 +502,53 @@ for l in open(sys.argv[1]):
     if str(r.get(\"slurm_job\")) == \"909090\":
         sys.exit(0 if r.get(\"state\") == \"COMPLETED\" else 1)
 sys.exit(1)" "$WORK/.oma-lab/reconciled.jsonl"'
+
+# `sbatch --array` is how a sweep is launched, and it is the case that matching
+# JobID exactly got wrong: the ledger holds the parent id 12345, while every row
+# sacct returns is named 12345_0, 12345_1 — so nothing matched, every sweep read
+# UNKNOWN, and the board said "still open" forever. The rule has to exclude step
+# rows, not include only exact ones. Het jobs (12345+0) are the same shape.
+#
+# One ending is wanted from many elements, and COMPLETED is the wrong one to
+# volunteer: a sweep with a dead element is not a sweep that worked.
+{ printf '#!/usr/bin/env bash\n'
+  printf 'for a in "$@"; do [ "$a" = 0 ] && exit 0; done\n'
+  printf 'case " $* " in\n'
+  printf '  *" 313131 "*) echo "313131_0|COMPLETED|0:0|00:10:00"\n'
+  printf '                echo "313131_0.batch|COMPLETED|0:0|00:10:00"\n'
+  printf '                echo "313131_1|FAILED|1:0|00:03:00" ;;\n'
+  printf '  *" 323232 "*) echo "323232+0|COMPLETED|0:0|00:05:00"\n'
+  printf '                echo "323232+1|COMPLETED|0:0|00:05:00" ;;\n'
+  printf '  *" 343434 "*) echo "343434_0|FAILED|1:0|00:10:00"\n'
+  printf '                echo "343434_1|RUNNING||00:03:00" ;;\n'
+  printf 'esac\nexit 0\n'
+} > "$SL/sacct"; chmod +x "$SL/sacct"
+for j in 313131 323232 343434; do
+  (cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply --job "$j") >/dev/null 2>&1
+done
+check "an array job's elements are recognised as that job's rows" \
+      'grep -q "\"slurm_job\": \"313131\"" "$WORK/.oma-lab/reconciled.jsonl"'
+check "and a failed element is not summarised as COMPLETED" \
+      'python3 -c "
+import json,sys
+for l in open(sys.argv[1]):
+    r = json.loads(l)
+    if str(r.get(\"slurm_job\")) == \"313131\":
+        sys.exit(0 if r.get(\"state\") == \"FAILED\" else 1)
+sys.exit(1)" "$WORK/.oma-lab/reconciled.jsonl"'
+check "a heterogeneous job's components are recognised too" \
+      'grep -q "\"slurm_job\": \"323232\"" "$WORK/.oma-lab/reconciled.jsonl"'
+# The negative control for the two above: an id-prefix rule loose enough to
+# match elements must still not call a half-finished array finished.
+#
+# The dead element is FAILED, not COMPLETED, and that is the whole point. With
+# one COMPLETED and one RUNNING the outcome is right either way, because a
+# summary of RUNNING is refused downstream anyway — so the scenario proves
+# nothing. FAILED alongside RUNNING is the one that separates them: pick the
+# ending and the array is filed as finished while half of it is still on the
+# cluster, and `already_done` then skips it for good.
+check "but an array with an element still running stays open" \
+      '! grep -q "\"slurm_job\": \"343434\"" "$WORK/.oma-lab/reconciled.jsonl"'
 
 # Answers for 998877 only, so 112233 stays unreconciled for the assertions that
 # need an unfinished job to observe.
@@ -517,6 +572,16 @@ check "a multi-word terminal state still counts as finished" \
       'grep -q "\"slurm_job\": \"424242\"" "$WORK/.oma-lab/reconciled.jsonl"'
 check "and the reason it was cancelled is kept, not squashed out" \
       'grep -q "CANCELLED by 1000" "$WORK/.oma-lab/reconciled.jsonl"'
+
+# sacct appends "+" when it had to truncate a longer state name, so FAILED+ and
+# TIMEOUT+ are the same endings as FAILED and TIMEOUT. Listing "CANCELLED+" by
+# hand covered one spelling of a rule that applies to all of them, and every
+# other "+" state read as non-terminal — a failed job that stays open forever,
+# which is the same silent miss the multi-word case above produces.
+mk_sacct 626262 'FAILED+|1:0|00:00:02'
+(cd "$WORK" && PATH="$SL:$PATH" bash "$OMA_LAB" reconcile apply --job 626262) >/dev/null 2>&1
+check "a truncated terminal state (FAILED+) is still an ending" \
+      'grep -q "\"slurm_job\": \"626262\"" "$WORK/.oma-lab/reconciled.jsonl"'
 
 # exit_code is not on lab_json_obj's identifier allow-list, so a bare "0" is
 # stored as the int 0 — and `x or "?"` turns the one exit code we are surest

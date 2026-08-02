@@ -84,29 +84,72 @@ for r in rows:
 '
 }
 
+# The states that mean the job is over. One list, shared by is_terminal and the
+# awk selector below — two copies would drift, and the copy that drifted would
+# be the one deciding whether a finished job is ever recorded.
+TERMINAL_STATES="COMPLETED FAILED CANCELLED TIMEOUT OUT_OF_MEMORY NODE_FAIL BOOT_FAIL DEADLINE PREEMPTED"
+
+# CANCELLED arrives as "CANCELLED by 1000", so match the leading word only. A
+# trailing "+" means sacct truncated a longer state name, not a different state.
+is_terminal() {
+  local head="${1%% *}"
+  head="${head%+}"
+  case " $TERMINAL_STATES " in *" $head "*) return 0 ;; esac
+  return 1
+}
+
 # "<state>\t<exit>\t<elapsed>\t<source>" for one id.
 #
 # sacct first: a finished job leaves squeue but stays in the accounting db, so
 # asking squeue first would report a completed run as simply absent.
 #
-# sacct returns one row per step — "12345", "12345.batch", "12345.extern" — and
-# their states differ. Taking whichever came first meant a step's outcome could
-# be filed as the job's, so JobID is asked for and matched exactly. That is the
-# only field that distinguishes them, and it was not being requested at all.
+# Which of sacct's rows is "the job" is the whole difficulty here:
+#
+#   12345          the job                    <- an answer
+#   12345.batch    a step inside it           <- not an answer; its state differs
+#   12345_0        array element 0            <- an answer, and there are many
+#   12345+0        heterogeneous component 0  <- likewise
+#
+# Taking whichever row came first filed a step's outcome as the job's. Matching
+# JobID exactly fixed that and broke something bigger: `sbatch --array` records
+# the parent id 12345, no row is ever named exactly that, so every sweep went
+# UNKNOWN -> "still open" forever. Both bugs are silent and both look like a
+# healthy board, so the rule has to name the step rows rather than the job ones:
+# a step is the row with a dot in it, and everything else whose id before the
+# "_" or "+" is the one asked for belongs to this job.
+#
+# An array is many endings and the caller wants one. Still-running wins first —
+# the job is not over while any element runs — then a non-COMPLETED ending, so a
+# sweep where one element OOM'd cannot report itself as COMPLETED.
 job_state() {
   local jid="$1" line="" st
   if command -v "$SACCT" >/dev/null 2>&1; then
     line="$("$SACCT" -j "$jid" --format=JobID,State,ExitCode,Elapsed -n -P 2>/dev/null \
-            | awk -F'|' -v want="$jid" '$1 == want { print; exit }')"
+            | awk -F'|' -v want="$jid" -v term=" $TERMINAL_STATES " '
+        index($1, ".") { next }                       # a step, not the job
+        { id = $1; sub(/[_+].*$/, "", id) }
+        id != want { next }
+        {
+          state = $2
+          sub(/^[ \t]+/, "", state); sub(/[ \t]+$/, "", state)
+          head = state; sub(/ .*$/, "", head); sub(/\+$/, "", head)
+          row = state "|" $3 "|" $4
+          if (index(term, " " head " ") == 0) { if (!o++) open = row }
+          else if (head != "COMPLETED") { if (!b++) bad = row }
+          else if (!c++) ok = row
+        }
+        END {
+          if (o) print open; else if (b) print bad; else if (c) print ok
+        }')"
     if [ -n "$line" ]; then
       # Trim the edges, keep the inside. `tr -d ' '` turns sacct's
       # "CANCELLED by 1000" into "CANCELLEDby1000", which then matches nothing
       # in is_terminal — so a cancelled job stayed "still open" forever and was
       # never recorded, which is the one thing this tool exists to prevent.
       printf '%s\t%s\t%s\tsacct\n' \
-        "$(printf '%s' "$line" | cut -d'|' -f2 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')" \
-        "$(printf '%s' "$line" | cut -d'|' -f3)" \
-        "$(printf '%s' "$line" | cut -d'|' -f4)"
+        "$(printf '%s' "$line" | cut -d'|' -f1)" \
+        "$(printf '%s' "$line" | cut -d'|' -f2)" \
+        "$(printf '%s' "$line" | cut -d'|' -f3)"
       return 0
     fi
   fi
@@ -115,15 +158,6 @@ job_state() {
     [ -n "$st" ] && { printf '%s\t\t\tsqueue\n' "$st"; return 0; }
   fi
   printf 'UNKNOWN\t\t\tnone\n'
-}
-
-# CANCELLED arrives as "CANCELLED by 1000", so match the leading word only.
-is_terminal() {
-  case "${1%% *}" in
-    COMPLETED|FAILED|CANCELLED|CANCELLED+|TIMEOUT|OUT_OF_MEMORY|NODE_FAIL|BOOT_FAIL|DEADLINE|PREEMPTED)
-      return 0 ;;
-    *) return 1 ;;
-  esac
 }
 
 already_done() {

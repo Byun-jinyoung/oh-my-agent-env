@@ -422,7 +422,10 @@ pa_assemble() {
     LOG_FILE="$pa/sync.log"
     # shellcheck disable=SC1091
     source "$pa/src/lib/common.sh" 2>/dev/null || true
-    assemble_global_rules >/dev/null 2>&1 )
+    # Kept, not discarded. A nonzero status only says something went wrong; the
+    # operator's next move depends on WHICH runtime is behind, and a bare
+    # `return 1` satisfies an rc-only assertion while saying nothing at all.
+    assemble_global_rules > "$pa/out.txt" 2>&1 )
 }
 
 rc=0; pa_assemble || rc=$?
@@ -433,6 +436,17 @@ printf '\nSENTINEL-BODY-DRIFT\n' >> "$pa/src/rules/00-core.md"
 mv "$pa/src/runtimes/antigravity/tools.md" "$pa/src/tools.md.parked"
 rc=0; pa_assemble || rc=$?
 [ "$rc" -ne 0 ] || fail "[11b] a partial assembly reported success — the drift is silent again"
+
+# A nonzero status alone leaves the operator with nowhere to go. Cross-review's
+# point: swap the whole branch for a bare `return 1` and every assertion above
+# still passes, while the one fact worth having — which runtime is behind —
+# disappears. So assert the diagnostic, and assert it does NOT indict the two
+# runtimes that are current, or "name the stale CLI" degrades into "name all
+# three", which is the same as naming none.
+grep -q 'not updated:.*antigravity' "$pa/out.txt" \
+  || fail "[11b] the failure did not name the runtime that stayed behind"
+! grep -q 'not updated:.*claude' "$pa/out.txt" \
+  || fail "[11b] the failure indicted a runtime that was actually updated"
 
 # and the failure named a target that is genuinely behind, not a guess
 grep -q 'SENTINEL-BODY-DRIFT' "$pa/claude/CLAUDE.md" \
