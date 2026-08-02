@@ -636,4 +636,34 @@ for case in manifest-only:ml import-only:ml commented:general mention-doc:genera
   [ "$got" = "$want" ] || fail "[17] ${case%%:*} (no rg): expected $want, got $got"
 done
 
+echo "[18] switching base style replaces its rules instead of stacking them"
+# block_content inlines the whole template rather than a pointer, so a leftover
+# block is a second complete rule set. Reproduced before the fix: general then ml
+# on one directory left a 151-line CLAUDE.md carrying both.
+blocks_in() { grep -o 'cc-bootstrap:[a-z]*:begin' "$1" | sed 's/cc-bootstrap://;s/:begin//' | sort | tr '\n' ' '; }
+apt="$ROOT/scripts/apply-project-template.sh"
+
+t18="$TMP/style-switch"; mkdir -p "$t18"
+"$apt" general "$t18" >/dev/null
+"$apt" ml "$t18" >/dev/null
+got="$(blocks_in "$t18/CLAUDE.md")"
+[ "$got" = "ml " ] || fail "[18] general->ml left blocks: $got"
+
+# Re-applying must not churn the file, or every scaffold run shows as a diff.
+before="$(md5sum < "$t18/CLAUDE.md")"
+"$apt" ml "$t18" >/dev/null
+[ "$before" = "$(md5sum < "$t18/CLAUDE.md")" ] || fail "[18] re-applying ml rewrote the file"
+
+# The other direction, and the reason BASE_STYLES excludes slurm: slurm is an
+# additive block. Adding Slurm rules is not a request to delete the base rules,
+# and switching the base style is not a request to delete the Slurm rules.
+t18b="$TMP/style-additive"; mkdir -p "$t18b"
+"$apt" general "$t18b" >/dev/null
+"$apt" slurm "$t18b" >/dev/null
+got="$(blocks_in "$t18b/CLAUDE.md")"
+[ "$got" = "general slurm " ] || fail "[18] slurm alone disturbed the base style: $got"
+"$apt" ml "$t18b" >/dev/null
+got="$(blocks_in "$t18b/CLAUDE.md")"
+[ "$got" = "ml slurm " ] || fail "[18] switching base style dropped the slurm block: $got"
+
 echo "smoke-refactor OK"

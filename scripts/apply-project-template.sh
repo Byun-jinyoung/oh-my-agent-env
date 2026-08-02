@@ -191,6 +191,43 @@ project_content() {
   printf -- '- Risks:\n'
 }
 
+# The base styles that are mutually exclusive. `slurm` is deliberately not one
+# of them: it is an additive block, so applying `ml` must not delete Slurm rules
+# a project asked for.
+BASE_STYLES=(general ml)
+
+# Strip one managed block from a file, to stdout. Blank lines immediately before
+# a begin marker are dropped (held in a buffer and discarded) so the script alone
+# controls the single separator blank line — re-applying never accumulates blank
+# lines, even with multiple blocks per file.
+strip_block() {
+  local target="$1"
+  awk -v begin="<!-- cc-bootstrap:${2}:begin -->" -v end="<!-- cc-bootstrap:${2}:end -->" '
+    $0 == begin { skip = 1; hold = 0; next }
+    $0 == end { skip = 0; next }
+    skip { next }
+    /^[ \t]*$/ { hold++; next }
+    { while (hold-- > 0) print ""; hold = 0; print }
+    END { while (hold-- > 0) print "" }
+  ' "$target"
+}
+
+# Drop blank lines at both edges, so that re-applying does not accumulate an
+# extra blank line each run (idempotent).
+#
+# Leading blanks matter as much as trailing ones once a block can be removed from
+# the top of a file: stripping the first block leaves the separator blank that
+# followed it, the file then starts with a blank line, and the next apply
+# normalises it — so scaffolding the same style twice produced two different
+# files. Caught by smoke [18]'s idempotence assertion, not by inspection.
+trim_blank_edges() {
+  local tmp="$1"
+  [ -s "$tmp" ] || return 0
+  awk 'NF && !first { first = NR } NF { last = NR } { line[NR] = $0 }
+       END { if (!first) exit; for (i = first; i <= last; i++) print line[i] }' \
+    "$tmp" > "$tmp.trim" && mv "$tmp.trim" "$tmp"
+}
+
 apply_one() {
   local rel="$1"
   local style="$2"
@@ -209,26 +246,10 @@ apply_one() {
   tmp="$(mktemp)"
 
   if [ -f "$target" ]; then
-    # Strip the existing managed block. Blank lines immediately before a
-    # begin marker are dropped (held in a buffer and discarded) so the
-    # script alone controls the single separator blank line — re-applying
-    # never accumulates blank lines, even with multiple blocks per file.
-    awk -v begin="$begin" -v end="$end" '
-      $0 == begin { skip = 1; hold = 0; next }
-      $0 == end { skip = 0; next }
-      skip { next }
-      /^[ \t]*$/ { hold++; next }
-      { while (hold-- > 0) print ""; hold = 0; print }
-      END { while (hold-- > 0) print "" }
-    ' "$target" > "$tmp"
+    strip_block "$target" "$style" > "$tmp"
   fi
 
-  # Drop trailing blank lines left after stripping the old block, so that
-  # re-applying does not accumulate an extra blank line each run (idempotent).
-  if [ -s "$tmp" ]; then
-    awk 'NF { last = NR } { line[NR] = $0 } END { for (i = 1; i <= last; i++) print line[i] }' \
-      "$tmp" > "$tmp.trim" && mv "$tmp.trim" "$tmp"
-  fi
+  trim_blank_edges "$tmp"
 
   if [ -s "$tmp" ]; then
     printf '\n' >> "$tmp"
@@ -243,11 +264,42 @@ apply_one() {
   mv "$tmp" "$target"
 }
 
+# Applying a base style leaves any other base style's block sitting in the same
+# file. Reproduced: `general` then `ml` on one directory produced a 151-line
+# CLAUDE.md carrying both complete rule sets — and block_content inlines the whole
+# template rather than a pointer, so the leftover is a second set of rules, not a
+# stale one-line reference.
+#
+# Only runs when a base style was applied. `apply-project-template.sh slurm` sets
+# BASE_STYLE empty, and adding Slurm rules is not a request to delete the base
+# rules the project already had.
+drop_stale_base_styles() {
+  local rel="$1"
+  local keep="$2"
+  local target="$PROJECT_DIR/$rel"
+  local s tmp
+  [ -f "$target" ] || return 0
+  for s in "${BASE_STYLES[@]}"; do
+    [ "$s" = "$keep" ] && continue
+    grep -qF "<!-- cc-bootstrap:${s}:begin -->" "$target" || continue
+    if [ "$DRY_RUN" = "1" ]; then
+      printf 'would drop stale %s block from %s/%s\n' "$s" "$PROJECT_DIR" "$rel"
+      continue
+    fi
+    tmp="$(mktemp)"
+    strip_block "$target" "$s" > "$tmp"
+    trim_blank_edges "$tmp"
+    mv "$tmp" "$target"
+    printf 'dropped stale %s block from %s/%s\n' "$s" "$PROJECT_DIR" "$rel"
+  done
+}
+
 for f in "${FILES[@]}"; do
   applied=()
   if [ -n "$BASE_STYLE" ]; then
     apply_one "$f" "$BASE_STYLE" "$TEMPLATE"
     applied+=("$BASE_STYLE")
+    drop_stale_base_styles "$f" "$BASE_STYLE"
   fi
   if [ "$ADD_SLURM" = "1" ]; then
     apply_one "$f" "slurm" "$SLURM_TEMPLATE"
