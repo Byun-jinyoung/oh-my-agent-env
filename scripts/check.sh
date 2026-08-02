@@ -107,7 +107,15 @@ lint_python_syntax() {
   # stdin, and the heredoc below is that program. Piping the list in as well
   # silently loses it — first attempt did exactly that and reported 0 blocks.
   local files; mapfile -t files < <(shell_files | grep -v '^tests/')
-  python3 - tests/fixtures/python-unextractable.txt "${files[@]}" << 'PYEOF'
+  # Standalone .py files were the other half of the same hole. The embedded-block
+  # stage above covers Python written *inside* shell; nothing covered Python
+  # written in its own file, and there are 12 tracked ones that run inside the
+  # codebase-scan and triangle-review skills. No stage reached them: shell_files()
+  # emits .sh/shebang only, lint_node_syntax takes .js/.mjs, lint_json takes .json.
+  # `--` separates the two lists rather than a second invocation, so one stage
+  # keeps reporting one verdict for "the Python in this repo parses".
+  local pyfiles; mapfile -t pyfiles < <(git ls-files '*.py' 2>/dev/null)
+  python3 - tests/fixtures/python-unextractable.txt "${files[@]}" -- "${pyfiles[@]}" << 'PYEOF'
 import pathlib, re, sys
 from collections import Counter
 
@@ -159,8 +167,12 @@ for raw in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
     line = raw.split("#", 1)[0].strip()
     if line: allowed[line] += 1
 
+argv = sys.argv[2:]
+split = argv.index("--")
+shell_sources, py_files = argv[:split], argv[split + 1:]
+
 checked = 0; bad = []; blind = Counter()
-for name in sys.argv[2:]:
+for name in shell_sources:
     for kind, lineno, src in sites(pathlib.Path(name)):
         if src is None:
             blind["%s [%s]" % (name, kind)] += 1; continue
@@ -168,6 +180,19 @@ for name in sys.argv[2:]:
         try: compile(src, "%s:%d" % (name, lineno), "exec")
         except (SyntaxError, ValueError) as exc:
             bad.append("%s:%d: %s" % (name, lineno, exc))
+
+# Standalone files: compile from bytes, not decoded text, so a declared encoding
+# or a BOM is honoured the way the interpreter would honour it.
+compiled_files = 0
+for name in py_files:
+    try:
+        compile(pathlib.Path(name).read_bytes(), name, "exec")
+    except (SyntaxError, ValueError) as exc:
+        bad.append("%s: %s" % (name, exc))
+    except OSError as exc:
+        bad.append("%s: unreadable (%s)" % (name, exc))
+    else:
+        compiled_files += 1
 
 rc = 0
 for b in bad: print("python syntax error: %s" % b); rc = 1
@@ -180,7 +205,12 @@ for site, n in sorted((allowed - blind).items()):
 # Finding nothing and having nothing to find print the same way otherwise.
 if not checked:
     print("no embedded Python found — the extractor stopped matching"); rc = 1
-print("python syntax: %d block(s), %d allowed-unreachable" % (checked, sum(allowed.values())))
+# Same guard for the file list: `git ls-files` returning nothing (not a git repo,
+# git absent, glob changed) would otherwise read as "every .py is fine".
+if not py_files:
+    print("no tracked .py files found — the file list stopped matching"); rc = 1
+print("python syntax: %d embedded block(s), %d file(s), %d allowed-unreachable"
+      % (checked, compiled_files, sum(allowed.values())))
 sys.exit(rc)
 PYEOF
 }
