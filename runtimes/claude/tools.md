@@ -3,6 +3,30 @@
 Claude Code has hooks. RTK and context-mode are hook-enforced, so most routing
 is automatic. The notes below cover what still needs deliberate behavior.
 
+## 압축 게이트 — 작업 단위 경계에서 압축
+
+auto-compact이 작업 도중에 터져 맥락이 끊기는 것을 막는다. PreCompact 훅이 마커를 보고 압축을 미룬다.
+
+- 다단계 작업(ToDo 2개 이상)에 착수하면 `~/.claude/hooks/compact-gate busy "<작업명>"`.
+- ToDo 하나를 completed로 바꾸는 시점(=작업 단위 경계)에 `~/.claude/hooks/compact-gate done`.
+  다음 단위를 시작하면 다시 `busy`.
+- 세션이나 요청이 끝나면 반드시 `done`으로 정리한다.
+- 상태 확인은 `~/.claude/hooks/compact-gate status`.
+
+> 안전장치: 미룸은 연속 2회까지, 컨텍스트 550k 초과 시 무조건 압축된다.
+> `done`을 빠뜨려도 세션은 죽지 않으며 압축이 최대 2턴 지연될 뿐이다.
+> 마커는 **cwd 기준**이라 같은 디렉터리의 다른 세션과 공유된다.
+
+<!-- This text was written straight into ~/.claude/CLAUDE.md, which the next
+     `setup.sh sync` regenerates from rules/ + this file — so the sync would have
+     deleted it. It lives here because that is the only placement that survives,
+     and here rather than rules/ because compact-gate is a Claude Code hook that
+     Codex and Antigravity do not have.
+     Caveat, verified: ~/.claude/hooks/compact-gate and precompact-gate.sh are
+     real files, not symlinks into this harness, and no sync step installs them.
+     The mechanism this documents is therefore still unmanaged — losing that
+     machine's ~/.claude/hooks/ loses the hooks while this text survives. -->
+
 ## context-mode
 
 context-mode MCP tools are available and a PreToolUse hook routes token-heavy
