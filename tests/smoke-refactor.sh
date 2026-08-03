@@ -763,4 +763,74 @@ esac
 guards="$(printf '%s' "$serena_line" | grep -o '"serena"' | wc -l)"
 [ "$guards" -eq 2 ] || fail "[19] serena registered with no binary guard (found $guards quoted names)"
 
+echo "[20] the codex runtime dep check runs where tomllib does not exist"
+# This machine is python 3.10, so the check imported tomllib, printed [SKIP] and
+# emitted __WARN__0 — the same zero warnings a clean pass emits. The entire
+# runtime-dependency class had therefore never run here while doctor reported
+# health. The fallback parser only helps if it reads this file correctly, and
+# the file is full of traps: [mcp_servers.context-mode.tools.ctx_search] carries
+# its own `command`, and a `.tools.` table must never be read as `.env.`.
+t20="$TMP/codex-toml"; mkdir -p "$t20"
+cat > "$t20/config.toml" <<'TOML'
+# leading comment
+model = "gpt-5.5"
+
+[mcp_servers.serena]
+command = "/home/byun/.local/bin/serena"
+args = ["start-mcp-server"]
+
+[mcp_servers.serena.env]
+PATH = "/opt/bin:/usr/bin"
+
+[mcp_servers.context-mode]
+command = "context-mode"
+
+[mcp_servers.context-mode.env]
+PATH = "/ctx/bin"
+
+[mcp_servers.context-mode.tools.ctx_search]
+command = "SHOULD-NOT-BE-READ"
+PATH = "/should/not/be/read"
+
+[other_section]
+command = "also-not-a-server"
+TOML
+
+got="$(python3 - "$ROOT/lib/doctor/agent-mcp.sh" "$t20/config.toml" <<'PY'
+import json, re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+body = re.search(r"\ndef load_min\(path\):.*?\n    return servers\n", src, re.S)
+if not body:
+    print("PARSER-NOT-FOUND"); raise SystemExit(0)
+ns = {"re": re}
+exec(body.group(0), ns)
+print(json.dumps(ns["load_min"](sys.argv[2]), sort_keys=True))
+PY
+)"
+want='{"context-mode": {"command": "context-mode", "env": {"PATH": "/ctx/bin"}}, "serena": {"command": "/home/byun/.local/bin/serena", "env": {"PATH": "/opt/bin:/usr/bin"}}}'
+[ "$got" = "$want" ] || fail "[20] minimal TOML parser returned:
+  $got
+want:
+  $want"
+
+# A config whose servers the parser cannot read must say so. Reporting nothing
+# is what made the missing tomllib invisible in the first place.
+cat > "$t20/quoted.toml" <<'TOML'
+["mcp_servers"."serena"]
+command = "serena"
+TOML
+got="$(python3 - "$ROOT/lib/doctor/agent-mcp.sh" "$t20/quoted.toml" <<'PY'
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+body = re.search(r"\ndef load_min\(path\):.*?\n    return servers\n", src, re.S)
+ns = {"re": re}
+exec(body.group(0), ns)
+raw = open(sys.argv[2], encoding="utf-8").read()
+served = ns["load_min"](sys.argv[2])
+present = re.search(r'^\s*\[\s*"?mcp_servers"?\s*\.', raw, re.M) is not None
+print("unread" if (not served and present) else "silent")
+PY
+)"
+[ "$got" = "unread" ] || fail "[20] a config the parser cannot read was reported as having no servers"
+
 echo "smoke-refactor OK"

@@ -80,17 +80,81 @@ PYEOF
     # single quotes nested inside command substitution confuses bash's parser.
     _rtf="$(mktemp)"
     python3 - "$CODEX_DIR/config.toml" > "$_rtf" 2>&1 << 'PYEOF'
-import sys, os, shutil
+import sys, os, shutil, re
 cfg = sys.argv[1]
+
+
+def load_min(path):
+    """Just enough TOML for the file sync writes: `command` under
+    [mcp_servers.NAME] and `PATH` under [mcp_servers.NAME.env].
+
+    Depth is the whole point. This config really does carry deeper tables —
+    [mcp_servers.context-mode.tools.ctx_search] and friends — and reading a
+    `command` out of one of those, or treating `.tools.` as `.env.`, would
+    answer the question about the wrong thing. So a name is only a server at
+    exactly two segments, and only a three-segment table ending in `env`
+    contributes PATH. Bare keys and basic strings only, which is all sync emits.
+    """
+    servers, table = {}, None
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            header = re.match(r"^\[([^\[\]]+)\]$", line)
+            if header:
+                table = header.group(1).strip()
+                continue
+            if table is None:
+                continue
+            parts = table.split(".")
+            if parts[0] != "mcp_servers" or len(parts) < 2:
+                continue
+            pair = re.match(r'^([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*"([^"]*)"\s*$', line)
+            if not pair:
+                continue
+            key, val = pair.group(1), pair.group(2)
+            if len(parts) == 2 and key == "command":
+                servers.setdefault(parts[1], {})["command"] = val
+            elif len(parts) == 3 and parts[2] == "env" and key == "PATH":
+                servers.setdefault(parts[1], {}).setdefault("env", {})["PATH"] = val
+    return servers
+
+
+# python<3.11 has no tomllib, and skipping used to emit __WARN__0 — the same
+# zero warnings a clean pass emits. On this machine (3.10.12) that meant the
+# entire runtime-dependency check had never once run, while doctor reported
+# health. "Could not check" and "checked, fine" must not render the same.
+parsed_with = "tomllib"
 try:
     import tomllib
 except ImportError:
-    print("  [SKIP] runtime dep check (python<3.11, no tomllib)"); print("__WARN__0"); sys.exit(0)
+    tomllib = None
 try:
-    d = tomllib.load(open(cfg, "rb"))
+    if tomllib is not None:
+        m = tomllib.load(open(cfg, "rb")).get("mcp_servers", {})
+    else:
+        m = load_min(cfg)
+        parsed_with = "minimal parser"
 except Exception as e:
     print(f"  [WARN] runtime dep check: cannot read config.toml ({e})"); print("__WARN__1"); sys.exit(0)
-m = d.get("mcp_servers", {})
+
+# A parser that reads the file but finds nothing would otherwise report the same
+# silence as a config with no MCP servers in it.
+if not m:
+    try:
+        # Quoted forms too (["mcp_servers"."x"]) — the minimal parser reads bare
+        # keys only, and a header spelled a way it skips must still be reported
+        # rather than counted as "no servers configured".
+        raw = open(cfg, encoding="utf-8").read()
+        names_present = re.search(r'^\s*\[\s*"?mcp_servers"?\s*\.', raw, re.M) is not None
+    except OSError:
+        names_present = False
+    if names_present:
+        print(f"  [WARN] runtime dep check: config.toml names MCP servers the {parsed_with} could not read")
+        print("__WARN__1"); sys.exit(0)
+if tomllib is None:
+    print("  [NOTE] runtime dep check parsed config.toml without tomllib (python<3.11)")
 # server -> downstream executables it also needs at runtime
 checks = {"context-mode": [], "serena": [], "code-review-graph": [], "antigravity-mcp": ["agy"]}
 warn = 0
