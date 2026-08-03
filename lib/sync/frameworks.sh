@@ -20,9 +20,17 @@ codex_dir, gemini_dir = sys.argv[1], sys.argv[2]
 
 # External MCPs needed by triangle-review + codebase-scan
 WANTED = {
+    # The pinned release on PATH, not upstream HEAD. setup.sh cmd_oma [0]
+    # installs it with `uv tool install serena-agent` and oma's .mcp.json runs
+    # `serena`, so registering `uvx --from git+…` here made Codex start a SECOND
+    # build of the same tool against the SAME .serena/project.yml — and the two
+    # schemas have diverged. HEAD writes `language_servers:`; the release reads
+    # `languages:` and raises KeyError before the handshake, and oma's own bridge
+    # tests `/^languages:/m` and skips the project. So one Codex session was
+    # enough to disconnect serena for Claude and oma both.
     "serena": {
-        "command": "uvx",
-        "args": ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server"],
+        "command": "serena",
+        "args": ["start-mcp-server"],
     },
     "code-review-graph": {
         "command": "code-review-graph",
@@ -57,9 +65,36 @@ for name, spec in WANTED.items():
     content += "\n".join(block)
     added_codex.append(name)
 
-if added_codex:
+# Heal a section that already exists but names the other build. has_codex_section
+# proves only that the NAME is taken — the same blind spot add_mcp had on the
+# Claude side — so without this the `uvx --from git+…` entry written by earlier
+# syncs outlives the fix above forever, and one Codex session is enough to put
+# .serena/project.yml back into the schema neither the release nor oma can read.
+healed = []
+if "git+https://github.com/oraios/serena" in content:
+    out, in_serena = [], False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_serena = stripped == "[mcp_servers.serena]"
+        elif in_serena and stripped.startswith("args") and "git+" in stripped:
+            line = 'args = ["start-mcp-server"]'
+            healed.append("args")
+        elif in_serena and stripped.startswith("command") and "uvx" in stripped:
+            line = 'command = "serena"'
+            healed.append("command")
+        out.append(line)
+    if healed:
+        content = "\n".join(out) + ("\n" if content.endswith("\n") else "")
+
+if added_codex or healed:
     codex_cfg.write_text(content)
-    print(f"[OK] Codex: added {', '.join(added_codex)} to {codex_cfg.name}")
+    what = []
+    if added_codex:
+        what.append("added " + ", ".join(added_codex))
+    if healed:
+        what.append("repointed serena from git HEAD to the pinned release (" + ", ".join(healed) + ")")
+    print(f"[OK] Codex: {'; '.join(what)} in {codex_cfg.name}")
 else:
     print(f"[OK] Codex: serena + code-review-graph already in {codex_cfg.name}")
 

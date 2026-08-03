@@ -666,4 +666,101 @@ got="$(blocks_in "$t18b/CLAUDE.md")"
 got="$(blocks_in "$t18b/CLAUDE.md")"
 [ "$got" = "ml slurm " ] || fail "[18] switching base style dropped the slurm block: $got"
 
+echo "[19] a registration pointing at the wrong program is drift, not 'already registered'"
+# Reproduced on this machine: serena sat in `claude mcp list` under the right
+# name for months while pointing at a different build of serena than the one
+# setup.sh installs. add_mcp compared env and never the command, so every sync
+# said "OK — already registered" and the server never started. The two builds do
+# not share a config schema (HEAD writes `language_servers:` into
+# .serena/project.yml, the pinned release reads `languages:` and raises
+# KeyError), so "some serena is registered" was not the same as "serena works".
+# shellcheck disable=SC1091
+. "$ROOT/lib/sync/plugins-mcp.sh"
+
+t19="$TMP/mcp-registry"; mkdir -p "$t19"
+cat > "$t19/.claude.json" <<'JSON'
+{
+  "mcpServers": {
+    "serena": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server"],
+      "env": {"PATH": "/nowhere", "KEEP_ME": "yes"}
+    },
+    "codex-mcp": {
+      "command": "codex-mcp",
+      "args": [],
+      "env": {"PATH": "/nowhere", "MCP_CODEX_DEFAULT_MODEL": "gpt-5.5"}
+    },
+    "supermemory": {"command": "npx", "args": ["-y", "supermemory-mcp"]}
+  }
+}
+JSON
+CANON="claude mcp add -s user serena -e PATH=/bin -- serena start-mcp-server --context claude-code --open-web-dashboard false"
+
+# The whole point: same name, different program.
+HOME="$t19" mcp_cmdline_drift serena "$CANON" \
+  || fail "[19] a serena registered as uvx-from-git read as up to date against the release command"
+
+# ...and the reason must name both sides, or the log cannot be acted on.
+got="$(HOME="$t19" bash -c '. "'"$ROOT"'/lib/sync/plugins-mcp.sh"; mcp_cmdline_drift serena "'"$CANON"'"; printf "%s|%s" "$MCP_DRIFT_HAVE" "$MCP_DRIFT_WANT"')"
+case "$got" in
+  "uvx --from git+https://github.com/oraios/serena serena start-mcp-server|serena start-mcp-server --context claude-code --open-web-dashboard false") ;;
+  *) fail "[19] drift reported the wrong pair: $got" ;;
+esac
+
+# No false positives, or every sync tears down and re-registers a healthy entry.
+HOME="$t19" mcp_cmdline_drift codex-mcp "claude mcp add -s user codex-mcp -e PATH=/bin -- codex-mcp" \
+  && fail "[19] an entry that already matches was reported as drifted"
+
+# An http/sse registration has no `--` and therefore no command line to compare.
+# The fixture is the case that makes this load-bearing: supermemory carries a
+# leftover stdio command from when it was registered that way, so without the
+# `--` guard the whole `claude mcp add --transport http …` string gets compared
+# against `npx -y supermemory-mcp`, drift is declared on every sync, and the
+# entry is torn down and rebuilt forever. Comparing transports is not something
+# this function claims to do.
+HOME="$t19" mcp_cmdline_drift supermemory "claude mcp add -s user --transport http supermemory https://mcp.supermemory.ai/mcp" \
+  && fail "[19] an http registration was compared against a stdio command line"
+
+# A name we do not own at user scope (project-scope .mcp.json entries) is not ours to move.
+HOME="$t19" mcp_cmdline_drift context7 "claude mcp add -s user context7 -- context7-server" \
+  && fail "[19] claimed drift on a name absent from the user registry"
+
+# Re-registration must carry the user's own env across, minus keys the canonical
+# command already sets — otherwise repairing a command silently drops config, or
+# reinstates a stale value by appending it after ours.
+got="$(HOME="$t19" mcp_user_field serena env | tr '\n' ' ')"
+[ "$got" = "KEEP_ME=yes " ] || fail "[19] env view returned '$got' (want KEEP_ME only; PATH has its own check)"
+got="$(HOME="$t19" mcp_user_field codex-mcp env | tr '\n' ' ')"
+[ "$got" = "MCP_CODEX_DEFAULT_MODEL=gpt-5.5 " ] || fail "[19] env view lost a preserved key: $got"
+
+# The baked PATH has to be read from the registry too. add_mcp took it from
+# `claude mcp get`, which in a directory whose .mcp.json names the same server
+# reports "Scope: Project config" and prints no env lines at all — so the PATH
+# comparison saw <unset> forever and re-registered serena on every single sync.
+# Measured on this machine before the fix.
+got="$(HOME="$t19" mcp_user_field serena path)"
+[ "$got" = "/nowhere" ] || fail "[19] PATH view returned '$got' instead of the registered value"
+got="$(HOME="$t19" mcp_user_field context7 path)"
+[ -z "$got" ] || fail "[19] PATH view invented a value for a name we do not own: $got"
+# Registered, but with no baked PATH. Reporting anything here would mean the
+# comparison is against a value nobody wrote, and the entry gets rebuilt forever.
+got="$(HOME="$t19" mcp_user_field supermemory path)"
+[ -z "$got" ] || fail "[19] PATH view reported '$got' for an entry that bakes no PATH"
+
+# The bug this fixes was two provisioning paths for one tool. setup.sh installs
+# the pinned release and oma's .mcp.json runs `serena` off PATH, so sync must
+# register that same binary — and must guard on it, so a missing install SKIPs
+# instead of registering an entry that can never start.
+serena_line="$(grep -A2 'add_mcp "serena"' "$ROOT/lib/sync/plugins-mcp.sh" | tr '\n' ' ')"
+case "$serena_line" in
+  *"uvx"*|*"git+"*) fail "[19] sync registers serena from git HEAD again — that is the second build" ;;
+esac
+# Quoted "serena" appears exactly twice when the guard is present — once as the
+# name, once as the binary argument. The command string spells the binary
+# unquoted, so this counts the guard and not the command.
+guards="$(printf '%s' "$serena_line" | grep -o '"serena"' | wc -l)"
+[ "$guards" -eq 2 ] || fail "[19] serena registered with no binary guard (found $guards quoted names)"
+
 echo "smoke-refactor OK"

@@ -2,6 +2,80 @@
 # Sourced by lib/sync.sh; not standalone.
 # shellcheck shell=bash   # sourced fragment: no shebang by design
 
+# What is registered at USER scope for $1, read from the registry file.
+#
+# Not `claude mcp get`: with a project-scope .mcp.json in cwd (oma generates one,
+# and it names serena), `claude mcp get serena` answers about the PROJECT entry
+# and prints no Command:/Args: lines at all — so a user-scope command drift is
+# invisible to it. Verified on this machine.
+#
+# $2 selects the view:
+#   cmdline -> command, then each arg, one per line
+#   env     -> KEY=VALUE per line, PATH excluded (its own check owns it)
+#   path    -> env.PATH alone
+# Prints nothing when the name is absent or carries no command (the http/sse
+# transports), which every caller reads as "nothing to compare".
+#
+# Top-level rather than nested inside sync_plugins_mcp so the smoke test can
+# source this file and call it without running a sync.
+mcp_user_field() {
+  command -v python3 &>/dev/null || return 0
+  python3 - "$HOME/.claude.json" "$1" "$2" 2>/dev/null <<'PYEOF'
+import json, sys
+
+path, name, what = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    servers = json.load(open(path)).get("mcpServers") or {}
+except (OSError, ValueError):
+    raise SystemExit(0)
+entry = servers.get(name)
+if not isinstance(entry, dict) or not entry.get("command"):
+    raise SystemExit(0)
+env = entry.get("env") or {}
+if what == "cmdline":
+    print("\n".join([entry["command"], *(str(a) for a in entry.get("args") or [])]))
+elif what == "path":
+    if env.get("PATH"):
+        print(env["PATH"])
+else:
+    for k, v in env.items():
+        if k != "PATH":
+            print(f"{k}={v}")
+PYEOF
+}
+
+# Does the user-scope registration for $1 disagree with the program $2 asks for?
+# Exit 0 means drift; the two sides are then in MCP_DRIFT_HAVE / MCP_DRIFT_WANT
+# for the caller to log.
+#
+# A name appearing in `claude mcp list` only proves SOMETHING owns that name.
+# add_mcp compared env and never the command, so a registration pointing at the
+# wrong program survived every sync. Not hypothetical: serena was registered as
+# `uvx --from git+…` (upstream HEAD) while setup.sh installs the pinned release
+# and oma's .mcp.json runs `serena` off PATH. Two builds sharing one
+# .serena/project.yml, and their config schemas disagree — HEAD writes
+# `language_servers:`, the release reads `languages:` and raises KeyError before
+# the handshake. sync could not heal it because sync could not see it.
+#
+# Only the stdio form we generate is comparable (`… -- <cmd> [args…]`); the
+# http/sse registrations have no `--` and are reported as no drift. xargs does
+# the tokenizing so a quoted argument splits the way the shell would rather than
+# by naive word splitting. An empty read means the name is not at user scope at
+# all — someone else's project entry — and we make no claim about it.
+MCP_DRIFT_HAVE=""
+MCP_DRIFT_WANT=""
+mcp_cmdline_drift() {
+  local name="$1" cmd="$2" have want
+  MCP_DRIFT_HAVE=""; MCP_DRIFT_WANT=""
+  [[ "$cmd" == *" -- "* ]] || return 1
+  have="$(mcp_user_field "$name" cmdline | tr '\n' ' ')"
+  want="$(printf '%s' "${cmd#* -- }" | xargs -n1 2>/dev/null | tr '\n' ' ')"
+  [ -n "$have" ] && [ -n "$want" ] || return 1
+  MCP_DRIFT_HAVE="${have% }"
+  MCP_DRIFT_WANT="${want% }"
+  [ "$MCP_DRIFT_HAVE" != "$MCP_DRIFT_WANT" ]
+}
+
 # [8][9] Claude Code plugins + MCP servers (incl. local helpers install_plugin/add_mcp/migrate)
 sync_plugins_mcp() {
   # [8] Claude Code plugins
@@ -134,16 +208,26 @@ PYEOF
 
       local needs_register=0
       if echo "$mcp_list" | grep -q "$name"; then
-        # Already registered. Decide if env is current.
-        local expected_path="" current_env="" current_path=""
-        if [[ "$cmd" == *"-e PATH="* ]]; then
+        # Already registered — but `mcp_list` spans every scope, so that name may
+        # belong to a project .mcp.json we do not own. Only an entry we hold at
+        # user scope is ours to compare against, and an absent one must not read
+        # as "every env key is missing".
+        local expected_path="" current_env="" current_path="" _at_user
+        _at_user="$(mcp_user_field "$name" cmdline)"
+        if [ -n "$_at_user" ] && [[ "$cmd" == *"-e PATH="* ]]; then
           # Extract PATH=<value> token from the cmd string (value runs up to
           # next whitespace; we never quote PATH in our generated cmd lines).
           expected_path="$(echo "$cmd" | sed -nE 's/.*-e PATH=([^[:space:]]+).*/\1/p')"
         fi
         if [ -n "$expected_path" ]; then
-          current_env="$(maybe_timeout 10 claude mcp get "$name" </dev/null 2>/dev/null || true)"
-          current_path="$(echo "$current_env" | grep -oE 'PATH=[^[:space:]]+' | head -1 | sed 's/^PATH=//')"
+          # From the registry, not `claude mcp get`. With a project .mcp.json in
+          # cwd that names this server, `claude mcp get` answers about the
+          # PROJECT entry and prints no env lines at all — so current_path came
+          # back empty on every run, the comparison never matched, and serena was
+          # torn down and re-registered on every single sync. Measured here:
+          # `claude mcp get serena` reports "Scope: Project config" and nothing
+          # else, while the user entry carried the correct baked PATH all along.
+          current_path="$(mcp_user_field "$name" path)"
           if [ "$current_path" != "$expected_path" ]; then
             log_and_print "    [$name] env PATH out of date — re-registering"
             log_and_print "             have: ${current_path:-<unset>}"
@@ -160,7 +244,7 @@ PYEOF
               case "$_ek" in PATH|"") continue ;; esac
               _preserve_args+=" -e ${_ek}=${_ev}"
               log_and_print "    [$name] preserving env: ${_ek}"
-            done < <(echo "$current_env" | sed -nE 's/^[[:space:]]+([A-Z_][A-Z0-9_]*=.*)$/\1/p' | grep -v '^PATH=')
+            done < <(mcp_user_field "$name" env)
             if [ -n "$_preserve_args" ]; then
               # Inject preserved -e flags just before `-- <binary>` in cmd
               cmd="${cmd/ -- /${_preserve_args} -- }"
@@ -177,7 +261,8 @@ PYEOF
         # in a later setup.sh version but an older registration lacks them.
         # Without this, just adding -e flags to cmd would do nothing for
         # machines that already had codex-mcp registered.
-        if [ "$needs_register" = "0" ] && [ -n "$current_env" ]; then
+        if [ "$needs_register" = "0" ] && [ -n "$_at_user" ]; then
+          current_env="$(mcp_user_field "$name" env)"
           local _exp_line _ek _ev _cur_v
           while IFS= read -r _exp_line; do
             [ -z "$_exp_line" ] && continue
@@ -185,7 +270,7 @@ PYEOF
             _ev="${_exp_line#*=}"
             # PATH already covered above; skip to avoid duplicate work.
             case "$_ek" in PATH|"") continue ;; esac
-            _cur_v="$(echo "$current_env" | grep -oE "${_ek}=[^[:space:]]+" | head -1 | sed "s/^${_ek}=//")"
+            _cur_v="$(printf '%s\n' "$current_env" | sed -n "s/^${_ek}=//p" | head -1)"
             if [ "$_cur_v" != "$_ev" ]; then
               log_and_print "    [$name] env $_ek out of date — re-registering"
               log_and_print "             have: ${_cur_v:-<unset>}"
@@ -196,6 +281,28 @@ PYEOF
               break
             fi
           done < <(echo "$cmd" | grep -oE '\-e [A-Z_][A-Z0-9_]*=[^[:space:]]+' | sed -E 's/^-e ([A-Z_][A-Z0-9_]*)=(.*)$/\1=\2/')
+        fi
+        if [ "$needs_register" = "0" ] && mcp_cmdline_drift "$name" "$cmd"; then
+          log_and_print "    [$name] command out of date — re-registering"
+          log_and_print "             have: $MCP_DRIFT_HAVE"
+          log_and_print "             want: $MCP_DRIFT_WANT"
+          # Same env-preservation contract as the PATH branch, minus its
+          # duplicate-flag hazard: a key the canonical cmd already sets is
+          # skipped, so re-registering cannot resurrect a stale value by
+          # appending it after our own.
+          local _preserve="" _kv
+          while IFS= read -r _kv; do
+            [ -n "$_kv" ] || continue
+            case " $cmd " in *" -e ${_kv%%=*}="*) continue ;; esac
+            _preserve+=" -e ${_kv}"
+            log_and_print "    [$name] preserving env: ${_kv%%=*}"
+          done < <(mcp_user_field "$name" env)
+          if [ -n "$_preserve" ]; then
+            cmd="${cmd/ -- /${_preserve} -- }"
+          fi
+          maybe_timeout 10 claude mcp remove "$name" -s user </dev/null 2>&1 | sed 's/^/      /' || true
+          maybe_timeout 10 claude mcp remove "$name" -s local </dev/null 2>&1 | sed 's/^/      /' || true
+          needs_register=1
         fi
         if [ "$needs_register" = "0" ]; then
           log_and_print "    [$name] OK — already registered"
@@ -309,7 +416,19 @@ PYEOF
     add_mcp "antigravity-mcp" \
       "claude mcp add -s user antigravity-mcp -e PATH=${CODEX_PATH} -- antigravity-mcp" \
       "antigravity-mcp"
-    add_mcp "serena" "claude mcp add -s user serena -- uvx --from 'git+https://github.com/oraios/serena' serena start-mcp-server" ""
+    # The release on PATH, not upstream HEAD. setup.sh cmd_oma [0] installs the
+    # pinned release (`uv tool install serena-agent`) precisely because oma's
+    # generated .mcp.json runs `command: serena` — see setup.sh:262 — so HEAD
+    # registered here was a second, unpinned build of the same tool sharing one
+    # .serena/project.yml with the first. Their config schemas have diverged
+    # (HEAD: `language_servers:`, release: `languages:`, and RENAMED_FIELDS
+    # carries no migration between them), so whichever wrote last locked the
+    # other out with a KeyError. Also gains the `binary` guard: with no serena
+    # installed this now SKIPs loudly instead of registering an entry that can
+    # never start, which is the state doctor had to grow a reason message for.
+    add_mcp "serena" \
+      "claude mcp add -s user serena -e PATH=${CODEX_PATH} -- serena start-mcp-server --context claude-code --open-web-dashboard false" \
+      "serena"
     add_mcp "supermemory" "claude mcp add -s user --transport http supermemory https://mcp.supermemory.ai/mcp" ""
   fi
 }

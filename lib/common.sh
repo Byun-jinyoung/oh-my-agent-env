@@ -498,9 +498,13 @@ ensure_codex_mcp_paths() {
     [ -n "$_seg" ] || continue
     case ":$_baked:" in *":$_seg:"*) ;; *) _baked="${_baked:+$_baked:}$_seg" ;; esac
   done
-  # name:lookup-binary for each managed server (serena's command is uvx).
+  # name:lookup-binary for each managed server. serena resolves to serena, not
+  # uvx: `uvx --from git+…` built upstream HEAD, a second build of the same tool
+  # sharing one .serena/project.yml with the release setup.sh installs, and their
+  # config schemas disagree (HEAD `language_servers:` vs release `languages:`).
+  # Hardening the wrong command to an absolute path only made it resolve better.
   local _specs="" _pair _name _bin _abs
-  for _pair in "serena:uvx" "code-review-graph:code-review-graph" "antigravity-mcp:antigravity-mcp"; do
+  for _pair in "serena:serena" "code-review-graph:code-review-graph" "antigravity-mcp:antigravity-mcp"; do
     _name="${_pair%%:*}"; _bin="${_pair##*:}"
     _abs="$(command -v "$_bin" 2>/dev/null)"
     # Fallback: the sync shell's PATH may lack ~/.local/bin even though _baked
