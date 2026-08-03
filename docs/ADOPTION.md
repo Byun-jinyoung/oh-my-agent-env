@@ -5,6 +5,10 @@ was compared against this one. This records what was adopted, what was refused,
 and the evidence for each, so the same components do not get re-litigated from
 memory next time.
 
+Not everything fixed in these rounds came from the comparison. The last section
+records the ones that did not, so that work landing in the same window does not
+get attributed to a source it had nothing to do with.
+
 That harness is built for a shared, multi-user setting. This one is a single
 user on Linux, doing molecular ML across three CLI agents. Most of the size
 difference between the two is that assumption, not capability.
@@ -443,3 +447,51 @@ outright — writing to `.git/hooks` there installs a hook that never runs.
 
 Escape hatches: `git push --no-verify` once, `OMA_SKIP_PREPUSH=1` always,
 `scripts/install-hooks.sh --uninstall` permanently.
+
+## What running it turned up, which the comparison did not
+
+Five commits in this round came from no part of the process above. serena
+stopped connecting, and pulling that thread found four more defects of the same
+shape underneath. They are recorded here because the structure of this page —
+twelve files read, sixty-six triaged, twelve CANDIDATEs — has no slot for a
+finding that arrives by *operating* the harness rather than by reading someone
+else's. Leaving them out would make the comparison look like the only channel
+that produces work. In this round it was not even the one that produced the most.
+
+| Defect | Reproduced by | Fix |
+|---|---|---|
+| serena provisioned as two different builds sharing one config file | `setup.sh:286` installs the release (`uv tool install serena-agent`, 1.6.1, wants `languages:`); `lib/sync/plugins-mcp.sh:312` registered `uvx --from git+…` (HEAD, writes `language_servers:`). `RENAMED_FIELDS` maps neither spelling to the other, so whichever ran last left a file the other answers with `KeyError` | one build, at every surface (`e2a91cd`) |
+| `add_mcp` called a registration correct because the *name* was present | the pre-fix check was `if echo "$mcp_list" \| grep -q "$name"` — the command was never compared, so an entry pointing at the wrong program survived every sync | compare the spec (`e2a91cd`) |
+| …and its PATH comparison could never match | it read `claude mcp get`, which answers about the project `.mcp.json` entry and prints no `env` line at all. The comparison therefore always disagreed, and serena was torn down and re-registered on *every* sync — idempotence lost in the direction that looks like activity | read the user scope directly: `mcp_user_field`, `mcp_cmdline_drift` (`e2a91cd`) |
+| the same name-only skip in the third surface | pre-fix `lib/sync/frameworks.sh:173` was `if name in mcp_servers and name not in preserved: continue`, and `~/.gemini/config/mcp_config.json` still named `uvx --from git+…`. agy starts that entry in whatever directory antigravity runs from, which is why the breakage read as intermittent | spec comparison, plus reporting the repoint that was already being collected and never printed (`8d69671`) |
+| the codex runtime dep check had never once run | `python3 -c 'import tomllib'` → `ModuleNotFoundError` on this machine's 3.10.12. The check printed `[SKIP]` and `__WARN__0` — byte-identical to a clean pass | a minimal TOML parser, `load_min` (`d9e79e6`) |
+| doctor said `[MISS] serena` and gave no reason | the reason logic asks whether the *command* resolves, and it did; the fault was in `.serena/project.yml`, which nothing looked at | read the required fields out of the installed build and compare them against the config's top-level keys (`53ee45b`), and pin the existing reason logic to the distinction it exists for (`7f4f270`) |
+
+Three things generalise, and each had already appeared on this page in a weaker
+form:
+
+**One tool, one provisioning path.** serena had three that disagreed about which
+build to run — `setup.sh`, `lib/sync/plugins-mcp.sh`, and agy's shared
+`mcp_config.json`. Two were found and fixed; the third was missed, and a restart
+put the breakage straight back. The cost of an extra path is not the duplication,
+it is that fixing the visible ones feels like finishing.
+
+**A name is not a spec.** The identical defect — name present, therefore assume
+correct — sat in three independent places. Every one of them was replaced with a
+comparison against the intended command.
+
+**"Could not check" must not print like "passed."** The codex check is the clean
+case: it reported the same zero warnings a clean run reports, for an entire
+python version. The same rule now shapes the fixes around it — the pre-push hook
+fails closed when its own gate script is missing, the TOML parser warns on a
+quoted header it cannot read, and the new schema check warns rather than passing
+when it cannot ask the installed build what it requires.
+
+None of this was written before the failure was reproduced locally, and no
+assertion was accepted for passing. `[19]`–`[24]` in `tests/smoke-refactor.sh`
+extract the logic out of `lib/` with `awk` and run it against fixtures, because
+an assertion that restates the logic keeps passing after the original changes.
+Each was then checked by breaking the mechanism it names. Two had to be
+rewritten: one whose fixture lacked the very field the assertion was about, and
+one that died on an extraction guard rather than on the assertion under test —
+a kill that proves nothing about the check it was meant to exercise.
