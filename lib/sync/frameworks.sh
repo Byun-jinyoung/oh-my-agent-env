@@ -144,6 +144,7 @@ def get_cm_paths():
 cm_path, cm_bin = get_cm_paths()
 
 added_gemini = []
+repointed_gemini = []
 if agy_data is not None:
     mcp_servers = agy_data.setdefault("mcpServers", {})
 
@@ -170,12 +171,38 @@ if agy_data is not None:
                 added_gemini.append(name)
             continue
 
-        if name in mcp_servers and name not in preserved:
+        # Compare the spec, not just the name. Skipping on the name alone is how
+        # a serena registered as `uvx --from git+…` outlived every sync here:
+        # the entry existed, so nothing ever looked at what it pointed to. agy
+        # reads this file, so that stale entry kept starting upstream HEAD in
+        # whatever directory antigravity was invoked from — and HEAD rewrites
+        # .serena/project.yml into `language_servers:`, which the pinned release
+        # cannot load. Measured: this file still named git HEAD after the Claude
+        # and Codex registrations were repointed, and the project config came
+        # back in HEAD's schema the next time antigravity ran.
+        #
+        # context-mode above already needed its own forced update for exactly
+        # this reason. Generalizing it is what Step 2's own comment has claimed
+        # happens since it was written.
+        if mcp_servers.get(name) == spec:
             continue
+        if name in mcp_servers:
+            repointed_gemini.append(name)
+        else:
+            added_gemini.append(name)
         mcp_servers[name] = spec
-        added_gemini.append(name)
 
     agy_mcp_cfg.write_text(json.dumps(agy_data, indent=2))
+
+    # Say so. This side collected added_gemini and never printed it, so every
+    # change agy's shared config received was invisible in sync output — the
+    # Codex branch a few lines up reports its equivalent.
+    if added_gemini:
+        print(f"[OK] Antigravity: added {', '.join(added_gemini)} to config/mcp_config.json")
+    if repointed_gemini:
+        print(f"[OK] Antigravity: repointed {', '.join(repointed_gemini)} to the canonical spec in config/mcp_config.json")
+    if not added_gemini and not repointed_gemini:
+        print("[OK] Antigravity: managed MCP entries already canonical in config/mcp_config.json")
 
     # Step 3: strip the now-redundant mcpServers from the legacy settings.json.
     # agy and Antigravity IDE don't read this location for MCPs anyway; leaving

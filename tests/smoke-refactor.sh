@@ -927,4 +927,68 @@ grep -q theirs "$hook" || fail "[22] uninstall damaged a foreign hook"
 ( cd "$t22" && bash "$ih" --force >/dev/null ) || fail "[22] --force install failed"
 grep -q theirs "$hook.pre-oma" || fail "[22] --force did not preserve the foreign hook"
 
+echo "[23] a managed MCP entry pointing at the wrong build is repointed, in every runtime"
+# The Claude and Codex registrations were repointed off upstream HEAD, and serena
+# broke again on the next restart anyway: agy's shared config still named
+# `uvx --from git+…`, because this step skipped on the NAME being present and
+# never compared the spec. agy starts that entry in whatever directory
+# antigravity runs from, and HEAD writes .serena/project.yml as
+# `language_servers:`, which the pinned release cannot load. Proven by control:
+# with the file at `languages:`, running the release left it alone and running
+# the HEAD command flipped it.
+t23="$TMP/mcp-runtimes"; mkdir -p "$t23/codex" "$t23/gemini/config"
+# No `$` anchor: this heredoc line carries a trailing pipe (`| sed ...`), unlike
+# the ones in lib/doctor. Anchoring silently extracted nothing.
+awk '/<< .PYEOF./{n++; if (n==1) {grab=1; next}} grab && /^PYEOF$/{exit} grab' \
+  "$ROOT/lib/sync/frameworks.sh" > "$t23/register.py"
+[ -s "$t23/register.py" ] || fail "[23] could not extract the registration step from lib/sync/frameworks.sh"
+
+cat > "$t23/codex/config.toml" <<'TOML'
+[mcp_servers.serena]
+command = "/home/byun/.local/bin/uvx"
+args = ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server"]
+
+[mcp_servers.serena.env]
+PATH = "/opt/bin"
+TOML
+cat > "$t23/gemini/config/mcp_config.json" <<'JSON'
+{
+  "mcpServers": {
+    "serena": {"command": "uvx", "args": ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server"]},
+    "someone-elses": {"command": "their-server", "args": ["--keep-me"]}
+  }
+}
+JSON
+
+python3 "$t23/register.py" "$t23/codex" "$t23/gemini" >/dev/null 2>&1 \
+  || fail "[23] the registration step failed on the fixture"
+
+got="$(python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))["mcpServers"]
+print(json.dumps(d["serena"], sort_keys=True))
+' "$t23/gemini/config/mcp_config.json")"
+[ "$got" = '{"args": ["start-mcp-server"], "command": "serena"}' ] \
+  || fail "[23] agy config still names the wrong build: $got"
+
+# Someone else's entry is not ours to rewrite — only the names we manage are.
+got="$(python3 -c '
+import json, sys
+print(json.dumps(json.load(open(sys.argv[1]))["mcpServers"].get("someone-elses"), sort_keys=True))
+' "$t23/gemini/config/mcp_config.json")"
+[ "$got" = '{"args": ["--keep-me"], "command": "their-server"}' ] \
+  || fail "[23] a third-party entry was rewritten: $got"
+
+# Codex is the same defect in TOML form: the section existed, so it was left.
+grep -q 'command = "serena"' "$t23/codex/config.toml" \
+  || fail "[23] codex config.toml still points at uvx/git HEAD"
+grep -q 'git+' "$t23/codex/config.toml" \
+  && fail "[23] codex config.toml still carries a git+ argument"
+
+# Idempotent, and it says which of the two happened. This step collected its
+# changes into a list it never printed, so a repoint left no trace in sync output.
+out="$(python3 "$t23/register.py" "$t23/codex" "$t23/gemini" 2>&1)"
+printf '%s\n' "$out" | grep -q 'Antigravity: managed MCP entries already canonical' \
+  || fail "[23] a second run did not report the config as already canonical: $out"
+
 echo "smoke-refactor OK"
