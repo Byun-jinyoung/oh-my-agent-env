@@ -833,4 +833,53 @@ PY
 )"
 [ "$got" = "unread" ] || fail "[20] a config the parser cannot read was reported as having no servers"
 
+echo "[21] doctor says WHY an MCP server is missing, and only when it can tell"
+# `[MISS] serena` on its own points at the wrong repair — the entry was present
+# and named correctly, it just pointed at a program that could not start. The
+# reason logic shipped without a test, so nothing held it to the distinction it
+# exists to make: a command that cannot resolve is diagnosable from the registry
+# alone, while an http server being down is an auth or network answer doctor
+# must not guess at.
+t21="$TMP/mcp-reason"; mkdir -p "$t21/bin"
+printf '#!/bin/sh\n' > "$t21/bin/found-mcp"; chmod +x "$t21/bin/found-mcp"
+printf '#!/bin/sh\n' > "$t21/bin/abs-mcp";   chmod +x "$t21/bin/abs-mcp"
+printf 'not executable\n' > "$t21/bin/no-exec-mcp"
+
+# Extract the reason logic from the doctor source rather than restating it, so a
+# change there is a change here.
+awk '/<< .PYEOF.$/{n++; if (n==1) {grab=1; next}} grab && /^PYEOF$/{exit} grab' \
+  "$ROOT/lib/doctor/claude.sh" > "$t21/reason.py"
+[ -s "$t21/reason.py" ] || fail "[21] could not extract the reason logic from lib/doctor/claude.sh"
+
+cat > "$t21/registry.json" <<JSON
+{
+  "mcpServers": {
+    "bare-missing":   {"command": "definitely-not-installed-xyz"},
+    "baked-missing":  {"command": "definitely-not-installed-xyz", "env": {"PATH": "$t21/bin"}},
+    "baked-found":    {"command": "found-mcp", "env": {"PATH": "$t21/bin"}},
+    "abs-missing":    {"command": "$t21/bin/does-not-exist"},
+    "abs-found":      {"command": "$t21/bin/abs-mcp"},
+    "abs-not-exec":   {"command": "$t21/bin/no-exec-mcp"},
+    "remote-http":    {"type": "http", "url": "https://example.invalid/mcp"},
+    "remote-sse":     {"type": "sse", "command": "irrelevant", "url": "https://example.invalid/sse"}
+  }
+}
+JSON
+
+# Absolute interpreter, emptied PATH: the point is what the CHECKED entries can
+# resolve, and leaving the test runner's PATH in place would let `bare-missing`
+# accidentally find something.
+py3="$(command -v python3)"
+out="$(PATH="/nonexistent" "$py3" "$t21/reason.py" "$t21/registry.json" 2>&1)"
+named="$(printf '%s\n' "$out" | cut -f1 | sort | tr '\n' ' ')"
+[ "$named" = "abs-missing abs-not-exec baked-missing bare-missing " ] \
+  || fail "[21] reasons were reported for: $named"
+
+# The two PATH kinds must not be described interchangeably — they point at
+# different repairs (install it, vs. re-run sync so the entry bakes a PATH).
+printf '%s\n' "$out" | grep -q '^bare-missing	.*inherited PATH' \
+  || fail "[21] a command with no baked PATH was not blamed on the inherited PATH"
+printf '%s\n' "$out" | grep -q '^baked-missing	.*baked PATH' \
+  || fail "[21] a command with a baked PATH was not blamed on that PATH"
+
 echo "smoke-refactor OK"
