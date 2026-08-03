@@ -417,5 +417,29 @@ Six were left alone, with the reason recorded so the decision can be revisited:
   a genuine gap, but as shipped it is a CLI the model must volunteer, and the
   measured rate for that is ~2 self-directed loads in 179 sessions.
 - **`install-hooks.sh`** — a `pre-push` hook running `check.sh`. Verified absent
-  (`core.hooksPath` unset, `.git/hooks` is 12 `.sample` files). Not installed
-  because writing into `.git/hooks` is the user's call, not mine.
+  (`core.hooksPath` unset, `.git/hooks` is 12 `.sample` files). Writing into
+  `.git/hooks` is the user's call, not mine — so this became a command instead
+  of a sync step. See below.
+
+## Adopted as a command, not a sync step: the pre-push gate
+
+`scripts/install-hooks.sh` installs a `pre-push` hook that runs `scripts/check.sh`
+before anything leaves the machine. `setup.sh sync` does not call it and must not:
+sync runs unattended and across machines, and installing something that can block
+a push is a decision, not a convergence step.
+
+The cost was measured before deciding what the hook should run: `check.sh` takes
+22s across its 8 stages, 11s with `--lint-only`. A push is infrequent enough to
+pay 22s for exactly the gate CI runs, so the hook runs the full thing rather than
+a cheaper subset that would disagree with CI.
+
+Three properties make it either useless or destructive, so [22] holds all three:
+it fails the push when the gate fails; it fails **closed** when `scripts/check.sh`
+is missing, because a gate that waves a push through on its own disappearance
+reports the same success as a clean run; and it refuses to replace or delete a
+`pre-push` hook it did not write (`--force` moves the original aside, never
+overwrites a previous backup). A repo with `core.hooksPath` set is refused
+outright — writing to `.git/hooks` there installs a hook that never runs.
+
+Escape hatches: `git push --no-verify` once, `OMA_SKIP_PREPUSH=1` always,
+`scripts/install-hooks.sh --uninstall` permanently.

@@ -882,4 +882,49 @@ printf '%s\n' "$out" | grep -q '^bare-missing	.*inherited PATH' \
 printf '%s\n' "$out" | grep -q '^baked-missing	.*baked PATH' \
   || fail "[21] a command with a baked PATH was not blamed on that PATH"
 
+echo "[22] the pre-push gate blocks a bad push and never eats someone else's hook"
+# Opt-in by design, so sync does not install it — which means nothing else would
+# notice if it stopped working. The properties worth holding are the ones that
+# make it either useless or destructive: it must actually fail the push, it must
+# fail rather than wave the push through when its own gate script is gone, and it
+# must not silently replace a pre-push hook someone else wrote.
+ih="$ROOT/scripts/install-hooks.sh"
+t22="$TMP/hookrepo"; mkdir -p "$t22/scripts"
+git -C "$t22" init -q .
+git -C "$t22" config user.email t@t; git -C "$t22" config user.name t
+gate="$t22/scripts/check.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$gate"; chmod +x "$gate"
+hook="$t22/.git/hooks/pre-push"
+
+( cd "$t22" && bash "$ih" >/dev/null ) || fail "[22] install failed"
+[ -x "$hook" ] || fail "[22] no executable pre-push hook was installed"
+
+# Idempotent: running it twice must not stack or duplicate anything.
+before="$(md5sum < "$hook")"
+( cd "$t22" && bash "$ih" >/dev/null ) || fail "[22] reinstall failed"
+[ "$before" = "$(md5sum < "$hook")" ] || fail "[22] reinstalling rewrote the hook differently"
+
+# The whole point: a failing gate stops the push.
+printf '#!/usr/bin/env bash\nexit 3\n' > "$gate"
+( cd "$t22" && bash "$hook" </dev/null >/dev/null 2>&1 ) && fail "[22] the hook passed while check.sh failed"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$gate"
+( cd "$t22" && bash "$hook" </dev/null >/dev/null 2>&1 ) || fail "[22] the hook failed on a clean gate"
+
+# Fail closed. A gate whose script vanished must not report the same success a
+# clean run reports — that is the shape of every false-green in this repo.
+mv "$gate" "$gate.away"
+( cd "$t22" && bash "$hook" </dev/null >/dev/null 2>&1 ) && fail "[22] a missing check.sh let the push through"
+mv "$gate.away" "$gate"
+
+# Someone else's hook is not ours to delete.
+( cd "$t22" && bash "$ih" --uninstall >/dev/null ) || fail "[22] uninstall failed"
+[ -e "$hook" ] && fail "[22] uninstall left our hook in place"
+printf '#!/bin/sh\necho theirs\n' > "$hook"; chmod +x "$hook"
+( cd "$t22" && bash "$ih" >/dev/null 2>&1 ) && fail "[22] a foreign pre-push hook was replaced without --force"
+grep -q theirs "$hook" || fail "[22] a foreign hook was modified by a refused install"
+( cd "$t22" && bash "$ih" --uninstall >/dev/null 2>&1 ) && fail "[22] uninstall removed a hook it did not write"
+grep -q theirs "$hook" || fail "[22] uninstall damaged a foreign hook"
+( cd "$t22" && bash "$ih" --force >/dev/null ) || fail "[22] --force install failed"
+grep -q theirs "$hook.pre-oma" || fail "[22] --force did not preserve the foreign hook"
+
 echo "smoke-refactor OK"
