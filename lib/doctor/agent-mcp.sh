@@ -188,5 +188,66 @@ PYEOF
   fi
 
   echo ""
+  echo "[ Serena project config ]"
+  # Registered is not the same as able to start, and that gap is exactly how
+  # serena failed here: the entry resolved, the binary existed, and the server
+  # still died before the handshake because .serena/project.yml had been written
+  # by a DIFFERENT serena. sync used to register upstream HEAD in three separate
+  # places — Claude's registry, ~/.codex/config.toml, and agy's shared
+  # config/mcp_config.json — and HEAD writes `language_servers:` where the pinned
+  # release requires `languages:`, with no migration between the two spellings.
+  # Proven by control: with the file at `languages:`, running the release left it
+  # alone and running the HEAD build flipped it.
+  #
+  # The symptom carried no diagnosis. `[MISS] serena` arrived with no reason
+  # attached, because the reason logic asks whether the COMMAND resolves and the
+  # command resolved fine. Fixing the three registrations removed the cause, but
+  # missing one of them is silent again until someone restarts — which is what
+  # happened. This is the check that speaks up instead.
+  #
+  # Required keys are read out of the INSTALLED build, not hardcoded, so this
+  # asks what this machine's serena demands rather than what it demanded the day
+  # this was written.
+  _sr_bin="$(command -v serena 2>/dev/null || true)"
+  _sr_cfg="$SCRIPT_DIR/.serena/project.yml"
+  if [ -z "$_sr_bin" ]; then
+    echo "  [SKIP] serena not installed"
+  elif [ ! -f "$_sr_cfg" ]; then
+    echo "  [SKIP] .serena/project.yml absent — this checkout is not serena-activated"
+  else
+    _sr_py="$(sed -n '1s/^#!//p' "$_sr_bin" 2>/dev/null)"
+    _sr_req=""
+    if [ -n "$_sr_py" ] && [ -x "$_sr_py" ]; then
+      _sr_req="$(maybe_timeout 30 "$_sr_py" -c 'from serena.config.serena_config import ProjectConfig; print(" ".join(sorted(ProjectConfig.FIELDS_WITHOUT_DEFAULTS)))' 2>/dev/null || true)"
+    fi
+    if [ -z "$_sr_req" ]; then
+      # Not "fine" — we could not ask. Staying quiet here is the same shape as
+      # the codex runtime dep check, which sat unrun for a whole python version
+      # while reporting the zero warnings a clean pass reports.
+      echo "  [WARN] could not read the required keys from the installed serena — schema unverified"
+      WARNINGS=$((WARNINGS+1))
+    else
+      # Top-level keys only: the loader reads the document root, so a `languages:`
+      # nested under some other table would not satisfy it either.
+      _sr_present="$(grep -oE '^[A-Za-z_][A-Za-z0-9_]*:' "$_sr_cfg" | tr -d ':' | sort -u)"
+      _sr_missing=""
+      for _sr_k in $_sr_req; do
+        printf '%s\n' "$_sr_present" | grep -qx "$_sr_k" \
+          || _sr_missing="${_sr_missing:+$_sr_missing }$_sr_k"
+      done
+      if [ -n "$_sr_missing" ]; then
+        echo "  [MISS] .serena/project.yml lacks required key(s): $_sr_missing"
+        echo "         serena raises KeyError before the MCP handshake, so it reports as"
+        echo "         a connection failure with no reason. Another build wrote this file:"
+        echo "         run 'setup.sh sync' to repoint every registration at the installed"
+        echo "         release, then restore the key."
+        WARNINGS=$((WARNINGS+1))
+      else
+        echo "  [OK] .serena/project.yml carries every key this serena requires ($_sr_req)"
+      fi
+    fi
+  fi
+
+  echo ""
 
 }

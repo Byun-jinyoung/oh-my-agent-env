@@ -991,4 +991,97 @@ out="$(python3 "$t23/register.py" "$t23/codex" "$t23/gemini" 2>&1)"
 printf '%s\n' "$out" | grep -q 'Antigravity: managed MCP entries already canonical' \
   || fail "[23] a second run did not report the config as already canonical: $out"
 
+echo "[24] a project config written by a different serena is named, not left to the next restart"
+# serena resolved, the binary existed, and the server still died before the
+# handshake: .serena/project.yml had been written by upstream HEAD, which spells
+# the field `language_servers:` where the pinned release requires `languages:`.
+# doctor printed `[MISS] serena` with no reason attached, because the reason
+# logic asks whether the COMMAND resolves — and it did. Repointing the three
+# registrations removed the cause; missing one of them again is silent until
+# someone restarts, which is how this was found the first time.
+t24="$TMP/serena-schema"; mkdir -p "$t24/bin" "$t24/dead" "$t24/other"
+# Extracted, not restated: a copy of the logic keeps passing after the original
+# changes. The block is self-contained between its first assignment and the `fi`
+# that closes it — the nested ones are indented deeper.
+awk '/^  _sr_bin="/{grab=1} grab; grab && /^  fi$/{exit}' \
+  "$ROOT/lib/doctor/agent-mcp.sh" > "$t24/check.sh"
+grep -q 'FIELDS_WITHOUT_DEFAULTS' "$t24/check.sh" \
+  || fail "[24] could not extract the serena schema check from lib/doctor/agent-mcp.sh"
+
+# A stand-in serena whose shebang names a stand-in interpreter: the check reads
+# the interpreter out of the binary, then asks it which fields are mandatory.
+mk_serena() { # mk_serena <dir> <fields...>
+  local d="$1"; shift
+  printf '#!/bin/sh\necho "%s"\n' "$*" > "$d/py"
+  printf '#!%s/py\n' "$d" > "$d/serena"
+  chmod +x "$d/py" "$d/serena"
+}
+mk_serena "$t24/bin" languages project_name
+mk_serena "$t24/other" some_other_field       # a build that wants something else
+printf '#!%s/absent\n' "$t24" > "$t24/dead/serena"; chmod +x "$t24/dead/serena"
+
+# PATH is set explicitly rather than prefixed: the real serena lives in
+# ~/.local/bin, so an inherited PATH would let the genuine build answer for the
+# fixture. Absolute bash for the same reason a bare `python3` once exited 127.
+BASH24="$(command -v bash)"
+P_OK="$t24/bin:/usr/bin:/bin"; P_DEAD="$t24/dead:/usr/bin:/bin"
+P_OTHER="$t24/other:/usr/bin:/bin"; P_NONE="/usr/bin:/bin"
+PATH="$P_NONE" command -v serena >/dev/null 2>&1 \
+  && fail "[24] serena is on the stripped PATH — the not-installed case cannot be tested here"
+
+run24() { # run24 <project-dir> <path>
+  SCRIPT_DIR="$1" PATH="$2" "$BASH24" -c '
+    WARNINGS=0
+    maybe_timeout() { shift; "$@"; }
+    . "$1"
+    echo "WARNINGS=$WARNINGS"
+  ' _ "$t24/check.sh" 2>&1
+}
+
+ok24="$t24/ok"; mkdir -p "$ok24/.serena"
+printf 'project_name: x\nlanguages:\n  - python\n' > "$ok24/.serena/project.yml"
+out="$(run24 "$ok24" "$P_OK")"
+printf '%s\n' "$out" | grep -q '\[OK\]' || fail "[24] a loadable config was not accepted: $out"
+printf '%s\n' "$out" | grep -qx 'WARNINGS=0' || fail "[24] a loadable config raised a warning: $out"
+
+# The regression itself, in the spelling HEAD actually writes.
+bad24="$t24/head"; mkdir -p "$bad24/.serena"
+printf 'project_name: x\nlanguage_servers:\n  - python\n' > "$bad24/.serena/project.yml"
+out="$(run24 "$bad24" "$P_OK")"
+printf '%s\n' "$out" | grep -q '\[MISS\].*languages' \
+  || fail "[24] a config written by the wrong build passed: $out"
+printf '%s\n' "$out" | grep -qx 'WARNINGS=1' \
+  || fail "[24] the wrong build's config did not count as a warning: $out"
+
+# The loader reads the document root, so a key nested under another table does
+# not satisfy it — and must not satisfy this check either.
+nest24="$t24/nested"; mkdir -p "$nest24/.serena"
+printf 'project_name: x\nls_specific_settings:\n  languages:\n    - python\n' > "$nest24/.serena/project.yml"
+printf '%s\n' "$(run24 "$nest24" "$P_OK")" | grep -q '\[MISS\].*languages' \
+  || fail "[24] a nested key was accepted in place of the top-level one"
+
+# The required list belongs to the installed build, not to this repo: a serena
+# that demands a different field has to change the verdict on the same file.
+printf '%s\n' "$(run24 "$ok24" "$P_OTHER")" | grep -q '\[MISS\].*some_other_field' \
+  || fail "[24] the required keys are hardcoded — a different build got the same answer"
+
+# Absent config and absent serena are both "nothing to check", and neither is a
+# problem worth a warning.
+bare24="$t24/bare"; mkdir -p "$bare24"
+out="$(run24 "$bare24" "$P_OK")"
+printf '%s\n' "$out" | grep -q '\[SKIP\]' || fail "[24] a non-activated checkout was not skipped: $out"
+printf '%s\n' "$out" | grep -qx 'WARNINGS=0' || fail "[24] a non-activated checkout warned: $out"
+out="$(run24 "$ok24" "$P_NONE")"
+printf '%s\n' "$out" | grep -q '\[SKIP\]' || fail "[24] an uninstalled serena was not skipped: $out"
+printf '%s\n' "$out" | grep -qx 'WARNINGS=0' || fail "[24] an uninstalled serena warned: $out"
+
+# But an interpreter that cannot answer is NOT a pass. This is the shape the
+# codex runtime dep check had while it sat unrun for a whole python version:
+# unable to check, reporting the zero warnings a clean run reports.
+out="$(run24 "$ok24" "$P_DEAD")"
+printf '%s\n' "$out" | grep -q '\[WARN\].*unverified' \
+  || fail "[24] an unaskable serena reported like a clean pass: $out"
+printf '%s\n' "$out" | grep -qx 'WARNINGS=1' \
+  || fail "[24] an unverified schema did not count as a warning: $out"
+
 echo "smoke-refactor OK"
