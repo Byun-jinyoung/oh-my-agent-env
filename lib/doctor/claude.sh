@@ -142,5 +142,109 @@ PYEOF
   fi
 
   echo ""
+  echo "[ Rule mirror (SSOT vs the tree the runtime actually reads) ]"
+  # An oma-managed project carries the same rules twice, and only one copy
+  # reaches the model. `.claude/rules/*.md` is loaded by the runtime — observed:
+  # their bodies arrive in context while nothing in this repo injects them, no
+  # @import in CLAUDE.md and no hook. `.agents/rules/*.md` is the SSOT this
+  # project is forbidden to edit, and it is what CLAUDE.md's rules table tells
+  # the model to go read. Both trees are written by the oma package, neither by
+  # sync, and until now nothing compared them: they agree today by luck.
+  #
+  # Frontmatter is a deliberate schema translation, not drift — the SSOT carries
+  # `globs`/`alwaysApply`, the mirror carries `paths`. Comparing bytes would fail
+  # on every file on day one. What has to agree is the rule body and the scope
+  # those two keys express, so that is what this compares.
+  if ! command -v python3 &>/dev/null; then
+    echo "  [SKIP] python3 missing"
+  elif ! python3 - "$SCRIPT_DIR" <<'PYEOF'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+ssot, mirror = root / ".agents" / "rules", root / ".claude" / "rules"
+warn = 0
+
+if not ssot.is_dir():
+    print("  [SKIP] no .agents/rules (not an oma-managed project)")
+    sys.exit(0)
+if not mirror.is_dir():
+    print("  [MISS] .agents/rules exists but .claude/rules does not —")
+    print("         the runtime loads no project rules at all. Re-run the oma sync.")
+    sys.exit(1)
+
+
+def split(path):
+    """Frontmatter dict and body. Hand-rolled on purpose: PyYAML is not a
+    dependency here, and the schema in play is one flat key: value per line."""
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        return None, None, str(exc)
+    lines = text.splitlines()
+    fm, start = {}, 0
+    if lines and lines[0].strip() == "---":
+        for i, line in enumerate(lines[1:], 1):
+            if line.strip() == "---":
+                start = i + 1
+                break
+            key, sep, val = line.partition(":")
+            if sep and not key.startswith((" ", "\t")):
+                fm[key.strip()] = val.strip().strip("\"'")
+    # Blank runs and trailing spaces are reflow, not meaning. Dropping them
+    # cannot hide a changed rule — only a rewrapped one.
+    body = [ln.rstrip() for ln in lines[start:] if ln.strip()]
+    return fm, body, None
+
+
+names = sorted(p.name for p in ssot.glob("*.md"))
+if not names:
+    print("  [WARN] .agents/rules holds no .md files — nothing to compare")
+    sys.exit(1)
+
+for name in names:
+    a_fm, a_body, err = split(ssot / name)
+    if err:
+        print(f"  [WARN] {name}: SSOT unreadable ({err}) — comparison not run")
+        warn += 1
+        continue
+    target = mirror / name
+    if not target.is_file():
+        print(f"  [MISS] {name}: in .agents/rules with no mirror —")
+        print("         the runtime never sees this rule. Re-run the oma sync.")
+        warn += 1
+        continue
+    b_fm, b_body, err = split(target)
+    if err:
+        print(f"  [WARN] {name}: mirror unreadable ({err}) — comparison not run")
+        warn += 1
+        continue
+    if a_body != b_body:
+        print(f"  [MISS] {name}: rule body differs between the SSOT and the tree")
+        print("         the runtime reads. The model is following the mirror.")
+        warn += 1
+        continue
+    # `globs` is the SSOT's scope key, `paths` the mirror's. Absent on both
+    # sides means "on request", which is agreement, not a gap.
+    if a_fm.get("globs", "") != b_fm.get("paths", ""):
+        print(f"  [MISS] {name}: scope differs — SSOT globs={a_fm.get('globs', '') or '<none>'!r}"
+              f" vs mirror paths={b_fm.get('paths', '') or '<none>'!r}")
+        warn += 1
+
+orphans = sorted(p.name for p in mirror.glob("*.md") if p.name not in names)
+for name in orphans:
+    print(f"  [WARN] {name}: in .claude/rules with no SSOT behind it —")
+    print("         the model is being given a rule this project does not own.")
+    warn += 1
+
+if not warn:
+    print(f"  [OK]   {len(names)} rules mirrored with matching bodies and scopes")
+sys.exit(1 if warn else 0)
+PYEOF
+  then
+    WARNINGS=$((WARNINGS+1))
+  fi
+
+  echo ""
 
 }

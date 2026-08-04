@@ -1084,4 +1084,96 @@ printf '%s\n' "$out" | grep -q '\[WARN\].*unverified' \
 printf '%s\n' "$out" | grep -qx 'WARNINGS=1' \
   || fail "[24] an unverified schema did not count as a warning: $out"
 
+echo "[25] the rules the runtime reads are held to the SSOT they came from"
+# A project carries its rules twice: .agents/rules is the SSOT and the path
+# CLAUDE.md tells the model to read, .claude/rules is what the runtime actually
+# loads into context. Both are written by the oma package, neither by sync, and
+# nothing compared them — they agreed by luck. The bodies could drift and the
+# model would follow the copy the documentation does not name.
+t25="$TMP/rule-mirror"; mkdir -p "$t25"
+awk '/python3 - "\$SCRIPT_DIR" <</{grab=1; next} grab && /^PYEOF$/{exit} grab' \
+  "$ROOT/lib/doctor/claude.sh" > "$t25/check.py"
+grep -q 'paths' "$t25/check.py" \
+  || fail "[25] could not extract the rule-mirror check from lib/doctor/claude.sh"
+py25="$(command -v python3)"   # absolute: a bare python3 once exited 127 here
+
+mk25() { # mk25 <root> <tree> <name> <scope-key> <scope-value> <body-line>
+  mkdir -p "$1/$2"
+  {
+    printf -- '---\ndescription: x\n'
+    [ -n "$5" ] && printf '%s: "%s"\n' "$4" "$5"
+    printf -- '---\n\n%s\n' "$6"
+  } > "$1/$2/$3"
+}
+# `out=$(cmd)` is a plain assignment, so errexit is NOT exempt there: the first
+# fixture that legitimately exits 1 would kill the run with no failure printed.
+run25() { out25="$("$py25" "$t25/check.py" "$1" 2>&1)" && rc25=0 || rc25=$?; }
+
+# Day-one guard: the frontmatter schema differs on purpose (SSOT `globs`,
+# mirror `paths`). A byte comparison would fail on every file, so a check that
+# flags this pair is checking the wrong thing.
+ok25="$t25/ok"
+mk25 "$ok25" .agents/rules a.md globs '**/*.sql' '- rule one'
+mk25 "$ok25" .claude/rules a.md paths '**/*.sql' '- rule one'
+run25 "$ok25"
+[ "$rc25" -eq 0 ] || fail "[25] a correctly mirrored pair was reported as drift: $out25"
+printf '%s\n' "$out25" | grep -q '\[OK\]' || fail "[25] no OK line for a clean mirror: $out25"
+
+# Reflow is not drift either: blank runs and trailing spaces carry no rule.
+rf25="$t25/reflow"
+mk25 "$rf25" .agents/rules a.md globs '**/*.sql' '- rule one'
+mkdir -p "$rf25/.claude/rules"
+printf -- '---\ndescription: x\npaths: "**/*.sql"\n---\n\n\n- rule one   \n\n' > "$rf25/.claude/rules/a.md"
+run25 "$rf25"
+[ "$rc25" -eq 0 ] || fail "[25] whitespace reflow was reported as drift: $out25"
+
+# The defect this exists for: same name, different rule.
+bd25="$t25/body"
+mk25 "$bd25" .agents/rules a.md globs '**/*.sql' '- rule one'
+mk25 "$bd25" .claude/rules a.md paths '**/*.sql' '- rule TWO'
+run25 "$bd25"
+[ "$rc25" -ne 0 ] || fail "[25] a differing rule body passed"
+printf '%s\n' "$out25" | grep -q '\[MISS\].*body differs' \
+  || fail "[25] a differing body was not named as such: $out25"
+
+# Same rule, different scope: it fires on files it was never meant to.
+sc25="$t25/scope"
+mk25 "$sc25" .agents/rules a.md globs '**/*.sql' '- rule one'
+mk25 "$sc25" .claude/rules a.md paths '**/*.py' '- rule one'
+run25 "$sc25"
+[ "$rc25" -ne 0 ] || fail "[25] a differing scope passed"
+printf '%s\n' "$out25" | grep -q '\[MISS\].*scope differs' \
+  || fail "[25] a differing scope was not named as such: $out25"
+
+# A rule the SSOT owns that the runtime never sees.
+ms25="$t25/missing"
+mk25 "$ms25" .agents/rules a.md globs '' '- rule one'
+mkdir -p "$ms25/.claude/rules"
+run25 "$ms25"
+[ "$rc25" -ne 0 ] || fail "[25] a rule with no mirror passed"
+printf '%s\n' "$out25" | grep -q '\[MISS\].*no mirror' || fail "[25] missing mirror not named: $out25"
+
+# And the reverse: a rule in the model's context that nothing here owns.
+or25="$t25/orphan"
+mk25 "$or25" .agents/rules a.md globs '' '- rule one'
+mk25 "$or25" .claude/rules a.md paths '' '- rule one'
+mk25 "$or25" .claude/rules z.md paths '' '- someone elses rule'
+run25 "$or25"
+[ "$rc25" -ne 0 ] || fail "[25] an orphan mirror rule passed"
+printf '%s\n' "$out25" | grep -q '\[WARN\].*no SSOT behind it' || fail "[25] orphan not named: $out25"
+
+# Not every project is oma-managed, and that is not a fault.
+sk25="$t25/skip"; mkdir -p "$sk25"
+run25 "$sk25"
+[ "$rc25" -eq 0 ] || fail "[25] a non-oma project was treated as a fault: $out25"
+printf '%s\n' "$out25" | grep -q '\[SKIP\]' || fail "[25] no SKIP for a non-oma project: $out25"
+
+# But an SSOT with no mirror at all means the runtime loads nothing — the
+# quietest possible version of this, and not the same as "nothing to check".
+nm25="$t25/nomirror"
+mk25 "$nm25" .agents/rules a.md globs '' '- rule one'
+run25 "$nm25"
+[ "$rc25" -ne 0 ] || fail "[25] an absent mirror tree was reported like a clean project: $out25"
+printf '%s\n' "$out25" | grep -q '\[SKIP\]' && fail "[25] an absent mirror tree was skipped instead of reported"
+
 echo "smoke-refactor OK"
