@@ -684,6 +684,40 @@ print(json.dumps({"session_id": "e2e", "transcript_path": "/dev/null", "cwd": sy
   hookrun "$unadopted" 'make test' 'exit 2' false Bash >/dev/null 2>&1
   check "a failure in an unadopted repo creates no state there" \
         '[ ! -e "'"$unadopted"'/.oma-lab" ]'
+
+  # --- --selftest: the hook answers "would you fire here?" --------------------
+  # doctor printed [OK] for this hook while it was inert for all 365 Bash
+  # failures on this machine, because registration was checked and firing was
+  # inferred. doctor now asks; these assert the answer is worth asking for.
+  # check() evals in this shell, so an assertion must never say `exit` — it
+  # would end the run silently and every later check would simply not happen.
+  # (It did: 97 assertions became 90 with a green exit code.) Status only.
+  ST_LIVE="$(node "$HOOK" --selftest "$WORK" 2>&1)"; ST_LIVE_RC=$?
+  ST_DEAD="$(node "$HOOK" --selftest "$unadopted" 2>&1)"; ST_DEAD_RC=$?
+  ST_OFF="$(OMA_FAIL_LEDGER_HOOK=0 node "$HOOK" --selftest "$WORK" 2>&1)"
+
+  check "selftest says LIVE in a repo that keeps lab state" '[ "'"$ST_LIVE"'" = LIVE ]'
+  check "and exits 0, so a checker can read the verdict" '[ "'"$ST_LIVE_RC"'" = 0 ]'
+  check "selftest says INERT where the hook cannot act" \
+        'case "'"$ST_DEAD"'" in "INERT "*) true;; *) false;; esac'
+  # A verdict of "INERT" with no reason sends the reader back to reading source.
+  check "and names the precondition that is missing" \
+        'case "'"$ST_DEAD"'" in *.oma-lab*) true;; *) false;; esac'
+  check "an inert verdict still exits 0 — it is a fact, not an error" '[ "'"$ST_DEAD_RC"'" = 0 ]'
+  check "the kill switch is reported as a reason too" \
+        '[ "'"$ST_OFF"'" = "INERT OMA_FAIL_LEDGER_HOOK is off" ]'
+
+  # THE assertion the design rests on. Everything above only proves --selftest
+  # prints something; this proves it prints the truth. If the self-test path and
+  # the runtime path ever stop sharing a gate, doctor goes back to lying and no
+  # other check here would notice.
+  rm -f "$WORK/.oma-lab/failures.jsonl"
+  hookrun "$WORK" 'selftest-agreement-live' 'boom' false Bash >/dev/null 2>&1
+  check "LIVE means a failure really is recorded" \
+        '[ -s "'"$WORK"'/.oma-lab/failures.jsonl" ]'
+  hookrun "$unadopted" 'selftest-agreement-inert' 'boom' false Bash >/dev/null 2>&1
+  check "INERT means nothing is written, as the verdict promised" \
+        '[ ! -e "'"$unadopted"'/.oma-lab" ]'
 fi
 
 # --- CURRENT is a join key, so it has to resolve ------------------------------

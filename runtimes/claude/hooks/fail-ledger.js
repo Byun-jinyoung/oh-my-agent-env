@@ -49,6 +49,10 @@ function done(context) {
   process.exit(0);
 }
 
+function hookDisabled() {
+  return OFF.has(String(process.env.OMA_FAIL_LEDGER_HOOK || '1').toLowerCase());
+}
+
 function run(file, args, opts) {
   // Returns {status, stdout, stderr} and never throws: a nonzero exit is the
   // signal here (check exits 3 on a known failure), not an error.
@@ -66,6 +70,63 @@ function run(file, args, opts) {
   }
 }
 
+// The preconditions that decide whether this hook can EVER do anything in a
+// given directory, as opposed to the per-call filters (tool_name, is_interrupt,
+// the command text) which only decide about one failure.
+//
+// It is a function, and --selftest calls this exact function, because the
+// alternative — teaching doctor what the gate is — restates the gate in a
+// second place. That is how doctor came to print `[OK] fail-ledger.js` for a
+// hook that could not fire for a single one of the 365 Bash failures on this
+// machine: it checked registration, which was true, and inferred firing, which
+// was not. A restated gate drifts; an executed one cannot.
+//
+// Returns {reason} when inert, or {omaLab, root} when live.
+function configGate(cwd) {
+  if (hookDisabled()) return { reason: 'OMA_FAIL_LEDGER_HOOK is off' };
+
+  // Resolve the harness through this file's real path, not $PATH: the hook
+  // runs as a symlink in ~/.claude/hooks and must find the checkout it was
+  // installed from, even in a shell whose PATH lacks ~/.local/bin.
+  const repoRoot = path.resolve(fs.realpathSync(__filename), '../../../..');
+  const omaLab = path.join(repoRoot, 'scripts', 'oma-lab');
+  if (!fs.existsSync(omaLab)) return { reason: 'no oma-lab at ' + omaLab };
+
+  const top = run('git', ['-C', cwd, 'rev-parse', '--show-toplevel']);
+  const root = top.status === 0 ? top.stdout.trim() : cwd;
+  // Only repos that already keep lab state get rows. A failed command in an
+  // unrelated repo must not create .oma-lab/ as a hook side effect — the
+  // user never asked that repo to be tracked.
+  if (!root || !fs.existsSync(path.join(root, '.oma-lab'))) {
+    // The resolved paths ride along with the refusal. Returning only a reason
+    // would leave the caller holding undefined, and then dropping the check
+    // would "work" — the ledger call would throw on an undefined argv and get
+    // swallowed, so nothing would be written for the wrong reason. Declining
+    // has to be what stops the write, not a malformed subprocess.
+    return {
+      reason: 'no .oma-lab in ' + (root || cwd) + ' — by design, only repos already keeping lab state are recorded',
+      omaLab: omaLab,
+      root: root,
+    };
+  }
+  return { omaLab: omaLab, root: root };
+}
+
+// Answer "would you do anything here?" without a payload, so doctor can ask
+// instead of assume. Always exits 0 and always prints one line, because a
+// checker that cannot read the answer must say so rather than pass.
+if (process.argv[2] === '--selftest') {
+  let verdict;
+  try {
+    const g = configGate(process.argv[3] || process.cwd());
+    verdict = g.reason ? 'INERT ' + g.reason : 'LIVE';
+  } catch (e) {
+    verdict = 'INERT self-test threw: ' + (e && e.message);
+  }
+  process.stdout.write(verdict + '\n');
+  process.exit(0);
+}
+
 const stdinTimeout = setTimeout(() => process.exit(0), 5000);
 let input = '';
 process.stdin.setEncoding('utf8');
@@ -73,7 +134,7 @@ process.stdin.on('data', (c) => (input += c));
 process.stdin.on('end', () => {
   clearTimeout(stdinTimeout);
   try {
-    if (OFF.has(String(process.env.OMA_FAIL_LEDGER_HOOK || '1').toLowerCase())) return done('');
+    if (hookDisabled()) return done('');
 
     const p = JSON.parse(input || '{}');
     if (p.tool_name !== 'Bash') return done('');
@@ -85,20 +146,13 @@ process.stdin.on('end', () => {
     const cmd = ((p.tool_input || {}).command || '').replace(/\s+/g, ' ').trim().slice(0, 2000);
     if (!cmd || SELF.test(cmd)) return done('');
 
-    // Resolve the harness through this file's real path, not $PATH: the hook
-    // runs as a symlink in ~/.claude/hooks and must find the checkout it was
-    // installed from, even in a shell whose PATH lacks ~/.local/bin.
-    const repoRoot = path.resolve(fs.realpathSync(__filename), '../../../..');
-    const omaLab = path.join(repoRoot, 'scripts', 'oma-lab');
-    if (!fs.existsSync(omaLab)) return done('');
-
     const cwd = typeof p.cwd === 'string' && p.cwd ? p.cwd : process.cwd();
-    const top = run('git', ['-C', cwd, 'rev-parse', '--show-toplevel']);
-    const root = top.status === 0 ? top.stdout.trim() : cwd;
-    // Only repos that already keep lab state get rows. A failed command in an
-    // unrelated repo must not create .oma-lab/ as a hook side effect — the
-    // user never asked that repo to be tracked.
-    if (!root || !fs.existsSync(path.join(root, '.oma-lab'))) return done('');
+    // Same function --selftest reports on, so what doctor prints and what the
+    // hook does can never disagree.
+    const gate = configGate(cwd);
+    if (gate.reason) return done('');
+    const omaLab = gate.omaLab;
+    const root = gate.root;
 
     // Ask before recording, so the answer is about PRIOR failures rather than
     // the one being written now. check exits 3 when this exact command is an

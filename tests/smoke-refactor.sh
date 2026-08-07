@@ -1261,4 +1261,84 @@ run26 "$ng26"
 [ "$rc26" -eq 0 ] || fail "[26] a gate-free hook was reported as a fault: $out26"
 printf '%s\n' "$out26" | grep -q '\[NOTE\].*no file gate' || fail "[26] gate-free hook not counted: $out26"
 
+echo "[27] registered is not firing: doctor asks the hook, and repeats its answer"
+# [26] covers gates written in settings.json, which an external reader can see.
+# This covers the ones written inside the script, which it cannot: fail-ledger.js
+# gates on <git-root>/.oma-lab, and doctor printed [OK] for it while it was inert
+# for all 365 Bash failures recorded on this machine. The fix is to run the
+# hook's own --selftest rather than reimplement its gate here — so what is
+# asserted below is that doctor RELAYS the verdict, including the two ways of
+# not getting one.
+t27="$TMP/selftest"; mkdir -p "$t27"
+awk '/echo "\[ Rules-enforcement hooks/{sec=1} sec && /^import /{grab=1} grab && /^PYEOF$/{exit} grab' \
+  "$ROOT/lib/doctor/claude.sh" > "$t27/check.py"
+grep -q 'def selftest' "$t27/check.py" \
+  || fail "[27] could not extract the rules-enforcement check from lib/doctor/claude.sh"
+py27="$(command -v python3)"
+
+# mk27 <case> <manifest-extra-json> <hook-body>  — builds a config_dir+repo_hooks
+# pair whose only registered hook is a stub we control.
+mk27() {
+  c27="$t27/$1"; rm -rf "$c27"; mkdir -p "$c27/cfg/hooks" "$c27/repo"
+  printf '%s\n' "$3" > "$c27/cfg/hooks/stub.js"
+  "$py27" - "$c27" "$2" <<'PY'
+import json, sys
+base, extra = sys.argv[1], json.loads(sys.argv[2])
+entry = {"event": "PostToolUseFailure", "matcher": "Bash", "script": "stub.js"}
+entry.update(extra)
+json.dump({"retired": [], "hooks": [entry]}, open(base + "/repo/manifest.json", "w"))
+json.dump({"hooks": {"PostToolUseFailure": [{"matcher": "Bash", "hooks": [
+    {"command": 'node "' + base + '/cfg/hooks/stub.js"'}]}]}},
+    open(base + "/cfg/settings.json", "w"))
+PY
+}
+run27() { out27="$("$py27" "$t27/check.py" "$c27/cfg" "$c27/repo" 2>&1)" && rc27=0 || rc27=$?; }
+
+# A live hook reads as OK, and says the verdict was earned rather than assumed.
+mk27 live '{"selftest": true}' 'console.log("LIVE")'
+run27
+[ "$rc27" -eq 0 ] || fail "[27] a LIVE self-test was a fault: $out27"
+printf '%s\n' "$out27" | grep -q '\[OK\].*self-test' || fail "[27] LIVE not relayed: $out27"
+
+# The defect this whole test exists for.
+mk27 inert '{"selftest": true}' 'console.log("INERT no .oma-lab in /nowhere")'
+run27
+printf '%s\n' "$out27" | grep -q '\[INERT\].*no .oma-lab in /nowhere' \
+  || fail "[27] an inert hook still printed like a working one: $out27"
+# Inert is a fact, not a fault. A doctor that exits nonzero on every ordinary
+# run in an unadopted repo is a doctor nobody reads — the failure being fixed.
+[ "$rc27" -eq 0 ] || fail "[27] by-design inertness was escalated to a warning: $out27"
+
+# Two ways to get no answer. Both must read as "not checked", never as passing —
+# the lesson the codex runtime dep check paid for.
+mk27 garbage '{"selftest": true}' 'console.log("dunno")'
+run27
+[ "$rc27" -ne 0 ] || fail "[27] an unreadable verdict passed: $out27"
+printf '%s\n' "$out27" | grep -q '\[WARN\].*unreadable' || fail "[27] unreadable not named: $out27"
+
+mk27 crash '{"selftest": true}' 'process.exit(9)'
+run27
+[ "$rc27" -ne 0 ] || fail "[27] a crashing self-test passed: $out27"
+printf '%s\n' "$out27" | grep -q '\[WARN\].*exited 9' || fail "[27] crash not named: $out27"
+
+# A custom run template means the command is not `node <path>`, so appending
+# --selftest would invoke something else. Refuse rather than guess.
+mk27 runtmpl '{"selftest": true, "run": "bash \"{path}\""}' 'console.log("LIVE")'
+run27
+[ "$rc27" -ne 0 ] || fail "[27] selftest+run was silently ignored: $out27"
+
+# Undeclared stays undeclared: registration is all that was verified, and the
+# count says how much of the manifest that covers.
+mk27 undeclared '{}' 'console.log("LIVE")'
+run27
+[ "$rc27" -eq 0 ] || fail "[27] a hook without selftest was a fault: $out27"
+printf '%s\n' "$out27" | grep -q 'firing not checked' || fail "[27] unchecked hook not labelled: $out27"
+printf '%s\n' "$out27" | grep -q '\[NOTE\] 1 hook(s) declare no self-test' \
+  || fail "[27] unchecked hooks not counted: $out27"
+
+# And the real manifest actually exercises the LIVE/INERT branch — otherwise
+# everything above tests a feature nothing uses.
+grep -q '"selftest"' "$ROOT/runtimes/claude/hooks/manifest.json" \
+  || fail "[27] no shipped hook declares selftest; the branch is dead code"
+
 echo "smoke-refactor OK"

@@ -90,16 +90,42 @@ PYEOF
   # file that exists. sync treats hook wiring as non-fatal, so a failure there
   # is otherwise silent — which is exactly how three hooks once shipped as dead
   # code on every machine that had not been hand-edited.
+  #
+  # Registration is necessary and not sufficient. A hook can be wired correctly
+  # and still be unable to act: fail-ledger.js was printed [OK] here while being
+  # inert for all 365 Bash failures recorded on this machine, because its gate
+  # is inside the script where no external check could see it. Hooks that
+  # declare "selftest" in the manifest are therefore asked (--selftest <cwd>)
+  # rather than assumed, and the ones that do not are labelled unchecked.
   if ! command -v python3 &>/dev/null; then
     echo "  [SKIP] python3 missing"
   elif ! python3 - "$CONFIG_DIR" "$SCRIPT_DIR/runtimes/claude/hooks" <<'PYEOF'
-import json, sys
+import json, os, subprocess, sys
 from pathlib import Path
 
 config_dir, repo_hooks = Path(sys.argv[1]), Path(sys.argv[2])
 manifest = repo_hooks / "manifest.json"
 settings = config_dir / "settings.json"
 warn = 0
+unchecked = 0
+
+
+def selftest(script_path):
+    """Ask the installed hook whether it would fire in this directory.
+
+    The alternative — reimplementing each hook's gate here — puts the gate in
+    two places, and the copy in doctor is the one nobody updates. Running the
+    real script means a gate change shows up in doctor for free, and a hook
+    that stops answering is reported as unreadable rather than as passing.
+    """
+    try:
+        p = subprocess.run(["node", str(script_path), "--selftest", os.getcwd()],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"could not run ({exc})"
+    if p.returncode != 0:
+        return f"exited {p.returncode}"
+    return (p.stdout.strip().splitlines() or [""])[0]
 
 try:
     want = json.loads(manifest.read_text())["hooks"]
@@ -132,8 +158,33 @@ for h in want:
     elif not (config_dir / "hooks" / script).exists():
         print(f"  [DEAD] {event}:{script} registered but {config_dir}/hooks/{script} is missing")
         warn += 1
+    elif not h.get("selftest"):
+        # Registered, present, and nothing here can tell whether it would ever
+        # do anything. Say that rather than print [OK] — this section reported
+        # [OK] for a hook that could not fire for any of the 365 Bash failures
+        # on this machine, because it only ever checked registration.
+        print(f"  [OK]   {event}:{script} (registered; firing not checked)")
+        unchecked += 1
+    elif h.get("run"):
+        print(f"  [WARN] {event}:{script} declares selftest but also a custom 'run' template")
+        warn += 1
     else:
-        print(f"  [OK]   {event}:{script}")
+        verdict = selftest(config_dir / "hooks" / script)
+        if verdict == "LIVE":
+            print(f"  [OK]   {event}:{script} (self-test: would fire here)")
+        elif verdict.startswith("INERT "):
+            # Deliberately NOT a warning. fail-ledger being inert in a repo that
+            # never opted into lab state is the designed behaviour, and a doctor
+            # that exits nonzero on every ordinary run teaches the user to stop
+            # reading it — the failure mode this whole section exists to fix.
+            # The defect was calling it [OK], not the inertness itself.
+            print(f"  [INERT] {event}:{script} — {verdict[6:]}")
+        else:
+            print(f"  [WARN] {event}:{script} self-test unreadable: {verdict}")
+            warn += 1
+
+if unchecked:
+    print(f"  [NOTE] {unchecked} hook(s) declare no self-test — registration is all that was verified")
 
 sys.exit(1 if warn else 0)
 PYEOF
