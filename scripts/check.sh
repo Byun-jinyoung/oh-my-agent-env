@@ -261,6 +261,9 @@ if [ "$TESTS" = 1 ]; then
   if [ -f runtimes/claude/hooks/test-symbol-search-gate.js ]; then
     stage "symbol-search-gate fixtures" node runtimes/claude/hooks/test-symbol-search-gate.js
   fi
+  if [ -f runtimes/claude/hooks/test-uptake-record.js ]; then
+    stage "uptake-record fixtures" node runtimes/claude/hooks/test-uptake-record.js
+  fi
 fi
 
 if [ "$FAILED" = 0 ]; then

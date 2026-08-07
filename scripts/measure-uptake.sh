@@ -13,9 +13,67 @@
 #
 #   scripts/measure-uptake.sh            # ~/.claude/projects
 #   scripts/measure-uptake.sh <dir>      # any transcript root
+#   scripts/measure-uptake.sh trend      # read the per-session rows instead
 #
 # Reads only; prints aggregates. Transcript bodies never reach a terminal.
 set -uo pipefail
+
+# `trend` reads what the SessionEnd hook appends, and rescans nothing. The full
+# scan below is the reason that hook exists: 30-60s over 8809 files runs only
+# when someone remembers, and a measurement that must be remembered cannot tell
+# you whether a change that removes remembering worked.
+if [ "${1:-}" = "trend" ]; then
+  ROWS="${OMA_UPTAKE_DIR:-$HOME/.claude/uptake}/rows.jsonl"
+  [ -f "$ROWS" ] || { echo "no rows yet: $ROWS (the SessionEnd hook writes one per session)" >&2; exit 1; }
+  command -v python3 >/dev/null 2>&1 || { echo "python3 required" >&2; exit 1; }
+  python3 - "$ROWS" <<'PYEOF'
+import json, sys
+
+rows = []
+for line in open(sys.argv[1], errors="ignore"):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        rows.append(json.loads(line))
+    except ValueError:
+        continue
+if not rows:
+    print("rows file has no readable rows")
+    raise SystemExit(1)
+
+def rate(key, sub):
+    n = sum(1 for r in rows if (r.get(key) or {}).get(sub, 0) > 0)
+    return n, 100.0 * n / len(rows)
+
+print("per-session rows : %d  (%s .. %s)" % (len(rows), rows[0].get("ts", "?")[:10], rows[-1].get("ts", "?")[:10]))
+print("total tool calls : %d" % sum(r.get("calls", 0) for r in rows))
+print()
+print("-- navigation: which channel answers 'where is this code' --")
+print("  %-12s %8s %8s %10s" % ("channel", "sessions", "rate", "calls"))
+for sub, label in (("rg", "rg/grep"), ("serena", "serena"), ("lsp", "lsp_*"),
+                   ("ast_grep", "ast_grep"), ("graphify", "graphify"), ("toolsearch", "ToolSearch")):
+    n, pct = rate("nav", sub)
+    print("  %-12s %8d %7.1f%% %10d" % (label, n, pct, sum((r.get("nav") or {}).get(sub, 0) for r in rows)))
+print()
+print("-- symbol-search-gate: did it move serena, and does it misfire? --")
+d = sum((r.get("gate") or {}).get("denied", 0) for r in rows)
+e = sum((r.get("gate") or {}).get("escape", 0) for r in rows)
+print("  denials              : %d" % d)
+print("  텍스트검색: escapes  : %d" % e)
+if d + e:
+    print("  escape share         : %.1f%%  <- high means the gate fires on searches it should not" % (100.0 * e / (d + e)))
+print("  baseline before the gate: serena in 2 of 220 sessions (0.9%)")
+print()
+print("-- reads --")
+for sub in ("full", "ranged", "dup"):
+    print("  %-8s %6d" % (sub, sum((r.get("reads") or {}).get(sub, 0) for r in rows)))
+raise SystemExit(0)
+PYEOF
+  # Without this the script falls through and treats "trend" as a transcript
+  # root. `fi` ends the branch, not the script.
+  exit $?
+fi
 
 ROOT="${1:-$HOME/.claude/projects}"
 [ -d "$ROOT" ] || { echo "no transcript root: $ROOT" >&2; exit 1; }
