@@ -142,6 +142,82 @@ PYEOF
   fi
 
   echo ""
+  echo "[ Project hooks (.claude/settings.json) ]"
+  # The section above validates ~/.claude/settings.json. A project can register
+  # its own hooks in .claude/settings.json, and nothing looked at that file —
+  # which is how a hook sat dead for its whole life without anyone noticing.
+  #
+  # The case that prompted this: a PreToolUse hook fires on every rg/grep and
+  # tells the model to consult the graphify graph first, but it is gated on
+  # `[ -f graphify-out/graph.json ]` and that file does not exist in any
+  # checkout here. The hook runs thousands of times and exits silently every
+  # time. Registered and firing are not the same thing, and only one of them
+  # was being checked.
+  if ! command -v python3 &>/dev/null; then
+    echo "  [SKIP] python3 missing"
+  elif ! python3 - "$SCRIPT_DIR" <<'PYEOF'
+import json, os, re, sys
+
+root = sys.argv[1]
+path = os.path.join(root, ".claude", "settings.json")
+warn = 0
+
+if not os.path.isfile(path):
+    print("  [SKIP] no project .claude/settings.json")
+    sys.exit(0)
+try:
+    data = json.loads(open(path).read())
+except (OSError, ValueError) as exc:
+    print(f"  [WARN] project settings.json unreadable ({exc}) — hooks not checked")
+    sys.exit(1)
+
+hooks = [
+    (event, h.get("command", ""))
+    for event, arr in (data.get("hooks") or {}).items() if isinstance(arr, list)
+    for g in arr if isinstance(g, dict)
+    for h in g.get("hooks", []) if isinstance(h, dict)
+]
+if not hooks:
+    print("  [SKIP] project settings.json registers no hooks")
+    sys.exit(0)
+
+# Only file-existence gates. A hook can be conditional in ways this cannot read
+# (exit codes, greps, env); those are counted as unchecked rather than passed.
+GATE = re.compile(r'\[\s+-([fde])\s+"?([^"\]\s]+)"?\s+\]')
+gated = unchecked = 0
+
+for event, cmd in hooks:
+    conds = GATE.findall(cmd)
+    if not conds:
+        unchecked += 1
+        continue
+    for kind, raw in conds:
+        gated += 1
+        # $CLAUDE_PROJECT_DIR is the one variable the runtime guarantees here.
+        p = raw.replace("$CLAUDE_PROJECT_DIR", root).replace("${CLAUDE_PROJECT_DIR}", root)
+        if "$" in p:
+            print(f"  [WARN] {event}: gate on '{raw}' has an unexpanded variable — not checked")
+            warn += 1
+            continue
+        full = p if os.path.isabs(p) else os.path.join(root, p)
+        ok = os.path.isfile(full) if kind == "f" else (
+            os.path.isdir(full) if kind == "d" else os.path.exists(full))
+        if ok:
+            print(f"  [OK]   {event}: gate '{p}' is satisfied")
+        else:
+            print(f"  [DEAD] {event}: gated on '{p}', which does not exist —")
+            print("         the hook runs on every matching call and exits silently.")
+            warn += 1
+
+if unchecked:
+    print(f"  [NOTE] {unchecked} hook(s) carry no file gate this check can read")
+sys.exit(1 if warn else 0)
+PYEOF
+  then
+    WARNINGS=$((WARNINGS+1))
+  fi
+
+  echo ""
   echo "[ Rule mirror (SSOT vs the tree the runtime actually reads) ]"
   # An oma-managed project carries the same rules twice, and only one copy
   # reaches the model. `.claude/rules/*.md` is loaded by the runtime — observed:

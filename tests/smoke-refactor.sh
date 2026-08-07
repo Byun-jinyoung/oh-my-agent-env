@@ -1091,7 +1091,10 @@ echo "[25] the rules the runtime reads are held to the SSOT they came from"
 # nothing compared them — they agreed by luck. The bodies could drift and the
 # model would follow the copy the documentation does not name.
 t25="$TMP/rule-mirror"; mkdir -p "$t25"
-awk '/python3 - "\$SCRIPT_DIR" <</{grab=1; next} grab && /^PYEOF$/{exit} grab' \
+# Anchored on the section header, not on the heredoc line: a second section in
+# the same file opens its heredoc the same way, and when one was added above
+# this one the bare anchor silently extracted the wrong block.
+awk '/echo "\[ Rule mirror/{sec=1} sec && /^import /{grab=1} grab && /^PYEOF$/{exit} grab' \
   "$ROOT/lib/doctor/claude.sh" > "$t25/check.py"
 grep -q 'paths' "$t25/check.py" \
   || fail "[25] could not extract the rule-mirror check from lib/doctor/claude.sh"
@@ -1175,5 +1178,87 @@ mk25 "$nm25" .agents/rules a.md globs '' '- rule one'
 run25 "$nm25"
 [ "$rc25" -ne 0 ] || fail "[25] an absent mirror tree was reported like a clean project: $out25"
 printf '%s\n' "$out25" | grep -q '\[SKIP\]' && fail "[25] an absent mirror tree was skipped instead of reported"
+
+echo "[26] a hook whose gate can never be true is dead, and doctor says so"
+# doctor validated ~/.claude/settings.json and never opened the project's own
+# .claude/settings.json. The project file held a PreToolUse hook that fires on
+# every rg/grep to point the model at the graphify graph — gated on
+# `[ -f graphify-out/graph.json ]`, a file that exists in no checkout here. It
+# ran thousands of times and exited silently every one of them. Registered and
+# firing are different, and only the first was being checked.
+t26="$TMP/project-hooks"; mkdir -p "$t26"
+awk '/echo "\[ Project hooks/{sec=1} sec && /^import /{grab=1} grab && /^PYEOF$/{exit} grab' \
+  "$ROOT/lib/doctor/claude.sh" > "$t26/check.py"
+grep -q 'GATE = re.compile' "$t26/check.py" \
+  || fail "[26] could not extract the project-hook check from lib/doctor/claude.sh"
+py26="$(command -v python3)"
+
+mk26() { # mk26 <root> <command-string>
+  mkdir -p "$1/.claude"
+  "$py26" - "$1/.claude/settings.json" "$2" <<'PY'
+import json, sys
+json.dump({"hooks": {"PreToolUse": [{"hooks": [{"command": sys.argv[2]}]}]}},
+          open(sys.argv[1], "w"))
+PY
+}
+run26() { out26="$("$py26" "$t26/check.py" "$1" 2>&1)" && rc26=0 || rc26=$?; }
+
+# The defect itself: a gate on a path that is not there.
+d26="$t26/dead"; mk26 "$d26" 'case "$CMD" in *rg*) [ -f graphify-out/graph.json ] && echo hi ;; esac'
+run26 "$d26"
+[ "$rc26" -ne 0 ] || fail "[26] a hook gated on a missing file passed: $out26"
+printf '%s\n' "$out26" | grep -q '\[DEAD\].*graphify-out/graph.json' \
+  || fail "[26] the dead gate was not named: $out26"
+
+# Same hook, gate satisfied — must flip. Without this the check could be
+# reporting DEAD unconditionally and nobody would know.
+l26="$t26/live"; mk26 "$l26" '[ -f graphify-out/graph.json ] && echo hi'
+mkdir -p "$l26/graphify-out"; echo '{}' > "$l26/graphify-out/graph.json"
+run26 "$l26"
+[ "$rc26" -eq 0 ] || fail "[26] a satisfied gate was still reported dead: $out26"
+printf '%s\n' "$out26" | grep -q '\[OK\].*is satisfied' || fail "[26] no OK for a live gate: $out26"
+
+# -d gates are gates too.
+dir26="$t26/dirgate"; mk26 "$dir26" '[ -d .agents/rules ] && echo hi'
+run26 "$dir26"
+[ "$rc26" -ne 0 ] || fail "[26] a -d gate on a missing directory passed"
+mkdir -p "$dir26/.agents/rules"
+run26 "$dir26"
+[ "$rc26" -eq 0 ] || fail "[26] a -d gate on an existing directory was reported dead: $out26"
+
+# $CLAUDE_PROJECT_DIR is the one variable the runtime guarantees; resolving it
+# is the difference between checking the hook and giving up on it.
+cp26="$t26/projdir"; mk26 "$cp26" '[ -f "$CLAUDE_PROJECT_DIR/.claude/settings.json" ] && echo hi'
+run26 "$cp26"
+[ "$rc26" -eq 0 ] || fail "[26] \$CLAUDE_PROJECT_DIR was not resolved: $out26"
+
+# Any other variable cannot be resolved from here — and "cannot check" must not
+# print like "passed". This is the lesson the codex dep check paid for.
+uv26="$t26/unexpanded"; mk26 "$uv26" '[ -f "$SOME_OTHER_DIR/x.json" ] && echo hi'
+run26 "$uv26"
+[ "$rc26" -ne 0 ] || fail "[26] an unresolvable gate was treated as passing: $out26"
+printf '%s\n' "$out26" | grep -q '\[WARN\].*unexpanded' || fail "[26] unexpanded var not named: $out26"
+
+# Absent file and hook-free file are both "nothing to check", not faults.
+none26="$t26/none"; mkdir -p "$none26"
+run26 "$none26"
+[ "$rc26" -eq 0 ] || fail "[26] a project with no settings.json was a fault: $out26"
+printf '%s\n' "$out26" | grep -q '\[SKIP\]' || fail "[26] no SKIP without settings.json: $out26"
+
+empty26="$t26/empty"; mkdir -p "$empty26/.claude"; echo '{"hooks":{}}' > "$empty26/.claude/settings.json"
+run26 "$empty26"
+[ "$rc26" -eq 0 ] || fail "[26] a hook-free settings.json was a fault: $out26"
+
+# But an unreadable settings.json is not "no hooks" — it is "not checked".
+bad26="$t26/broken"; mkdir -p "$bad26/.claude"; printf '{not json' > "$bad26/.claude/settings.json"
+run26 "$bad26"
+[ "$rc26" -ne 0 ] || fail "[26] unreadable settings.json reported like a clean project: $out26"
+printf '%s\n' "$out26" | grep -q '\[WARN\].*unreadable' || fail "[26] unreadable not named: $out26"
+
+# A hook with no file gate is not dead — it is simply outside what this reads.
+ng26="$t26/nogate"; mk26 "$ng26" 'echo always-runs'
+run26 "$ng26"
+[ "$rc26" -eq 0 ] || fail "[26] a gate-free hook was reported as a fault: $out26"
+printf '%s\n' "$out26" | grep -q '\[NOTE\].*no file gate' || fail "[26] gate-free hook not counted: $out26"
 
 echo "smoke-refactor OK"
