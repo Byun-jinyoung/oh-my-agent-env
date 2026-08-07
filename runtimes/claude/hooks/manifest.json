@@ -47,6 +47,12 @@
     },
     {
       "event": "PreToolUse",
+      "matcher": "Bash",
+      "script": "symbol-search-gate.js",
+      "enforces": "a definition lookup typed as rg/grep is denied and pointed at serena. Measured cause: symbol tools are installed and prescribed in prose, and sit at 0-0.9% of 220 sessions while the one hook-backed channel sits at 44%. Narrow on purpose — quoted definition patterns only, serena-activated projects only; escape via ' 텍스트검색:'"
+    },
+    {
+      "event": "PreToolUse",
       "matcher": "Read",
       "script": "read-size-gate.js",
       "enforces": "rules-core rule 6 — token efficiency; staged by on-disk size, bounded reads pass"
