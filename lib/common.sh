@@ -820,6 +820,11 @@ except (OSError, ValueError, KeyError) as exc:
     print(f"[WARN] hook manifest unreadable ({exc}) — skipping registration")
     sys.exit(0)
 
+want_settings = manifest.get("settings") or {}
+if not isinstance(want_settings, dict):
+    print("[WARN] manifest 'settings' is not an object — ignoring")
+    want_settings = {}
+
 # "Ours" = the command invokes one of OUR installed hook paths. Scoped to the
 # manifest plus explicitly retired names — not to every file the repo ships, so
 # the test fixture is never treated as a live hook to prune.
@@ -887,6 +892,12 @@ for item in want:
 # 3. Remove event keys we emptied and nobody else uses.
 for event in [e for e, arr in hooks.items() if isinstance(arr, list) and not arr]:
     del hooks[event]
+
+# 4. Apply the runtime options the hooks were sized against. Top-level scalars
+# only: these sit beside user-owned keys like `env` and `permissions`, and this
+# reconciler must never rewrite a key the manifest does not name.
+for key, value in want_settings.items():
+    data[key] = value
 
 after = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True)
 if missing:

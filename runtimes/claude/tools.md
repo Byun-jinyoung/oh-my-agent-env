@@ -38,6 +38,10 @@ is automatic. Below is only what still needs deliberate behavior.
      정리 → ③마커 90분 TTL 만료 시 자동 삭제 → ④세션당 연속 미룸 2회 → ⑤컨텍스트
      800k 실링. 실링은 압축 지점(`autoCompactWindow` 700k → 실효 680k)보다 **위**여야
      한다. 아래로 내려가면 게이트가 매번 `ceiling-reached`로 즉시 허용해 무력화된다.
+     두 값은 짝이므로 한쪽만 배포되면 안 된다. 실링은 manifest의 `run`에, 압축 지점은
+     manifest의 `settings`에 있고 sync가 둘 다 settings.json에 쓴다. 압축 지점은 훅
+     파일이 아니라 런타임 옵션이라, 처음에는 손으로 설정한 머신에만 존재했고 훅만
+     받은 다른 머신은 예전 지점에서 계속 압축했다.
      `done`을 빠뜨려도 세션은 죽지 않으며 압축이 최대 2턴 지연될 뿐이다.
      마커와 미룸 예산 모두 cwd + session_id 기준이라 같은 디렉터리에서 여러 세션이
      돌아도 서로의 작업 단위에 간섭하지 않는다. SessionEnd도 자기 세션 마커만 지운다.

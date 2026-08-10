@@ -129,6 +129,7 @@ PY
 hook_cfg="$TMP/hookcfg"; mkdir -p "$hook_cfg/hooks"
 cat > "$hook_cfg/settings.json" <<JSON
 {"statusLine":{"command":"keep-me"},
+ "autoCompactWindow":400000,
  "hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"rtk hook claude"}]}],
           "SessionStart":[{"hooks":[{"type":"command","command":"$hook_cfg/hooks/foreign-tool.mjs"}]}]}}
 JSON
@@ -145,7 +146,7 @@ JSON
 cmp -s "$TMP/hooks-after1.json" "$hook_cfg/settings.json" \
   || fail "hook reconcile is not idempotent"
 python3 - "$manifest" "$hook_cfg/settings.json" <<'PY' || fail "hook reconcile produced wrong settings.json"
-import json, sys
+import json, re, sys
 from pathlib import Path
 manifest, settings = Path(sys.argv[1]), Path(sys.argv[2])
 d = json.loads(settings.read_text())
@@ -162,6 +163,24 @@ for h in json.loads(manifest.read_text())["hooks"]:
 if not any("rtk hook claude" == c for c in cmds): print("foreign rtk hook lost"); sys.exit(1)
 if not any("foreign-tool.mjs" in c for c in cmds): print("foreign SessionStart hook lost"); sys.exit(1)
 if d.get("statusLine", {}).get("command") != "keep-me": print("non-hook key clobbered"); sys.exit(1)
+
+# A registered hook can still be inert. The compact gate is sized against
+# autoCompactWindow, which lives in settings.json and not in any hook file, so
+# shipping the hook without the option left every machine but the one it was
+# tuned on compacting at the old point. Assert the option travels with the hook,
+# and that the pair still satisfies the invariant it exists for: the gate's
+# ceiling must sit ABOVE the compaction point, or the gate hits
+# ceiling-reached on every call and allows compaction it was meant to defer.
+want = json.loads(manifest.read_text()).get("settings", {})
+if "autoCompactWindow" not in want:
+    print("manifest no longer ships autoCompactWindow"); sys.exit(1)
+for key, value in want.items():
+    if d.get(key) != value:
+        print(f"{key} not reconciled: {d.get(key)!r} != {value!r}"); sys.exit(1)
+ceilings = [int(m) for c in cmds for m in re.findall(r"COMPACT_HARD_CEILING=(\d+)", c)]
+if len(ceilings) != 1: print(f"expected one compact ceiling, found {ceilings}"); sys.exit(1)
+if ceilings[0] <= d["autoCompactWindow"]:
+    print(f"ceiling {ceilings[0]} is not above compaction point {d['autoCompactWindow']}"); sys.exit(1)
 PY
 
 # d) cross-review regressions: a foreign command that merely MENTIONS one of our
