@@ -52,9 +52,6 @@ stage() {
 
 shell_files() {
   printf '%s\n' setup.sh
-  # oma-lab is named explicitly: it has no .sh extension, so the glob below
-  # skips it and it would ship unlinted.
-  [ -f scripts/oma-lab ] && printf '%s\n' scripts/oma-lab
   find lib scripts tests -name '*.sh' -type f 2>/dev/null | sort
   # Shell hooks under runtimes/ — outside every directory above, so nothing
   # linted them. That is not cosmetic: a syntax error makes bash exit 2, and
@@ -66,7 +63,7 @@ shell_files() {
   # an unterminated `if`, got exit 2, and check.sh printed PASS.
   #
   # Selected by shebang rather than extension because `compact-gate` has none,
-  # the same reason scripts/oma-lab is named by hand above.
+  # so an extension glob would skip it and it would ship unlinted.
   local f
   while IFS= read -r f; do
     case "$(head -1 "$f" 2>/dev/null)" in '#!'*sh*) printf '%s\n' "$f" ;; esac
@@ -248,13 +245,6 @@ fi
 if [ "$TESTS" = 1 ]; then
   echo "[tests]"
   stage "smoke-refactor"  bash tests/smoke-refactor.sh
-  # Separate from the smoke suite because it fails for different reasons: the
-  # smoke suite asks whether the harness is assembled right, this one asks
-  # whether the experiment tools work when actually driven at a repo. Every
-  # structural check passed while read-only verbs were creating state on disk.
-  if [ -f tests/lab-e2e.sh ]; then
-    stage "lab e2e" bash tests/lab-e2e.sh
-  fi
   if [ -f runtimes/claude/hooks/test-pre-edit-gate.js ]; then
     stage "pre-edit-gate fixtures" node runtimes/claude/hooks/test-pre-edit-gate.js
   fi

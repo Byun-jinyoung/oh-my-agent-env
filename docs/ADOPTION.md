@@ -1,5 +1,20 @@
 # What was taken from `oh-my-setting`, and what was not
 
+> **Status: the `oma-lab` layer described below has been removed.** Six of the
+> adopted components (`run`/`top`, `fail`, `board`, `capsule`, `data`,
+> `reconcile`), the `scripts/lab/` library, and the `fail-ledger.js` hook are
+> gone. Reason: the user never asked for any of it. It was proposed, built, and
+> then used only by the sessions building it — the ledger rows in the two repos
+> that have them were written by agent sessions, not by the user, who said
+> plainly they were not using the tool.
+>
+> The analysis is kept as a record of a judgement that turned out wrong, not as
+> a description of shipped code. **Adoption criteria that measure a component
+> against a colleague's harness cannot tell you whether the person you are
+> building for wants it. That question was never asked, and it was the only one
+> that mattered.** Sections below referring to `scripts/lab/`, `oma-lab`, or
+> `.oma-lab/` describe files that no longer exist.
+
 A colleague's harness ([eightmm/oh-my-setting](https://github.com/eightmm/oh-my-setting))
 was compared against this one. This records what was adopted, what was refused,
 and the evidence for each, so the same components do not get re-litigated from

@@ -302,65 +302,10 @@ jf3="$(OMA_VAULT="$jv3" bash "$ROOT/scripts/journal.sh" path)"
 # it to machines where it means nothing.
 [ -z "$(find "$jv3" -name '*.lock' 2>/dev/null)" ] || fail "journal lock written inside the vault"
 
-echo "[10] lab experiment tools (throwaway git repo)"
-# All four tools run against a temp repo, never this one: they write .oma-lab/
-# into whatever repo they are invoked from.
-lab_repo="$TMP/labrepo"; mkdir -p "$lab_repo"
-(
-  cd "$lab_repo"
-  git init -q -b main && git config user.email t@t && git config user.name t
-  printf 'lr: 1e-3\n' > config.yaml && git add -A && git commit -qm init
-
-  O() { bash "$ROOT/scripts/oma-lab" "$@"; }
-
-  # ledger: records, mirrors the exit code, and refuses to launch behind a
-  # failing gate — the property that saves the GPU hours.
-  O run --metrics 'rmse=0.42' -- python3 -c 'print(1)' >/dev/null 2>&1 || exit 1
-  O run -- python3 -c 'raise SystemExit(7)' >/dev/null 2>&1
-  [ "$?" = 7 ] || { echo "ledger did not mirror the command exit code"; exit 1; }
-
-  mkdir -p scripts
-  printf '#!/usr/bin/env bash\nexit 1\n' > scripts/check.sh && chmod +x scripts/check.sh
-  O run -- python3 -c "open('SHOULD_NOT_EXIST','w')" >/dev/null 2>&1
-  [ ! -e SHOULD_NOT_EXIST ] || { echo "failing gate did not stop the launch"; exit 1; }
-  O run --no-gate -- python3 -c 'print(1)' >/dev/null 2>&1 \
-    && { echo "--no-gate was accepted without --reason"; exit 1; }
-  rm -f scripts/check.sh
-
-  # fail: an unchanged retry is refused, a retry after edits is only warned.
-  O fail record --cmd 'python train.py' --exit 1 >/dev/null 2>&1
-  O fail check --cmd 'python   train.py' >/dev/null 2>&1
-  [ "$?" = 3 ] || { echo "fail-ledger did not refuse an unchanged retry"; exit 1; }
-  printf 'edit\n' >> config.yaml
-  O fail check --cmd 'python train.py' >/dev/null 2>&1 || { echo "fail-ledger blocked a retry after edits"; exit 1; }
-
-  # board: a second claim is refused, and a running experiment is never
-  # reclaimed no matter how stale the TTL says it is.
-  O board claim --id e1 >/dev/null 2>&1 || { echo "first claim failed"; exit 1; }
-  O board claim --id e1 >/dev/null 2>&1 && { echo "duplicate claim was allowed"; exit 1; }
-  O board start --id e1 --job 0012345 >/dev/null 2>&1
-  OMA_BOARD_CLAIM_TTL=0 O board claim --id e1 >/dev/null 2>&1 \
-    && { echo "a running experiment was reclaimed"; exit 1; }
-  O board list 2>/dev/null | grep -q '0012345' || { echo "job id lost its leading zero"; exit 1; }
-  O board finish --id e1 --result ok >/dev/null 2>&1
-  O board claim --id e1 >/dev/null 2>&1 || { echo "could not reclaim a finished id"; exit 1; }
-
-  # capsule: an output is traceable back to the run that wrote it.
-  O run -- python3 -c "open('ckpt.pt','w').write('v1')" >/dev/null 2>&1
-  O capsule save --config config.yaml --output ckpt.pt --note v1 >/dev/null 2>&1
-  O capsule whence ckpt.pt >/dev/null 2>&1 || { echo "whence could not find a saved output"; exit 1; }
-  echo unrelated > other.pt
-  O capsule whence other.pt >/dev/null 2>&1 && { echo "whence matched a file it never saw"; exit 1; }
-
-  # State stays in the project and git ignores it — via .git/info/exclude, so
-  # the user's tracked .gitignore never grows harness residue.
-  [ -d .oma-lab ] || { echo ".oma-lab not created"; exit 1; }
-  grep -qxF '.oma-lab/' .git/info/exclude || { echo ".oma-lab/ not excluded"; exit 1; }
-  [ ! -e .gitignore ] || { echo "the tools created or edited .gitignore"; exit 1; }
-  [ -z "$(git status --porcelain | grep oma-lab)" ] || { echo ".oma-lab is visible to git"; exit 1; }
-) || fail "lab experiment tools regressed"
-# and nothing leaked into this repo
-test ! -e "$ROOT/.oma-lab" || fail "lab tools wrote into the harness repo"
+# [10] was the oma-lab experiment tools. The tool was removed: it was never
+# requested, and the only sessions that ever drove it were the ones building it.
+# The number is left as a gap so this reads as a deletion rather than a test
+# someone dropped by accident.
 
 echo "[11] Layer A rules reach every runtime, not just Claude"
 # Cross-review caught this one: assemble_global_rules (lib/common.sh:713) feeds
@@ -613,9 +558,8 @@ while IFS=$'\x1f' read -r event script matcher template; do
   # under a nothing-to-say payload, so a stdout check in this loop is one no
   # mutation can kill — and PreCompact's stdout is compact instructions, not
   # JSON, so "must be JSON" is wrong besides. Output shape is asserted where it
-  # can actually be provoked: tests/lab-e2e.sh json-parses fail-ledger's
-  # additionalContext (verified — corrupting that write fails lab e2e), and
-  # runtimes/claude/hooks/test-pre-edit-gate.js covers the edit gate.
+  # can actually be provoked — runtimes/claude/hooks/test-pre-edit-gate.js and
+  # test-symbol-search-gate.js drive payloads that force a decision.
   smoked=$((smoked+1))
 done < "$TMP/hooks.tsv"
 # A loop that ran fewer times than there are hooks passes for the wrong reason.
@@ -1279,85 +1223,5 @@ ng26="$t26/nogate"; mk26 "$ng26" 'echo always-runs'
 run26 "$ng26"
 [ "$rc26" -eq 0 ] || fail "[26] a gate-free hook was reported as a fault: $out26"
 printf '%s\n' "$out26" | grep -q '\[NOTE\].*no file gate' || fail "[26] gate-free hook not counted: $out26"
-
-echo "[27] registered is not firing: doctor asks the hook, and repeats its answer"
-# [26] covers gates written in settings.json, which an external reader can see.
-# This covers the ones written inside the script, which it cannot: fail-ledger.js
-# gates on <git-root>/.oma-lab, and doctor printed [OK] for it while it was inert
-# for all 365 Bash failures recorded on this machine. The fix is to run the
-# hook's own --selftest rather than reimplement its gate here — so what is
-# asserted below is that doctor RELAYS the verdict, including the two ways of
-# not getting one.
-t27="$TMP/selftest"; mkdir -p "$t27"
-awk '/echo "\[ Rules-enforcement hooks/{sec=1} sec && /^import /{grab=1} grab && /^PYEOF$/{exit} grab' \
-  "$ROOT/lib/doctor/claude.sh" > "$t27/check.py"
-grep -q 'def selftest' "$t27/check.py" \
-  || fail "[27] could not extract the rules-enforcement check from lib/doctor/claude.sh"
-py27="$(command -v python3)"
-
-# mk27 <case> <manifest-extra-json> <hook-body>  — builds a config_dir+repo_hooks
-# pair whose only registered hook is a stub we control.
-mk27() {
-  c27="$t27/$1"; rm -rf "$c27"; mkdir -p "$c27/cfg/hooks" "$c27/repo"
-  printf '%s\n' "$3" > "$c27/cfg/hooks/stub.js"
-  "$py27" - "$c27" "$2" <<'PY'
-import json, sys
-base, extra = sys.argv[1], json.loads(sys.argv[2])
-entry = {"event": "PostToolUseFailure", "matcher": "Bash", "script": "stub.js"}
-entry.update(extra)
-json.dump({"retired": [], "hooks": [entry]}, open(base + "/repo/manifest.json", "w"))
-json.dump({"hooks": {"PostToolUseFailure": [{"matcher": "Bash", "hooks": [
-    {"command": 'node "' + base + '/cfg/hooks/stub.js"'}]}]}},
-    open(base + "/cfg/settings.json", "w"))
-PY
-}
-run27() { out27="$("$py27" "$t27/check.py" "$c27/cfg" "$c27/repo" 2>&1)" && rc27=0 || rc27=$?; }
-
-# A live hook reads as OK, and says the verdict was earned rather than assumed.
-mk27 live '{"selftest": true}' 'console.log("LIVE")'
-run27
-[ "$rc27" -eq 0 ] || fail "[27] a LIVE self-test was a fault: $out27"
-printf '%s\n' "$out27" | grep -q '\[OK\].*self-test' || fail "[27] LIVE not relayed: $out27"
-
-# The defect this whole test exists for.
-mk27 inert '{"selftest": true}' 'console.log("INERT no .oma-lab in /nowhere")'
-run27
-printf '%s\n' "$out27" | grep -q '\[INERT\].*no .oma-lab in /nowhere' \
-  || fail "[27] an inert hook still printed like a working one: $out27"
-# Inert is a fact, not a fault. A doctor that exits nonzero on every ordinary
-# run in an unadopted repo is a doctor nobody reads — the failure being fixed.
-[ "$rc27" -eq 0 ] || fail "[27] by-design inertness was escalated to a warning: $out27"
-
-# Two ways to get no answer. Both must read as "not checked", never as passing —
-# the lesson the codex runtime dep check paid for.
-mk27 garbage '{"selftest": true}' 'console.log("dunno")'
-run27
-[ "$rc27" -ne 0 ] || fail "[27] an unreadable verdict passed: $out27"
-printf '%s\n' "$out27" | grep -q '\[WARN\].*unreadable' || fail "[27] unreadable not named: $out27"
-
-mk27 crash '{"selftest": true}' 'process.exit(9)'
-run27
-[ "$rc27" -ne 0 ] || fail "[27] a crashing self-test passed: $out27"
-printf '%s\n' "$out27" | grep -q '\[WARN\].*exited 9' || fail "[27] crash not named: $out27"
-
-# A custom run template means the command is not `node <path>`, so appending
-# --selftest would invoke something else. Refuse rather than guess.
-mk27 runtmpl '{"selftest": true, "run": "bash \"{path}\""}' 'console.log("LIVE")'
-run27
-[ "$rc27" -ne 0 ] || fail "[27] selftest+run was silently ignored: $out27"
-
-# Undeclared stays undeclared: registration is all that was verified, and the
-# count says how much of the manifest that covers.
-mk27 undeclared '{}' 'console.log("LIVE")'
-run27
-[ "$rc27" -eq 0 ] || fail "[27] a hook without selftest was a fault: $out27"
-printf '%s\n' "$out27" | grep -q 'firing not checked' || fail "[27] unchecked hook not labelled: $out27"
-printf '%s\n' "$out27" | grep -q '\[NOTE\] 1 hook(s) declare no self-test' \
-  || fail "[27] unchecked hooks not counted: $out27"
-
-# And the real manifest actually exercises the LIVE/INERT branch — otherwise
-# everything above tests a feature nothing uses.
-grep -q '"selftest"' "$ROOT/runtimes/claude/hooks/manifest.json" \
-  || fail "[27] no shipped hook declares selftest; the branch is dead code"
 
 echo "smoke-refactor OK"

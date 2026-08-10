@@ -793,6 +793,20 @@ for h in json.load(open(sys.argv[1]))["hooks"]:
   done
 }
 
+# Names the repo used to ship. Unlike hook_manifest_scripts there is no glob
+# fallback: guessing which absent file was once ours could delete a hook another
+# tool installed under a name we happen to recognise. No manifest, no pruning.
+hook_manifest_retired() {
+  local manifest="$SCRIPT_DIR/runtimes/claude/hooks/manifest.json"
+  [ -f "$manifest" ] || return 0
+  command -v python3 &>/dev/null || return 0
+  python3 -c '
+import json, sys
+for name in json.load(open(sys.argv[1])).get("retired", []):
+    print(name)
+' "$manifest" 2>/dev/null || return 0
+}
+
 # Reconcile the rules-enforcement hooks into Claude's global settings.json from
 # the manifest. Declarative, not append-only: every entry that points at a hook
 # script THIS REPO owns is rebuilt from the manifest, so a renamed, dropped or

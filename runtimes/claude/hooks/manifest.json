@@ -20,15 +20,6 @@
     "need all three. Note the matcher for PreCompact/PostCompact is matched against",
     "the compaction `trigger`, and for SessionEnd against `reason`, not a tool name.",
     "",
-    "'selftest': true means the script answers `--selftest <cwd>` with one line,",
-    "'LIVE' or 'INERT <reason>', by running its own gate. doctor asks instead of",
-    "assuming. It exists because registration and firing are different facts and",
-    "only the first was checked: fail-ledger.js was reported [OK] on this machine",
-    "while being unable to fire for any of the 365 recorded Bash failures, because",
-    "its gate lives inside the JS and no external check could see it. Teaching",
-    "doctor the gate would restate it and drift; executing it cannot. A hook that",
-    "does not declare this is reported as unchecked, never as passing.",
-    "",
     "'settings' holds top-level settings.json keys the hooks depend on. A hook",
     "can be registered perfectly and still be inert if the runtime option it was",
     "sized against is missing — the compact gate's 800k ceiling only makes sense",
@@ -43,7 +34,7 @@
     "ours and its settings.json entry would linger forever. Naming it here keeps it",
     "prunable. Entries can be dropped once every machine has synced past them."
   ],
-  "retired": [],
+  "retired": ["fail-ledger.js"],
   "settings": {
     "autoCompactWindow": 700000
   },
@@ -77,14 +68,6 @@
       "matcher": "Read",
       "script": "read-size-gate.js",
       "enforces": "rules-core rule 6 — token efficiency; staged by on-disk size, bounded reads pass"
-    },
-    {
-      "event": "PostToolUseFailure",
-      "matcher": "Bash",
-      "script": "fail-ledger.js",
-      "selftest": true,
-      "enforces": "70-analysis 'oma-lab fail check first' — records failed commands and surfaces a repeat, without the model having to volunteer",
-      "requires": "a Claude Code that sends PostToolUseFailure; present in 2.1.217+, verified against the schema shipped in 2.1.220"
     },
     {
       "event": "Stop",

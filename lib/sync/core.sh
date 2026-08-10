@@ -28,6 +28,19 @@ sync_claude() {
         log_and_print "    [WARN] manifest lists $script but $hooks_src/$script is missing"
       fi
     done < <(hook_manifest_scripts)
+
+    # Retiring a hook removed its settings.json entry but left the symlink, so
+    # the hooks dir kept a dangling link to a deleted script. Harmless while
+    # nothing registers it, and exactly the wrong thing to leave behind: put the
+    # file back for any reason and it is live again without a manifest entry.
+    local retired
+    while IFS= read -r retired; do
+      [ -n "$retired" ] || continue
+      if [ -L "$CONFIG_DIR/hooks/$retired" ]; then
+        rm -f "$CONFIG_DIR/hooks/$retired"
+        log_and_print "    [PRUNE] hooks/$retired (retired)"
+      fi
+    done < <(hook_manifest_retired)
   fi
 
   # [2b] Rules-enforcement: compressed-rule file + settings.json hook wiring.

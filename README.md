@@ -67,8 +67,6 @@ oh-my-agent-env/
 ├── scripts/                              # Helper shell scripts
 │   ├── check.sh                          #   verification gate (lint + tests); CI runs this
 │   ├── journal.sh                        #   Obsidian work-journal entries
-│   ├── oma-lab                           #   experiment tools entry point (→ ~/.local/bin)
-│   ├── lab/                              #   ledger, capsule, board, fail, data, reconcile + shared lib
 │   └── ...                               #   apply-project-template, snapshot, ...
 └── tests/
     ├── smoke-refactor.sh                 # Source graph, isolated HOME, hook contract, journal
@@ -142,90 +140,6 @@ proving the mechanism.
 `tests/smoke-refactor.sh` step [11] guards the related trap: `rules/*.md` feeds
 Claude, Codex *and* Antigravity, so a module moved into a Claude-only skill
 silently drops the rule for the other two.
-
-## Experiment Tools (`oma-lab`)
-
-Run inside a research repo, not here. `setup.sh sync` links `oma-lab` into
-`~/.local/bin`; all state goes to `<repo>/.oma-lab/`, excluded from git through
-`.git/info/exclude` so your tracked `.gitignore` stays clean.
-
-```bash
-oma-lab run --metrics 'rmse=0.42' --tag baseline -- python train.py --seed 1
-oma-lab top --metric rmse --min        # best known baseline, as a lookup
-oma-lab board claim --id lr-sweep-01 --hypothesis "3e-4 beats 1e-3"
-oma-lab capsule save --config config.yaml --output ckpt-best.pt
-oma-lab capsule whence ckpt-best.pt    # which run produced this checkpoint?
-oma-lab fail check --cmd "python train.py"
-oma-lab data register --name qm9 --id-column smiles --key-column scaffold \
-  --split train=data/train.csv --split valid=data/valid.csv
-oma-lab data leakage --name qm9        # do the splits share ids or scaffolds?
-oma-lab data check --name qm9          # are the splits still what they were?
-oma-lab run --tag sweep -- sbatch train.slurm   # the job id is picked up
-oma-lab reconcile apply                # how did the submitted jobs actually end?
-```
-
-| Tool | What it prevents |
-|---|---|
-| `run` / `top` | Re-deriving a baseline from memory, and losing what was tried |
-| `board` | Two sessions starting the same experiment |
-| `capsule` | A checkpoint nobody can trace back to code |
-| `fail` | Re-running a command that already failed unchanged |
-| `data` | A number attributed to a split that has since changed underneath it |
-| `reconcile` | A ledger row claiming `exit=0` for a job that was later killed |
-
-`--repo PATH` points any of them at another repo, for a job launched from a
-submit directory. It redirects the git reads and relative paths too, not just
-where state is written.
-
-Split paths in `data` are relative to the repo root. Registration records the
-current run id, so a dataset joins back to the run that consumed it — the link
-the ledger cannot make on its own, because the splits are gitignored and a
-commit hash is blind to them by construction.
-
-Three things actually block rather than advise:
-
-- `run` executes the research repo's own `scripts/check.sh` first, and a failing
-  gate aborts before the command starts. Skipping it needs `--no-gate --reason`,
-  and the reason is recorded. That gate is what stops hours of GPU time going
-  into code that was already broken. It must never call `oma-lab` back.
-- `board claim` refuses an id that is already active. A stale *claim* can be
-  taken over after `OMA_BOARD_CLAIM_TTL` (default 1 day); a *running* one never
-  can, because a training job outliving its session is normal and stealing its
-  id would put two jobs on the same checkpoints.
-- `fail check` exits 3 when the same command already failed and the tree has not
-  changed since. After edits it only warns — the edits may be the fix.
-- `reconcile apply` exits 2 when neither `sacct` nor `squeue` can be reached.
-  With no way to query Slurm, "nothing finished" and "no idea" print the same
-  thing, and only the first one gets acted on. A job that is merely still
-  running is left alone rather than recorded, because an outcome row is final.
-- `data leakage` exits 1 on overlap and **2 when it cannot look** — a missing
-  file or column is not a pass. A gate that reports clean because it could not
-  read the data is worse than no gate, since the caller reads exit 0 as "no
-  leakage found".
-
-`--key-column` means *no value in this column may appear in two splits* — the
-contract for a grouping column (scaffold, cluster, patient, assay). It is the
-wrong flag for a label like `class`, which belongs in every split and would be
-reported as leakage.
-
-`data check` compares the id set, each key column's value set, and a hash over
-the sorted `id → value` pairs. The pair hash is the one that earns its keep:
-permute which scaffold each molecule belongs to and the ids, the values and the
-row count are all identical while the experiment is measuring something else.
-It is also insensitive to row order, so rewriting a file without changing an
-assignment is correctly not drift.
-
-`rules/70-analysis.md` has always required measuring before claiming. These are
-the first mechanisms behind that rule; before them the harness had the norms and
-no enforcement.
-
-All six `oma-lab` verbs were adapted from a colleague's harness
-([eightmm/oh-my-setting](https://github.com/eightmm/oh-my-setting)) — this layer
-is derived work, not a local invention, and the founding commit `b9a960e` says
-so. [`docs/ADOPTION.md`](docs/ADOPTION.md) records what was taken, what was
-refused, and why — including the one component held back because the number
-justifying it could not be measured, how much of that harness has actually been
-read (18% of its script lines), and what is still unassessed.
 
 ## Work Journal
 

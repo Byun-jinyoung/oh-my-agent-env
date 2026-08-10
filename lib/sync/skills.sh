@@ -66,17 +66,14 @@ for rt, d in dirs.items():
 PYEOF
   fi
 
-  # [5b] Lab tools on PATH. These run inside research repos, so they need a
-  # name rather than an absolute path into this checkout — an agent that has to
-  # spell out ~/.oh-my-agent-env/scripts/lab/... will simply not use them.
-  echo "[5b] Lab experiment tools"
-  if [ -f "$SCRIPT_DIR/scripts/oma-lab" ]; then
-    mkdir -p "$HOME/.local/bin"
-    make_link "$SCRIPT_DIR/scripts/oma-lab" "$HOME/.local/bin/oma-lab"
-    case ":$PATH:" in
-      *":$HOME/.local/bin:"*) ;;
-      *) log_and_print "    [WARN] \$HOME/.local/bin is not on PATH — 'oma-lab' will not resolve" ;;
-    esac
+  # [5b] Remove the oma-lab launcher this repo used to install. The tool was
+  # never asked for and never used outside the sessions that built it, so it is
+  # gone — but a symlink already on PATH would outlive the removal and resolve
+  # to nothing, so sync takes it back down.
+  echo "[5b] Prune retired lab launcher"
+  if [ -L "$HOME/.local/bin/oma-lab" ]; then
+    rm -f "$HOME/.local/bin/oma-lab"
+    log_and_print "    [PRUNE] \$HOME/.local/bin/oma-lab (retired)"
   fi
 
   # Statusline

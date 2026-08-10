@@ -8,7 +8,6 @@
        ctx_* (context-mode)  103 sessions  44.0%   PreToolUse hook routes it
        rtk                    12 sessions   5.1%   PreToolUse hook rewrites it
        graphify               11 sessions   4.7%   prose only
-       oma-lab                 9 sessions   3.8%   prose only
        compact-gate            5 sessions   2.1%   partly hooked; busy/done manual
        serena                  3 sessions   1.3%   prose only, prescribed twice
 
@@ -53,22 +52,10 @@ is automatic. Below is only what still needs deliberate behavior.
      manifest의 선택적 `run` 필드가 필요했다 — 기본 `node "{path}"` 로는 bash 훅,
      env prefix, `sessionend` 서브커맨드를 표현할 수 없다. -->
 
-## 실패 명령 원장
-
-실패한 Bash 명령은 `PostToolUseFailure` 훅이 자동 기록한다. 반복 실패일 때만 말을
-건다. 고친 것이 확실하면 `oma-lab fail resolve --cmd "..."` — 훅은 무엇이 고쳐졌는지
-알 수 없어 이것만 수동이다.
-
-<!-- rules/70-analysis.md 는 "이미 깨진 것으로 판명된 명령은 oma-lab fail check로
-     먼저 확인한다"고 요구한다. Claude Code에서는 그 기록이 자동이라 확인도 자동으로
-     돌아온다: fail-ledger.js 가 실패를 `oma-lab fail record`로 남기고, 같은 명령이
-     트리 변경 없이 다시 실패하면 이전 실패를 컨텍스트로 돌려준다.
-     - 첫 실패에는 아무 말도 하지 않는다.
-     - 명령을 막지 않는다. 이미 실행된 뒤에 도는 훅이다.
-     - `.oma-lab/`이 있는 repo에서만 기록한다. 그 외 repo에는 상태를 만들지 않는다.
-     - 끄려면 `OMA_FAIL_LEDGER_HOOK=0`.
-     트리가 바뀌면 경고로 낮아지므로(수정이 곧 해결일 수 있어서) 재시도는 막히지 않는다.
-     Codex·Antigravity에는 이 훅이 없어 그 쪽에서는 fail check/record를 직접 부른다. -->
+<!-- 여기 "실패 명령 원장" 절이 있었다. fail-ledger.js 훅과 그것이 기록하던
+     oma-lab 원장을 함께 제거했다 — 사용자가 요청한 적 없는 도구였고, 만든 세션
+     외에는 쓰이지 않았다. 반복 실패를 자동으로 기억하는 장치는 지금 없다.
+     다시 만들 거라면 먼저 사용자에게 필요한지 물어라. -->
 
 ## context-mode
 
