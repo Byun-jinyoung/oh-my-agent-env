@@ -1692,6 +1692,25 @@ printf '%s\n' "$out29" | grep -qE '\[STALE\].*2 commit' \
 printf '%s\n' "$out29" | grep -q 'recorded commit' \
   || fail "[29] the verdict did not say it used the recorded commit: $out29"
 
+# graphify writes the graph UNDER the path it was given, so
+# `graphify update src/foo` leaves src/foo/graphify-out/graph.json and only a
+# cache manifest at the cwd. Judging by the repo-root path alone called that a
+# MISS forever — measured on the worktree, where a scoped build of 865 nodes was
+# reported as "no graph at all". A scoped graph is not the same as a root graph
+# and should not be called [OK], but calling it missing is worse: it tells the
+# operator to redo work that is already done.
+r29g="$TMP/g29/scoped"; mkrepo29 "$r29g"
+# Nested as deep as the real one (find reports this file at level 7). A
+# -maxdepth 6 version of the search passed every other assertion here and
+# missed exactly this path on the real machine.
+mkdir -p "$r29g/src/boltz/model/potentials/swarm/graphify-out"
+echo '{}' > "$r29g/src/boltz/model/potentials/swarm/graphify-out/graph.json"
+out29="$(run29 "$r29g")"
+printf '%s\n' "$out29" | grep -q 'potentials/swarm/graphify-out' \
+  || fail "[29] a scoped graph elsewhere in the tree was not mentioned: $out29"
+printf '%s\n' "$out29" | grep -qE '\[MISS\].*no graphify-out/graph.json' \
+  && fail "[29] a repo holding a scoped graph was still reported as having none"
+
 # The harness tells the model to run `graphify update .`; doing so drops
 # graphify-out/ into the repo root. With no ignore entry that is untracked
 # noise in someone else's project, which is why it has not been run.
@@ -1710,5 +1729,54 @@ printf '%s\n' "$out29" | grep -qi 'ignore' \
 out29="$(run29 "$r29f" "$r29f" "$r29f/.")"
 [ "$(printf '%s\n' "$out29" | grep -c 'graphify-out/graph.json')" = 1 ] \
   || fail "[29] the same repo was reported once per path it was named by: $out29"
+
+echo "[30] every graphify command this harness prescribes exists in the installed CLI"
+# Stated as "does the prescribed command exist", not as a list of banned words.
+# The first version banned `query` because a truncated `--help | head -20` did
+# not reach line 29, where `query` is in fact documented — the fifth measurement
+# error of this investigation and the same one every time: a cut-off listing read
+# as the whole listing. An existence check against the live CLI cannot be fooled
+# that way, and it also catches the real risk here, which is upstream renaming a
+# subcommand out from under text this harness ships into every project.
+sec30="$(sed -n '/graphify update\|^- For cross-module/p' "$ROOT/lib/common.sh")"
+[ -n "$sec30" ] || fail "[30] could not find the graphify guidance in lib/common.sh"
+if command -v graphify >/dev/null 2>&1; then
+  help30="$(graphify --help 2>&1 || true)"
+  # Whole output, never piped through head: truncating the evidence is the bug.
+  for verb in $(printf '%s\n' "$sec30" | grep -oE 'graphify [a-z-]+' | awk '{print $2}' | sort -u); do
+    printf '%s\n' "$help30" | grep -qE "^[[:space:]]+$verb([[:space:]]|$)" \
+      || fail "[30] harness prescribes 'graphify $verb' but the installed CLI has no such subcommand"
+  done
+else
+  echo "  (graphify not installed — command existence unverified)"
+fi
+
+# Correcting the text is useless if it never reaches a project that already has
+# the old one. append_section_if_missing saw its marker and printed
+# "already has graphify" — so a project seeded with the wrong command keeps it
+# forever, which is the same shape as a hook that is registered and never fires.
+t30="$TMP/section-refresh"; mkdir -p "$t30"
+(
+  # shellcheck disable=SC1091
+  source "$ROOT/lib/common.sh" 2>/dev/null || true
+  # Content on BOTH sides of the section. Only leading content was pinned at
+  # first, and a mutant that let the replacement run to end-of-file survived:
+  # it would have eaten every project rule written after the graphify block.
+  printf '# proj\n\nkeep-before\n\n## graphify\n\nold body stale-marker\n\n## project rules\n\nkeep-after\n' \
+    > "$t30/CLAUDE.md"
+  append_section_if_missing "$t30/CLAUDE.md" "## graphify" "## graphify
+
+new body"
+) >/dev/null 2>&1 || true
+grep -q 'new body' "$t30/CLAUDE.md" \
+  || fail "[30] a project that already had the section never received the corrected text"
+[ "$(grep -c '^## graphify' "$t30/CLAUDE.md")" = 1 ] \
+  || fail "[30] refreshing the section duplicated it: $(grep -c '^## graphify' "$t30/CLAUDE.md") copies"
+grep -q 'stale-marker' "$t30/CLAUDE.md" \
+  && fail "[30] the stale body survived the refresh"
+for keep in keep-before keep-after '## project rules'; do
+  grep -qF "$keep" "$t30/CLAUDE.md" \
+    || fail "[30] refreshing the section ate '$keep' — content outside it is the project's, not ours"
+done
 
 echo "smoke-refactor OK"

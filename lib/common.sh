@@ -280,11 +280,33 @@ mcp_spawn_check() {
   maybe_timeout 3 "$bin" </dev/null 2>&1 | head -1 | grep -q 'started on stdio'
 }
 
+# Write $section into $file under $marker, replacing an existing copy.
+#
+# This used to stop at "already has graphify" the moment it saw the marker, so a
+# project seeded once kept that text forever. That mattered: the section told
+# the model to run `graphify query`, a subcommand the CLI has never had, and
+# there was no path by which a correction could reach a project that already had
+# the wrong line. A section nobody can fix is worse than one nobody wrote.
+#
+# Replacement runs from the marker to the next top-level heading, so anything
+# before or after the section survives — the file belongs to the project, not
+# to this harness.
 append_section_if_missing() {
   local file="$1" marker="$2" section="$3"
   mkdir -p "$(dirname "$file")"
   if [ -f "$file" ] && grep -qF "$marker" "$file"; then
-    echo "    [OK] $(basename "$file") already has graphify"
+    if [ "$(sed -n "/^$(printf '%s' "$marker" | sed 's/[][\.*^$/]/\\&/g')\$/,/^## \|^# /{p}" "$file" \
+           | grep -cF -- "$(printf '%s' "$section" | sed -n '3p')")" -gt 0 ] 2>/dev/null; then
+      echo "    [OK] $(basename "$file") graphify section is current"
+      return 0
+    fi
+    local tmp="$file.oma-sec.tmp"
+    awk -v m="$marker" -v sec="$section" '
+      $0 == m && !done { print sec; skip = 1; done = 1; next }
+      skip && /^#/ && $0 != m { skip = 0 }
+      !skip
+    ' "$file" > "$tmp" && mv "$tmp" "$file"
+    echo "    [OK] $(basename "$file") graphify section refreshed"
   elif [ -f "$file" ]; then
     printf '\n%s\n' "$section" >> "$file"
     echo "    [OK] Added graphify section to $file"
