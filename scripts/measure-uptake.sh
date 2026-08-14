@@ -61,9 +61,25 @@ d = sum((r.get("gate") or {}).get("denied", 0) for r in rows)
 e = sum((r.get("gate") or {}).get("escape", 0) for r in rows)
 print("  denials              : %d" % d)
 print("  텍스트검색: escapes  : %d" % e)
-if d + e:
-    print("  escape share         : %.1f%%  <- high means the gate fires on searches it should not" % (100.0 * e / (d + e)))
 print("  baseline before the gate: serena in 2 of 220 sessions (0.9%)")
+# A denial count says the gate fired, not that it worked. Measured over the
+# first 28 firings: 21% reached serena, 54% re-ran the same search with the
+# escape appended. Keep/tighten/drop is decided by this split, not by `denials`.
+outs = [("to_serena", "→ serena/lsp (성공)"), ("to_escape", "→ 탈출로 강행"),
+        ("to_rg", "→ 다른 rg 재시도"), ("to_read", "→ Read 로 전환"),
+        ("to_other", "→ 기타")]
+tot = sum(sum((r.get("gate") or {}).get(k, 0) for r in rows) for k, _ in outs)
+if tot:
+    print("  -- what each denial resolved to --")
+    for k, label in outs:
+        n = sum((r.get("gate") or {}).get(k, 0) for r in rows)
+        print("    %-22s %5d  (%.0f%%)" % (label, n, 100.0 * n / tot))
+elif d:
+    print("  (outcome counters absent — rows predate the gate.to_* fields)")
+se = sum((r.get("nav") or {}).get("serena_err", 0) for r in rows)
+sc = sum((r.get("nav") or {}).get("serena", 0) for r in rows)
+if sc:
+    print("  serena calls that errored: %d / %d (%.0f%%)" % (se, sc, 100.0 * se / sc))
 print()
 print("-- reads --")
 for sub in ("full", "ranged", "dup"):

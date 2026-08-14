@@ -42,14 +42,23 @@ function findTranscript(sessionId) {
 }
 
 function scan(file) {
-  const nav = { rg: 0, serena: 0, lsp: 0, ast_grep: 0, graphify: 0, toolsearch: 0 };
-  const gate = { denied: 0, escape: 0 };
+  const nav = { rg: 0, serena: 0, serena_err: 0, lsp: 0, ast_grep: 0, graphify: 0, toolsearch: 0 };
+  // `denied` counts firings; the `to_*` counters say what the firing achieved.
+  // A denial rate cannot tell a working gate from one the model routes around:
+  // in the 28 firings recorded so far, 21% reached serena and 54% re-ran the
+  // same search with the escape comment appended. Deciding whether to keep,
+  // tighten or drop the gate needs the outcome, and computing it by hand from
+  // transcripts is the remembered measurement this file exists to replace.
+  const gate = { denied: 0, escape: 0, to_serena: 0, to_escape: 0, to_rg: 0, to_read: 0, to_other: 0 };
   const fail = { bash: 0, edit: 0 };
   const reads = { full: 0, ranged: 0, dup: 0 };
   const tools = {};
   const seenRead = new Set();
   const idName = new Map();
   const RG = /(?:^|[|&;(]|\s)(?:rg|grep|egrep|ack|ag)\s/;
+  // Linear event trace, needed because the outcome of a denial is whatever tool
+  // runs NEXT — which is not knowable at the moment the denial is read.
+  const trace = [];
 
   for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
     if (!line || line.indexOf('"tool_') === -1) continue;
@@ -73,22 +82,47 @@ function scan(file) {
           if (inp.offset || inp.limit) reads.ranged++; else reads.full++;
           if (seenRead.has(fp)) reads.dup++; else seenRead.add(fp);
         }
+        let cmd = '';
         if (n === 'Bash') {
-          const cmd = inp.command || '';
+          cmd = inp.command || '';
           if (RG.test(cmd)) nav.rg++;
           if (cmd.indexOf('graphify') !== -1) nav.graphify++;
           if (cmd.indexOf('텍스트검색:') !== -1) gate.escape++;
         }
+        trace.push({ use: n, cmd: cmd });
       } else if (c.type === 'tool_result') {
         const n = idName.get(c.tool_use_id) || '';
         const body = typeof c.content === 'string' ? c.content : JSON.stringify(c.content || '');
-        if (body.indexOf('[탐색 게이트]') !== -1) gate.denied++;
+        if (body.indexOf('[탐색 게이트]') !== -1) { gate.denied++; trace.push({ deny: true }); }
         if (c.is_error) {
           if (n === 'Bash') fail.bash++;
           else if (n === 'Edit' || n === 'Write' || n === 'NotebookEdit') fail.edit++;
+          else if (n.indexOf('mcp__serena__') === 0) nav.serena_err++;
         }
       }
     }
+  }
+
+  // What each denial actually resolved to. Bookkeeping calls are stepped over:
+  // ToolSearch in particular is how a deferred symbol tool gets loaded, so
+  // stopping there would score the one path the gate is trying to produce as
+  // "did something else".
+  const SKIP = { ToolSearch: 1, TaskCreate: 1, TaskUpdate: 1, TaskGet: 1, TaskList: 1 };
+  for (let i = 0; i < trace.length; i++) {
+    if (!trace[i].deny) continue;
+    let done = false;
+    for (let j = i + 1; j < trace.length && j <= i + 12 && !done; j++) {
+      const ev = trace[j];
+      if (!ev.use || SKIP[ev.use]) continue;
+      done = true;
+      if (ev.use.indexOf('mcp__serena__') === 0 || ev.use.indexOf('lsp_') !== -1
+          || ev.use.indexOf('ast_grep') !== -1) gate.to_serena++;
+      else if (ev.cmd && ev.cmd.indexOf('텍스트검색:') !== -1) gate.to_escape++;
+      else if (ev.use === 'Bash' && RG.test(ev.cmd)) gate.to_rg++;
+      else if (ev.use === 'Read') gate.to_read++;
+      else gate.to_other++;
+    }
+    if (!done) gate.to_other++;
   }
   return { nav, gate, fail, reads, calls: Object.values(tools).reduce((a, b) => a + b, 0) };
 }

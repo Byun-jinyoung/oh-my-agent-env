@@ -73,6 +73,43 @@ const tr2 = transcript([
 rows = run({ session_id: 's2', cwd: '/p', reason: 'exit', transcript_path: tr2 }, fresh());
 check('gate denial counted', (rows[0] || {}).gate && rows[0].gate.denied === 1, JSON.stringify((rows[0] || {}).gate));
 check('gate escape counted', (rows[0] || {}).gate && rows[0].gate.escape === 1);
+// A denial count alone cannot tell a working gate from one that is routed
+// around: of the 28 firings on this machine, 21% reached serena and 54% re-ran
+// the same search with the escape appended. The outcome is the deciding number.
+check('denial resolved by the escape is recorded as such',
+      rows[0].gate.to_escape === 1 && rows[0].gate.to_serena === 0, JSON.stringify(rows[0].gate));
+
+const tr2b = transcript([
+  use('Bash', { command: 'rg "def foo" lib/' }, 'g2'),
+  result('g2', '[탐색 게이트] 정의 조회로 보입니다.', true),
+  use('ToolSearch', { query: 'select:mcp__serena__find_symbol' }, 'g3'),
+  use('mcp__serena__find_symbol', { name_path_pattern: 'foo' }, 'g4'),
+]);
+rows = run({ session_id: 's2b', cwd: '/p', reason: 'exit', transcript_path: tr2b }, fresh());
+// ToolSearch is how a deferred symbol tool gets loaded. Scoring it as "did
+// something else" would mark the gate's one success path as a failure.
+check('a denial that reaches serena through ToolSearch counts as success',
+      rows[0].gate.to_serena === 1 && rows[0].gate.to_other === 0, JSON.stringify(rows[0].gate));
+
+const tr2c = transcript([
+  use('Bash', { command: 'rg "def foo" lib/' }, 'h1'),
+  result('h1', '[탐색 게이트] 정의 조회로 보입니다.', true),
+  use('Read', { file_path: '/lib/foo.py' }, 'h2'),
+]);
+rows = run({ session_id: 's2c', cwd: '/p', reason: 'exit', transcript_path: tr2c }, fresh());
+check('a denial answered by reading the file is its own outcome',
+      rows[0].gate.to_read === 1, JSON.stringify(rows[0].gate));
+
+const tr2d = transcript([
+  use('mcp__serena__find_symbol', { name_path_pattern: 'x' }, 'i1'),
+  result('i1', 'ValueError: while the path is ignored', true),
+]);
+rows = run({ session_id: 's2d', cwd: '/p', reason: 'exit', transcript_path: tr2d }, fresh());
+// A serena call that errors is not a serena call that worked. Counting only
+// invocations is how "symbol tools are being used" survived 13 configs the
+// release could not load at all.
+check('a failed serena call is counted separately',
+      rows[0].nav.serena === 1 && rows[0].nav.serena_err === 1, JSON.stringify(rows[0].nav));
 
 // --- failures ---------------------------------------------------------------
 const tr3 = transcript([
