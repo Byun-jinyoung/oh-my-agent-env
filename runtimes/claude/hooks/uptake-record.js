@@ -1,5 +1,15 @@
 #!/usr/bin/env node
-// SessionEnd hook: append one behavioural row per session.
+// SessionEnd hook: append one behavioural row per SessionEnd.
+//
+// NOT one row per session, which is what this line said until 2026-08-14 and
+// what scripts/measure-uptake.sh was written to believe. A session ends more
+// than once — exit, clear, logout, prompt_input_exit, resume all fire SessionEnd
+// — and each firing rescans the whole transcript (see scan() below: no cursor,
+// no delta), so the rows for one session are cumulative snapshots of the same
+// growing file. Summing them counts the same tool call once per ending. On the
+// real ledger that was 72 rows over 50 sessions, one session holding 10, and it
+// inflated rg by 217% and serena by 250% in numbers this harness had already
+// quoted as evidence. Consumers must group by `session` before adding anything.
 //
 // Everything this harness learned about itself came from scanning
 // ~/.claude/projects by hand, and that scan only ever ran when someone

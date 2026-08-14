@@ -31,24 +31,61 @@ if [ "${1:-}" = "trend" ]; then
   python3 - "$ROWS" <<'PYEOF'
 import json, sys
 
-rows = []
+raw = []
 for line in open(sys.argv[1], errors="ignore"):
     line = line.strip()
     if not line:
         continue
     try:
-        rows.append(json.loads(line))
+        raw.append(json.loads(line))
     except ValueError:
         continue
-if not rows:
+if not raw:
     print("rows file has no readable rows")
     raise SystemExit(1)
+
+# One row is one SessionEnd, NOT one session. uptake-record.js takes
+# p.transcript_path and rescans that one file from the top every time
+# (uptake-record.js:143-153 — no cursor, no delta), so a session that ends
+# repeatedly (exit / clear / logout / prompt_input_exit / resume) leaves several
+# cumulative snapshots of the same growing transcript. Summing them counted the
+# same tool calls once per ending: measured on the real ledger, 72 rows over 50
+# sessions with one session holding 10 of them, inflating rg by 217%, serena by
+# 250%, graphify by 200% and ToolSearch by 181%. Those inflated totals were
+# quoted as evidence in this investigation before anyone grouped by session.
+#
+# Collapse with an element-wise MAX rather than "take the last row". Every
+# multi-row session measured was monotonic non-decreasing (0 of 6 with a falling
+# counter), so on this data the two agree — but a transcript can lose records to
+# compaction, and a later, shorter snapshot must not retract work already
+# recorded. Max is also what keeps a counter that only later rows carry: absent
+# is not zero, and a field added mid-window belongs to the session that has it.
+def merge(dst, src):
+    for k, v in src.items():
+        if isinstance(v, dict):
+            merge(dst.setdefault(k, {}), v)
+        elif isinstance(v, bool) or not isinstance(v, (int, float)):
+            dst[k] = v                      # ts / cwd / reason: latest wins
+        else:
+            dst[k] = max(dst.get(k, v), v)
+
+sessions = {}
+order = []
+for r in sorted(raw, key=lambda x: x.get("ts", "")):
+    sid = r.get("session", "-")
+    if sid not in sessions:
+        sessions[sid] = {}
+        order.append(sid)
+    merge(sessions[sid], r)
+rows = [sessions[s] for s in order]
 
 def rate(key, sub):
     n = sum(1 for r in rows if (r.get(key) or {}).get(sub, 0) > 0)
     return n, 100.0 * n / len(rows)
 
-print("per-session rows : %d  (%s .. %s)" % (len(rows), rows[0].get("ts", "?")[:10], rows[-1].get("ts", "?")[:10]))
+ts = sorted(r.get("ts", "?") for r in raw)
+print("sessions         : %d  (from %d rows, %s .. %s)"
+      % (len(rows), len(raw), ts[0][:10], ts[-1][:10]))
 print("total tool calls : %d" % sum(r.get("calls", 0) for r in rows))
 print()
 print("-- navigation: which channel answers 'where is this code' --")
@@ -121,10 +158,26 @@ else:
             print("    hooks/manifest.json (move to `retired`), then delete the hook and its test.")
         else:
             print("    %.0f%% over %d firings (baseline %.0f%%) — narrowing is holding." % (share, tot, BASELINE))
-se = sum((r.get("nav") or {}).get("serena_err", 0) for r in rows)
-sc = sum((r.get("nav") or {}).get("serena", 0) for r in rows)
-if sc:
-    print("  serena calls that errored: %d / %d (%.0f%%)" % (se, sc, 100.0 * se / sc))
+# Same key-absent-vs-zero rule as the gate block above, and it was NOT applied
+# here at first — the discipline was installed on gate.* only. What that cost,
+# measured on the real ledger: 72 rows, 13 of them with serena calls, and zero
+# of those 13 carrying serena_err (the counter landed later the same day). This
+# line printed "serena calls that errored: 0 / 28 (0%)" while the transcripts
+# behind those very calls showed 8 of them answering "No active project" and 2
+# raising — a 100% failure rate rendered as a clean 0%. That number was then
+# quoted as evidence serena was working.
+err_rows = [r for r in rows if "serena_err" in (r.get("nav") or {})]
+sc_all = sum((r.get("nav") or {}).get("serena", 0) for r in rows)
+sc = sum((r.get("nav") or {}).get("serena", 0) for r in err_rows)
+se = sum((r.get("nav") or {}).get("serena_err", 0) for r in err_rows)
+if sc_all and not err_rows:
+    print("  serena calls: %d, of which errored: not recorded"
+          " (no row in window carries nav.serena_err — not a 0%% failure rate)" % sc_all)
+elif sc:
+    print("  serena calls that errored: %d / %d (%.0f%%) — from %d of %d rows carrying the field"
+          % (se, sc, 100.0 * se / sc, len(err_rows), len(rows)))
+elif sc_all:
+    print("  serena calls: %d total, %d in rows that record errors" % (sc_all, sc))
 print()
 print("-- reads --")
 for sub in ("full", "ranged", "dup"):

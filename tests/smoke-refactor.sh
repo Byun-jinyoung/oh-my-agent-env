@@ -1546,6 +1546,46 @@ printf '%s\n' "$out27" | grep -q 'holding' \
 printf '%s\n' "$out27" | grep -q 'NOT BELOW BASELINE' \
   && fail "[27] a passing escape share still tripped the sunset"
 
+# The same key-absent-vs-zero rule, applied to nav.serena_err — which the first
+# version of this step did NOT cover, so the discipline was only half installed.
+# Measured on the real ledger: 72 rows, 13 with serena calls, and exactly 0 of
+# those 13 carrying serena_err (the field landed later that day). trend printed
+# "serena calls that errored: 0 / 28 (0%)" while the transcripts showed 10 of
+# those calls returning "No active project" — a 100% failure rate rendered as 0%.
+mkdir -p "$t27/err-absent" "$t27/err-present"
+printf '{"ts":"2026-08-10T00:00:00Z","session":"e1","cwd":"/p","calls":5,"nav":{"rg":3,"serena":4}}\n' \
+  > "$t27/err-absent/rows.jsonl"
+out27="$(run27 err-absent)"
+printf '%s\n' "$out27" | grep -qE 'errored.*0 / 4|errored.*\(0%\)' \
+  && fail "[27] rows with serena calls but no serena_err key were rendered as a 0% error rate: $out27"
+# The wording is the deliverable: "not recorded" and "0%" must not be
+# interchangeable in this ledger. Anchored to the serena line — a bare
+# 'not recorded' matched the gate section's own "(not recorded; not zero
+# firings)" further up the report, so the mutant that deleted this branch
+# passed on a phrase from a different verdict entirely.
+printf '%s\n' "$out27" | grep -q 'serena calls:.*not recorded' \
+  || fail "[27] unrecorded serena errors were not called unrecorded: $out27"
+
+# The shape the real ledger is in: SOME rows carry the field, others do not, and
+# the serena calls live in the rows that do not. Without this fixture the two
+# guards mask each other — restricting the denominator and special-casing the
+# all-absent window each looked unnecessary on their own.
+mkdir -p "$t27/err-mixed"
+{ printf '{"ts":"2026-08-10T00:00:00Z","session":"m1","cwd":"/p","calls":5,"nav":{"rg":3,"serena":4}}\n'
+  printf '{"ts":"2026-08-14T00:00:00Z","session":"m2","cwd":"/p","calls":5,"nav":{"rg":3,"serena":2,"serena_err":1}}\n'
+} > "$t27/err-mixed/rows.jsonl"
+out27="$(run27 err-mixed)"
+printf '%s\n' "$out27" | grep -qE 'errored: 1 / 2' \
+  || fail "[27] the error rate was not computed over the rows that record errors: $out27"
+printf '%s\n' "$out27" | grep -qE 'errored: 1 / 6' \
+  && fail "[27] calls from rows with no error field were counted in the denominator"
+
+printf '{"ts":"2026-08-14T00:00:00Z","session":"e2","cwd":"/p","calls":5,"nav":{"rg":3,"serena":4,"serena_err":4}}\n' \
+  > "$t27/err-present/rows.jsonl"
+out27="$(run27 err-present)"
+printf '%s\n' "$out27" | grep -qE 'errored.*4 / 4|100%' \
+  || fail "[27] a row recording that every serena call failed did not report it: $out27"
+
 echo "[28] the coding rules are reachable from a project that is not this checkout"
 # Reported from a worktree: "코드 작성 규칙을 못 찾는데". It was not a bug in
 # that repo — .claude/rules/*.md (backend, quality, debug, database, frontend…)
@@ -1778,5 +1818,77 @@ for keep in keep-before keep-after '## project rules'; do
   grep -qF "$keep" "$t30/CLAUDE.md" \
     || fail "[30] refreshing the section ate '$keep' — content outside it is the project's, not ours"
 done
+
+echo "[31] the ledger counts a session once, however many times it ended"
+# uptake-record.js takes p.transcript_path and rescans that ONE file from the
+# top on every SessionEnd (uptake-record.js:143-153 — no cursor, no delta), then
+# appends. A session that ends more than once (exit, clear, logout,
+# prompt_input_exit, resume) therefore contributes several CUMULATIVE snapshots
+# of the same growing transcript, and `trend` summed them as if they were
+# disjoint. Measured on the real ledger: 72 rows over 50 distinct sessions, one
+# session holding 10 rows, every multi-row session monotonic non-decreasing
+# (0 of 6 with a falling counter). The overcount that reached this session's own
+# conclusions: rg 9,703 vs 3,064 (+217%), serena 28 vs 8 (+250%), graphify 168
+# vs 56 (+200%), ToolSearch 714 vs 254 (+181%), calls 45,455 vs 14,096.
+#
+# Both the producer comment (uptake-record.js:2) and the manifest entry claimed
+# "one behavioural row per session", so the consumer was written to a contract
+# the producer never kept. This pins the arithmetic, not the prose.
+t31="$TMP/uptake-sessions"; mkdir -p "$t31/dup" "$t31/back"
+# One session, three snapshots of the same transcript as it grew, plus a second
+# session with one row. Correct answer: 2 sessions, serena 4+1=5, rg 12+2=14,
+# calls 30+5=35. Summing rows gives serena 10, rg 28, calls 65.
+{
+  printf '{"ts":"2026-08-20T01:00:00Z","session":"dup","cwd":"/p","reason":"prompt_input_exit","calls":10,"nav":{"rg":5,"serena":2}}\n'
+  printf '{"ts":"2026-08-20T02:00:00Z","session":"dup","cwd":"/p","reason":"other","calls":20,"nav":{"rg":9,"serena":3}}\n'
+  printf '{"ts":"2026-08-20T03:00:00Z","session":"dup","cwd":"/p","reason":"other","calls":30,"nav":{"rg":12,"serena":4}}\n'
+  printf '{"ts":"2026-08-20T04:00:00Z","session":"solo","cwd":"/p","reason":"other","calls":5,"nav":{"rg":2,"serena":1}}\n'
+} > "$t31/dup/rows.jsonl"
+
+run31() { OMA_UPTAKE_DIR="$t31/$1" bash "$ROOT/scripts/measure-uptake.sh" trend 2>&1; }
+out31="$(run31 dup)"
+
+# The collapse has to be stated. A number that silently changed meaning is how
+# the wrong totals got quoted as evidence in the first place.
+printf '%s\n' "$out31" | grep -qE 'sessions *: *2\b' \
+  || fail "[31] four rows over two sessions were not reported as 2 sessions: $out31"
+printf '%s\n' "$out31" | grep -q '4 rows' \
+  || fail "[31] the collapse did not say how many rows it read: $out31"
+
+# The three totals that were inflated. Asserted separately: a single alternation
+# over them let a mutation deleting one survive, because the digits it matched
+# were still present in another line.
+printf '%s\n' "$out31" | grep -qE 'serena +2 +100\.0% +5\b' \
+  || fail "[31] serena was not 5 (per-session latest) — summed rows give 10: $out31"
+printf '%s\n' "$out31" | grep -qE 'rg/grep +2 +100\.0% +14\b' \
+  || fail "[31] rg was not 14 (per-session latest) — summed rows give 28: $out31"
+printf '%s\n' "$out31" | grep -qE 'total tool calls *: *35\b' \
+  || fail "[31] tool calls were not 35 (per-session latest) — summed rows give 65: $out31"
+
+# A rate is per session, so a channel used in both sessions is 100%, not 50%
+# (which is what 2 carrying rows out of 4 would print).
+printf '%s\n' "$out31" | grep -q '50\.0%' \
+  && fail "[31] a rate was still computed over rows instead of sessions: $out31"
+
+# Robustness, not a claim about the data: every multi-row session measured was
+# monotonic, but a transcript can lose records to compaction. If a later
+# snapshot is lower, the aggregate must not fall with it — otherwise a compacted
+# session silently reports less work than it was already known to have done.
+{
+  printf '{"ts":"2026-08-21T01:00:00Z","session":"back","cwd":"/p","reason":"other","calls":40,"nav":{"rg":20,"serena":6}}\n'
+  printf '{"ts":"2026-08-21T02:00:00Z","session":"back","cwd":"/p","reason":"other","calls":7,"nav":{"rg":3,"serena":1}}\n'
+} > "$t31/back/rows.jsonl"
+out31="$(run31 back)"
+printf '%s\n' "$out31" | grep -qE 'serena +1 +100\.0% +6\b' \
+  || fail "[31] a later, lower snapshot pulled the session total down: $out31"
+printf '%s\n' "$out31" | grep -qE 'total tool calls *: *40\b' \
+  || fail "[31] a later, lower snapshot pulled the call total down: $out31"
+
+# The producer's own description has to stop promising one row per session, or
+# the next reader writes the same summation again.
+grep -q 'one behavioural row per session' "$ROOT/runtimes/claude/hooks/uptake-record.js" \
+  && fail "[31] uptake-record.js still claims one row per session; it writes one per SessionEnd"
+grep -q 'one behavioural row per session' "$ROOT/runtimes/claude/hooks/manifest.json" \
+  && fail "[31] manifest.json still claims one row per session; it writes one per SessionEnd"
 
 echo "smoke-refactor OK"
