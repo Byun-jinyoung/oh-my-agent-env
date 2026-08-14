@@ -2,11 +2,17 @@
 // SessionEnd hook: append one behavioural row per session.
 //
 // Everything this harness learned about itself came from scanning
-// ~/.claude/projects by hand. That scan takes 30-60s over 8809 files, so it
-// only ever ran when someone remembered — which is the exact failure mode the
-// measurements keep finding everywhere else (prose-only channels: 0-5%).
-// A measurement that depends on being remembered cannot be used to check
-// whether a fix that removes remembering actually worked.
+// ~/.claude/projects by hand, and that scan only ever ran when someone
+// remembered — the exact failure mode the measurements keep finding everywhere
+// else (prose-only channels: 0-5%). A measurement that depends on being
+// remembered cannot be used to check whether a fix that removes remembering
+// actually worked.
+//
+// Speed is NOT the argument, though an earlier version of this comment claimed
+// "30-60s over 8809 files". Measured 2026-08-14: 6.8s over 10,675 files. The
+// full scan is cheap; it is simply never run. Being wrong about this mattered —
+// a false cost would have justified this hook on its own, and the only real
+// justification is the remembering.
 //
 // So: incremental. At SessionEnd, scan only the session that just ended and
 // append a row. The trend is read from rows, never by rescanning. Measured

@@ -558,8 +558,8 @@ while IFS=$'\x1f' read -r event script matcher template; do
   # under a nothing-to-say payload, so a stdout check in this loop is one no
   # mutation can kill — and PreCompact's stdout is compact instructions, not
   # JSON, so "must be JSON" is wrong besides. Output shape is asserted where it
-  # can actually be provoked — runtimes/claude/hooks/test-pre-edit-gate.js and
-  # test-symbol-search-gate.js drive payloads that force a decision.
+  # can actually be provoked — runtimes/claude/hooks/test-pre-edit-gate.js
+  # drives payloads that force a decision.
   smoked=$((smoked+1))
 done < "$TMP/hooks.tsv"
 # A loop that ran fewer times than there are hooks passes for the wrong reason.
@@ -1301,5 +1301,43 @@ ng26="$t26/nogate"; mk26 "$ng26" 'echo always-runs'
 run26 "$ng26"
 [ "$rc26" -eq 0 ] || fail "[26] a gate-free hook was reported as a fault: $out26"
 printf '%s\n' "$out26" | grep -q '\[NOTE\].*no file gate' || fail "[26] gate-free hook not counted: $out26"
+
+echo "[27] the uptake ledger tells a missing counter apart from a zero one"
+# symbol-search-gate.js was retired 2026-08-14, so rows written after it carry
+# no `gate` key at all. Summing those with a .get(k, 0) prints "denials: 0",
+# which reads as "the gate ran and never fired" — the same key-absent-vs-value-
+# absent confusion that misdiagnosed the serena config twice during that
+# investigation (a config with `language_servers:` and no `languages:` key was
+# read as "languages is empty"). This ledger exists to say what was measured,
+# so it must not answer "not recorded" with a number.
+t27="$TMP/uptake-trend"; mkdir -p "$t27/new" "$t27/old" "$t27/mix"
+NEW27='{"ts":"2026-08-15T00:00:00Z","session":"a","cwd":"/p","calls":10,"nav":{"rg":5,"serena":2}}'
+OLD27='{"ts":"2026-08-01T00:00:00Z","session":"b","cwd":"/p","calls":10,"nav":{"rg":5,"serena":0},"gate":{"denied":0,"escape":0}}'
+printf '%s\n' "$NEW27" > "$t27/new/rows.jsonl"
+printf '%s\n' "$OLD27" > "$t27/old/rows.jsonl"
+printf '%s\n%s\n' "$NEW27" "$OLD27" > "$t27/mix/rows.jsonl"
+
+run27() { OMA_UPTAKE_DIR="$t27/$1" bash "$ROOT/scripts/measure-uptake.sh" trend 2>&1; }
+
+out27="$(run27 new)"
+printf '%s\n' "$out27" | grep -q 'no data in window' \
+  || fail "[27] rows without a gate key did not say so: $out27"
+# The bug this pins: printing a zero for a counter nothing produces.
+printf '%s\n' "$out27" | grep -q 'denials' \
+  && fail "[27] a denial count was printed for rows that carry no gate key"
+
+# A row that DOES carry the key must still be rendered — retiring the producer
+# must not erase what was already measured.
+out27="$(run27 old)"
+printf '%s\n' "$out27" | grep -q 'denials *: *0' \
+  || fail "[27] a row carrying gate.denied=0 was not rendered: $out27"
+printf '%s\n' "$out27" | grep -q 'no data in window' \
+  && fail "[27] a row carrying the gate key was reported as no data"
+
+# Mixed window: the denominator has to be the carrying rows, not all rows, or
+# every rate silently halves as new rows accumulate.
+out27="$(run27 mix)"
+printf '%s\n' "$out27" | grep -q 'rows carrying gate\.\* *: *1 of 2' \
+  || fail "[27] mixed window did not name how many rows carried the key: $out27"
 
 echo "smoke-refactor OK"

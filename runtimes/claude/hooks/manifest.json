@@ -92,7 +92,7 @@
       "event": "SessionEnd",
       "matcher": null,
       "script": "uptake-record.js",
-      "enforces": "appends one behavioural row per session to ~/.claude/uptake/rows.jsonl. The full ~/.claude/projects scan costs 30-60s and so only ran when someone remembered it — the same failure mode every measurement here keeps finding. Incremental (0.3s/session), and carries the two counters that answer whether symbol-search-gate works: nav.serena against its 0.9% baseline, and gate.escape as the false-positive alarm"
+      "enforces": "appends one behavioural row per session to ~/.claude/uptake/rows.jsonl. The full ~/.claude/projects scan is not slow (measured 2026-08-14: 6.8s over 10,675 files) — it simply only ran when someone remembered it, the same failure mode every measurement here keeps finding. Incremental (0.3s/session), and carries the counters that answer whether symbol-search-gate works: nav.serena against its 0.9% baseline, and gate.escape as the false-positive alarm"
     },
     {
       "event": "SessionEnd",

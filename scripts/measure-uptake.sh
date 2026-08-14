@@ -19,9 +19,11 @@
 set -uo pipefail
 
 # `trend` reads what the SessionEnd hook appends, and rescans nothing. The full
-# scan below is the reason that hook exists: 30-60s over 8809 files runs only
-# when someone remembers, and a measurement that must be remembered cannot tell
-# you whether a change that removes remembering worked.
+# scan below is the reason that hook exists — not because it is slow (measured
+# 2026-08-14: 6.8s over 10,675 files; an earlier comment here claimed 30-60s
+# over 8809 and was wrong on both numbers) but because it runs only when someone
+# remembers, and a measurement that must be remembered cannot tell you whether a
+# change that removes remembering worked.
 if [ "${1:-}" = "trend" ]; then
   ROWS="${OMA_UPTAKE_DIR:-$HOME/.claude/uptake}/rows.jsonl"
   [ -f "$ROWS" ] || { echo "no rows yet: $ROWS (the SessionEnd hook writes one per session)" >&2; exit 1; }
@@ -57,25 +59,41 @@ for sub, label in (("rg", "rg/grep"), ("serena", "serena"), ("lsp", "lsp_*"),
     print("  %-12s %8d %7.1f%% %10d" % (label, n, pct, sum((r.get("nav") or {}).get(sub, 0) for r in rows)))
 print()
 print("-- symbol-search-gate: did it move serena, and does it misfire? --")
-d = sum((r.get("gate") or {}).get("denied", 0) for r in rows)
-e = sum((r.get("gate") or {}).get("escape", 0) for r in rows)
-print("  denials              : %d" % d)
-print("  텍스트검색: escapes  : %d" % e)
-print("  baseline before the gate: serena in 2 of 220 sessions (0.9%)")
-# A denial count says the gate fired, not that it worked. Measured over the
-# first 28 firings: 21% reached serena, 54% re-ran the same search with the
-# escape appended. Keep/tighten/drop is decided by this split, not by `denials`.
-outs = [("to_serena", "→ serena/lsp (성공)"), ("to_escape", "→ 탈출로 강행"),
-        ("to_rg", "→ 다른 rg 재시도"), ("to_read", "→ Read 로 전환"),
-        ("to_other", "→ 기타")]
-tot = sum(sum((r.get("gate") or {}).get(k, 0) for r in rows) for k, _ in outs)
-if tot:
-    print("  -- what each denial resolved to --")
-    for k, label in outs:
-        n = sum((r.get("gate") or {}).get(k, 0) for r in rows)
-        print("    %-22s %5d  (%.0f%%)" % (label, n, 100.0 * n / tot))
-elif d:
-    print("  (outcome counters absent — rows predate the gate.to_* fields)")
+# Summing with .get(k, 0) over rows that have no `gate` key prints "denials: 0",
+# which reads as "the gate ran and never fired" — the exact confusion between a
+# key that is absent and a value that is zero that misdiagnosed the serena
+# config twice (a project.yml carrying `language_servers:` and no `languages:`
+# was read as "languages is empty"). Rows predating the counters, and rows from
+# any machine where the hook is not installed, both land in that hole. So: count
+# the rows that CARRY the key and render only from those.
+gate_rows = [r for r in rows if isinstance(r.get("gate"), dict)]
+if not gate_rows:
+    print("  no data in window — no row here carries gate.* (not recorded; not zero firings)")
+else:
+    print("  rows carrying gate.*  : %d of %d in window" % (len(gate_rows), len(rows)))
+    d = sum(r["gate"].get("denied", 0) for r in gate_rows)
+    e = sum(r["gate"].get("escape", 0) for r in gate_rows)
+    print("  denials              : %d" % d)
+    print("  텍스트검색: escapes  : %d" % e)
+    print("  baseline before the gate: serena in 2 of 220 sessions (0.9%)")
+    # A denial count says the gate fired, not that it worked. Measured over the
+    # first 28 firings: 21% reached serena, 54% re-ran the same search with the
+    # escape appended. That 54% is why the gate was retired: 56.7% of what it
+    # fired on were alternations/prefix sweeps serena cannot answer.
+    outs = [("to_serena", "→ serena/lsp (성공)"), ("to_escape", "→ 탈출로 강행"),
+            ("to_rg", "→ 다른 rg 재시도"), ("to_read", "→ Read 로 전환"),
+            ("to_other", "→ 기타")]
+    # Same key-absent-vs-zero split one level down: gate.to_* was added after
+    # gate.denied, so early rows carry the outer key and not the inner ones.
+    out_rows = [r for r in gate_rows if any(k in r["gate"] for k, _ in outs)]
+    if not out_rows:
+        print("  (outcome counters absent — rows predate the gate.to_* fields)")
+    else:
+        tot = sum(sum(r["gate"].get(k, 0) for r in out_rows) for k, _ in outs)
+        print("  -- what each denial resolved to (%d rows) --" % len(out_rows))
+        for k, label in outs:
+            n = sum(r["gate"].get(k, 0) for r in out_rows)
+            print("    %-22s %5d  (%s)" % (label, n, "%.0f%%" % (100.0 * n / tot) if tot else "-"))
 se = sum((r.get("nav") or {}).get("serena_err", 0) for r in rows)
 sc = sum((r.get("nav") or {}).get("serena", 0) for r in rows)
 if sc:
