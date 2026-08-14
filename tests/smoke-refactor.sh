@@ -968,19 +968,94 @@ t24="$TMP/serena-schema"; mkdir -p "$t24/bin" "$t24/dead" "$t24/other"
 # that closes it — the nested ones are indented deeper.
 awk '/^  _sr_bin="/{grab=1} grab; grab && /^  fi$/{exit}' \
   "$ROOT/lib/doctor/agent-mcp.sh" > "$t24/check.sh"
-grep -q 'FIELDS_WITHOUT_DEFAULTS' "$t24/check.sh" \
+grep -q 'serena-schema.py' "$t24/check.sh" \
   || fail "[24] could not extract the serena schema check from lib/doctor/agent-mcp.sh"
 
-# A stand-in serena whose shebang names a stand-in interpreter: the check reads
-# the interpreter out of the binary, then asks it which fields are mandatory.
-mk_serena() { # mk_serena <dir> <fields...>
+# --- layer 1: the verdict logic, driven through a stand-in serena module ------
+# lib/doctor/serena-schema.py asks the INSTALLED build two things: which fields
+# have no default, and what the file loads to. Both are faked here so the test
+# does not need serena installed, and so a build that demands a DIFFERENT field
+# can be shown to change the verdict on the same file — that is the property
+# that keeps the required list from drifting back into a hardcoded one.
+# The fake returns the dict straight from JSON: the python under test consumes a
+# loader's output, not YAML text, so JSON exercises exactly the same path.
+mk_fake_serena() { # mk_fake_serena <dir> <required-fields...>
   local d="$1"; shift
-  printf '#!/bin/sh\necho "%s"\n' "$*" > "$d/py"
+  mkdir -p "$d/serena/config"
+  : > "$d/serena/__init__.py"
+  : > "$d/serena/config/__init__.py"
+  {
+    printf 'import json\n'
+    printf 'class ProjectConfig:\n'
+    printf '    FIELDS_WITHOUT_DEFAULTS = {%s}\n' "$(for f in "$@"; do printf '"%s",' "$f"; done)"
+    printf '    @staticmethod\n'
+    printf '    def _load_yaml_dict(p):\n'
+    printf '        return json.load(open(p)), True\n'
+  } > "$d/serena/config/serena_config.py"
+}
+mk_fake_serena "$t24/fake" project_name languages
+mk_fake_serena "$t24/fake_other" some_other_field
+
+mkcfg24() { mkdir -p "$1/.serena"; printf '%s' "$2" > "$1/.serena/project.yml"; }
+py24() { PYTHONPATH="$1" python3 "$ROOT/lib/doctor/serena-schema.py" "${@:2}" 2>&1; }
+
+L_OK="$t24/L/ok";     mkcfg24 "$L_OK"    '{"project_name":"x","languages":["python"]}'
+L_HEAD="$t24/L/head"; mkcfg24 "$L_HEAD"  '{"project_name":"x","language_backend":null,"language_servers":["python"]}'
+L_EMPTY="$t24/L/em";  mkcfg24 "$L_EMPTY" '{"project_name":"x","languages":[]}'
+L_JUNK="$t24/L/junk"; mkcfg24 "$L_JUNK"  'not json at all'
+
+out="$(py24 "$t24/fake" "$L_OK/.serena/project.yml")"
+printf '%s\n' "$out" | grep -q '^\[OK\].*languages=python' || fail "[24] a loadable config was not accepted: $out"
+
+# The regression itself, in the spelling HEAD actually writes. A grep for
+# `^languages:` cannot tell this from "present but empty"; the loader can.
+out="$(py24 "$t24/fake" "$L_HEAD/.serena/project.yml")"
+printf '%s\n' "$out" | grep -q '^\[MISS\].*languages' \
+  || fail "[24] a config written by the wrong build passed: $out"
+printf '%s\n' "$out" | grep -q 'it carries language_servers instead' \
+  || fail "[24] the culprit key was not named: $out"
+# language_backend also matches on name and is legitimately empty. Naming it
+# sends the reader to rename a key that is not the problem.
+printf '%s\n' "$out" | grep -q 'carries.*language_backend' \
+  && fail "[24] an unrelated language-ish key was blamed: $out"
+
+# Present-but-empty is a third state, and it is not an error: a repo with no
+# source files is legitimately empty. It is still said out loud, because from
+# the outside an empty list looks exactly like a working setup.
+out="$(py24 "$t24/fake" "$L_EMPTY/.serena/project.yml")"
+printf '%s\n' "$out" | grep -q '^\[NOTE\].*empty' || fail "[24] an empty languages list was silent: $out"
+printf '%s\n' "$out" | grep -q '^\[MISS\]' && fail "[24] an empty list was reported as missing: $out"
+
+out="$(py24 "$t24/fake" "$L_JUNK/.serena/project.yml")"
+printf '%s\n' "$out" | grep -q '^\[WARN\].*could not be parsed' \
+  || fail "[24] an unparsable config did not warn: $out"
+
+# The required list belongs to the installed build, not to this repo.
+out="$(py24 "$t24/fake_other" "$L_OK/.serena/project.yml")"
+printf '%s\n' "$out" | grep -q '^\[MISS\].*some_other_field' \
+  || fail "[24] the required keys are hardcoded — a different build got the same answer"
+
+# The same worktree is reachable by two paths on this machine; reporting it
+# twice would read as two problems.
+out="$(py24 "$t24/fake" "$L_HEAD/.serena/project.yml" "$L_HEAD/.serena/project.yml")"
+[ "$(printf '%s\n' "$out" | grep -c '^\[MISS\]')" = 1 ] \
+  || fail "[24] the same config was reported twice: $out"
+
+# --- layer 2: the bash wiring ------------------------------------------------
+# A stand-in serena whose shebang names a stand-in interpreter. The wiring reads
+# the interpreter out of the binary and hands it the checker plus the configs.
+mk_serena() { # mk_serena <dir> <verdict-line|"">
+  local d="$1"; shift
+  if [ -n "$1" ]; then
+    printf '#!/bin/sh\necho "%s"\n' "$1" > "$d/py"
+  else
+    printf '#!/bin/sh\nexit 1\n' > "$d/py"      # cannot answer
+  fi
   printf '#!%s/py\n' "$d" > "$d/serena"
   chmod +x "$d/py" "$d/serena"
 }
-mk_serena "$t24/bin" languages project_name
-mk_serena "$t24/other" some_other_field       # a build that wants something else
+mk_serena "$t24/bin" '[OK] fixture loads; languages=python'
+mk_serena "$t24/other" '[MISS] fixture lacks required key(s): some_other_field'
 printf '#!%s/absent\n' "$t24" > "$t24/dead/serena"; chmod +x "$t24/dead/serena"
 
 # PATH is set explicitly rather than prefixed: the real serena lives in
@@ -992,13 +1067,18 @@ P_OTHER="$t24/other:/usr/bin:/bin"; P_NONE="/usr/bin:/bin"
 PATH="$P_NONE" command -v serena >/dev/null 2>&1 \
   && fail "[24] serena is on the stripped PATH — the not-installed case cannot be tested here"
 
-run24() { # run24 <project-dir> <path>
-  SCRIPT_DIR="$1" PATH="$2" "$BASH24" -c '
-    WARNINGS=0
-    maybe_timeout() { shift; "$@"; }
-    . "$1"
-    echo "WARNINGS=$WARNINGS"
-  ' _ "$t24/check.sh" 2>&1
+# cwd is pinned to a non-git directory as well as SCRIPT_DIR, because the check
+# now also looks at the repo the session is running in. Without that, every case
+# below picks up this harness's own real .serena/project.yml through
+# `git rev-parse --show-toplevel` and the fixtures decide nothing.
+nogit24="$t24/nogit"; mkdir -p "$nogit24"
+run24() { # run24 <project-dir> <path> [cwd]
+  ( cd "${3:-$nogit24}" && SCRIPT_DIR="$1" PATH="$2" "$BASH24" -c '
+      WARNINGS=0
+      maybe_timeout() { shift; "$@"; }
+      . "$1"
+      echo "WARNINGS=$WARNINGS"
+    ' _ "$t24/check.sh" ) 2>&1
 }
 
 ok24="$t24/ok"; mkdir -p "$ok24/.serena"
@@ -1007,26 +1087,24 @@ out="$(run24 "$ok24" "$P_OK")"
 printf '%s\n' "$out" | grep -q '\[OK\]' || fail "[24] a loadable config was not accepted: $out"
 printf '%s\n' "$out" | grep -qx 'WARNINGS=0' || fail "[24] a loadable config raised a warning: $out"
 
-# The regression itself, in the spelling HEAD actually writes.
-bad24="$t24/head"; mkdir -p "$bad24/.serena"
-printf 'project_name: x\nlanguage_servers:\n  - python\n' > "$bad24/.serena/project.yml"
-out="$(run24 "$bad24" "$P_OK")"
-printf '%s\n' "$out" | grep -q '\[MISS\].*languages' \
-  || fail "[24] a config written by the wrong build passed: $out"
+# The config that is actually failing belongs to the repo the SESSION is in, not
+# to this checkout. Checking only SCRIPT_DIR is how 13 broken configs stayed
+# invisible while doctor reported a clean serena every time.
+cwd24="$t24/cwdrepo"; mkdir -p "$cwd24/.serena"
+printf 'project_name: y\nlanguages:\n  - python\n' > "$cwd24/.serena/project.yml"
+( cd "$cwd24" && git init -q . ) >/dev/null 2>&1
+bare_for_cwd="$t24/bare-b"; mkdir -p "$bare_for_cwd"
+out="$(run24 "$bare_for_cwd" "$P_OK" "$cwd24")"
+printf '%s\n' "$out" | grep -q '\[OK\] fixture' \
+  || fail "[24] the config in the session's own repo was never checked: $out"
+
+# A [MISS] from the checker has to reach doctor's warning count, or the section
+# prints the problem and still exits clean.
+out="$(run24 "$ok24" "$P_OTHER")"
+printf '%s\n' "$out" | grep -q '\[MISS\].*some_other_field' \
+  || fail "[24] the checker's verdict was not relayed: $out"
 printf '%s\n' "$out" | grep -qx 'WARNINGS=1' \
-  || fail "[24] the wrong build's config did not count as a warning: $out"
-
-# The loader reads the document root, so a key nested under another table does
-# not satisfy it — and must not satisfy this check either.
-nest24="$t24/nested"; mkdir -p "$nest24/.serena"
-printf 'project_name: x\nls_specific_settings:\n  languages:\n    - python\n' > "$nest24/.serena/project.yml"
-printf '%s\n' "$(run24 "$nest24" "$P_OK")" | grep -q '\[MISS\].*languages' \
-  || fail "[24] a nested key was accepted in place of the top-level one"
-
-# The required list belongs to the installed build, not to this repo: a serena
-# that demands a different field has to change the verdict on the same file.
-printf '%s\n' "$(run24 "$ok24" "$P_OTHER")" | grep -q '\[MISS\].*some_other_field' \
-  || fail "[24] the required keys are hardcoded — a different build got the same answer"
+  || fail "[24] a MISS verdict did not count as a warning: $out"
 
 # Absent config and absent serena are both "nothing to check", and neither is a
 # problem worth a warning.

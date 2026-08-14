@@ -208,42 +208,47 @@ PYEOF
   # Required keys are read out of the INSTALLED build, not hardcoded, so this
   # asks what this machine's serena demands rather than what it demanded the day
   # this was written.
+  # The config is read through serena's OWN loader rather than grepped. Two
+  # reasons, both paid for:
+  #   - a grep for `^languages:` cannot tell "key absent" from "key present but
+  #     empty", and this check reported [OK] for 13 configs whose key was absent
+  #     entirely — they carried `language_servers:` from a different build, so
+  #     the release raised KeyError before the handshake and reported as a
+  #     connection failure with no reason.
+  #   - the key NAME is not stable. Upstream has already renamed it once in this
+  #     direction; an upgrade can rename it back. Asking the installed loader
+  #     what it needs, and handing it the file, survives that. Restating the
+  #     schema here does not.
+  # The current directory's repo is checked too: sessions run in research repos,
+  # and a check that only ever looks at this checkout cannot see the config that
+  # is actually failing.
   _sr_bin="$(command -v serena 2>/dev/null || true)"
-  _sr_cfg="$SCRIPT_DIR/.serena/project.yml"
+  _sr_cfgs=""
+  for _sr_root in "$SCRIPT_DIR" "$(git rev-parse --show-toplevel 2>/dev/null || true)"; do
+    [ -n "$_sr_root" ] && [ -f "$_sr_root/.serena/project.yml" ] \
+      && _sr_cfgs="${_sr_cfgs:+$_sr_cfgs }$_sr_root/.serena/project.yml"
+  done
   if [ -z "$_sr_bin" ]; then
     echo "  [SKIP] serena not installed"
-  elif [ ! -f "$_sr_cfg" ]; then
-    echo "  [SKIP] .serena/project.yml absent — this checkout is not serena-activated"
+  elif [ -z "$_sr_cfgs" ]; then
+    echo "  [SKIP] .serena/project.yml absent — neither checkout is serena-activated"
   else
     _sr_py="$(sed -n '1s/^#!//p' "$_sr_bin" 2>/dev/null)"
-    _sr_req=""
+    _sr_out=""
     if [ -n "$_sr_py" ] && [ -x "$_sr_py" ]; then
-      _sr_req="$(maybe_timeout 30 "$_sr_py" -c 'from serena.config.serena_config import ProjectConfig; print(" ".join(sorted(ProjectConfig.FIELDS_WITHOUT_DEFAULTS)))' 2>/dev/null || true)"
+      # shellcheck disable=SC2086
+      _sr_out="$(maybe_timeout 30 "$_sr_py" "$SCRIPT_DIR/lib/doctor/serena-schema.py" $_sr_cfgs 2>/dev/null || true)"
     fi
-    if [ -z "$_sr_req" ]; then
+    if [ -z "$_sr_out" ]; then
       # Not "fine" — we could not ask. Staying quiet here is the same shape as
       # the codex runtime dep check, which sat unrun for a whole python version
       # while reporting the zero warnings a clean pass reports.
-      echo "  [WARN] could not read the required keys from the installed serena — schema unverified"
+      echo "  [WARN] could not ask the installed serena to load the config — schema unverified"
       WARNINGS=$((WARNINGS+1))
     else
-      # Top-level keys only: the loader reads the document root, so a `languages:`
-      # nested under some other table would not satisfy it either.
-      _sr_present="$(grep -oE '^[A-Za-z_][A-Za-z0-9_]*:' "$_sr_cfg" | tr -d ':' | sort -u)"
-      _sr_missing=""
-      for _sr_k in $_sr_req; do
-        printf '%s\n' "$_sr_present" | grep -qx "$_sr_k" \
-          || _sr_missing="${_sr_missing:+$_sr_missing }$_sr_k"
-      done
-      if [ -n "$_sr_missing" ]; then
-        echo "  [MISS] .serena/project.yml lacks required key(s): $_sr_missing"
-        echo "         serena raises KeyError before the MCP handshake, so it reports as"
-        echo "         a connection failure with no reason. Another build wrote this file:"
-        echo "         run 'setup.sh sync' to repoint every registration at the installed"
-        echo "         release, then restore the key."
+      printf '%s\n' "$_sr_out" | sed 's/^/  /'
+      if printf '%s\n' "$_sr_out" | grep -q '^\[MISS\]\|^\[WARN\]'; then
         WARNINGS=$((WARNINGS+1))
-      else
-        echo "  [OK] .serena/project.yml carries every key this serena requires ($_sr_req)"
       fi
     fi
   fi
