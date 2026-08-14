@@ -74,12 +74,19 @@ else:
     d = sum(r["gate"].get("denied", 0) for r in gate_rows)
     e = sum(r["gate"].get("escape", 0) for r in gate_rows)
     print("  denials              : %d" % d)
-    print("  텍스트검색: escapes  : %d" % e)
+    # Over-counts on purpose-built greps: the producer matches any Bash command
+    # containing the marker, so searching FOR the marker increments it. On this
+    # machine it reads 587 against 77 denials. Use it as an upper bound; the
+    # sunset below deliberately uses to_escape, which only counts the tool that
+    # actually ran after a denial.
+    print("  텍스트검색: escapes  : %d  (upper bound — see comment)" % e)
     print("  baseline before the gate: serena in 2 of 220 sessions (0.9%)")
     # A denial count says the gate fired, not that it worked. Measured over the
     # first 28 firings: 21% reached serena, 54% re-ran the same search with the
-    # escape appended. That 54% is why the gate was retired: 56.7% of what it
-    # fired on were alternations/prefix sweeps serena cannot answer.
+    # escape appended. Replaying the whole corpus explained that 54%: 56.7% of
+    # what the gate fired on were alternations and prefix sweeps serena cannot
+    # answer, so the escape was the only way forward. The narrowing that follows
+    # from that (symbol-search-gate.js: isSingleSymbol) cuts firings 337 -> 123.
     outs = [("to_serena", "→ serena/lsp (성공)"), ("to_escape", "→ 탈출로 강행"),
             ("to_rg", "→ 다른 rg 재시도"), ("to_read", "→ Read 로 전환"),
             ("to_other", "→ 기타")]
@@ -94,6 +101,26 @@ else:
         for k, label in outs:
             n = sum(r["gate"].get(k, 0) for r in out_rows)
             print("    %-22s %5d  (%s)" % (label, n, "%.0f%%" % (100.0 * n / tot) if tot else "-"))
+        # SUNSET. Keeping this gate was argued for on one prediction: that
+        # narrowing it to single-symbol lookups removes the misfires, and so the
+        # escape share falls away from its 54% baseline. A prediction nobody
+        # checks is how the gate reached 28 firings at 54% escape before anyone
+        # noticed, so the check is computed here rather than promised in prose.
+        #
+        # Reported per FIRING, not per session: firings are the unit the 54%
+        # was measured in, and one session can hold several.
+        SUNSET_N, BASELINE = 20, 54.0
+        esc = sum(r["gate"].get("to_escape", 0) for r in out_rows)
+        share = 100.0 * esc / tot if tot else 0.0
+        print("  -- sunset check (escape share vs the %.0f%% that motivated narrowing) --" % BASELINE)
+        if tot < SUNSET_N:
+            print("    %d/%d firings — undecided, and undecided is not a pass" % (tot, SUNSET_N))
+        elif share >= BASELINE:
+            print("    %.0f%% over %d firings: NOT BELOW BASELINE — narrowing did not work." % (share, tot))
+            print("    The case for keeping the gate was this number falling. Retire it:")
+            print("    hooks/manifest.json (move to `retired`), then delete the hook and its test.")
+        else:
+            print("    %.0f%% over %d firings (baseline %.0f%%) — narrowing is holding." % (share, tot, BASELINE))
 se = sum((r.get("nav") or {}).get("serena_err", 0) for r in rows)
 sc = sum((r.get("nav") or {}).get("serena", 0) for r in rows)
 if sc:

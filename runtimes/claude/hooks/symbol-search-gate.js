@@ -25,10 +25,44 @@
 // Deliberately narrow, because rg is the most-used tool in the corpus and a
 // false positive on 5291 calls would get the whole thing switched off:
 //   - the pattern must be a DEFINITION (`def foo`, `class Bar`, ...)
+//   - it must be a lookup of ONE symbol and nothing else (see isSingleSymbol)
 //   - it must sit inside a quoted argument, not anywhere in the command line
 //   - the project must be serena-activated (.serena/project.yml)
 // A bare word search, a log grep, `rg --files`: all untouched.
 // Escape via current-turn user prompt "텍스트검색:". Fail-open everywhere.
+//
+// The one-symbol rule was added after replaying every firing this hook would
+// produce across ~/.claude/projects. Of 337, only 146 (43.3%) were a lookup of
+// a single symbol. The other 56.7% were shapes serena cannot answer at all:
+//
+//   175  alternation      `def torsion_action_kinematics|def a2_metric_basis`
+//     8  prefix sweep     `^def test_`
+//     7  regex meta       `^-.*(def _red_|BOLTZ_RED_|tail_kill|TAIL)`
+//
+// Denying those achieves nothing: serena returns [] for every one, so the model
+// re-runs the same search with the escape appended. That is not a hypothesis —
+// the escape was used in 54% of the 28 recorded firings, which is the same
+// number as the 56.7% this rule now lets through. Blocking a search that the
+// named replacement cannot serve is pure friction, and it is the friction that
+// teaches the model to reach for the escape by reflex.
+//
+// Replaying this file over the 557 candidate commands in the corpus: 337
+// firings before the rule, 123 after.
+//
+// Two misfire classes are KNOWN TO REMAIN, both inside those 123. Neither is
+// fixable here, and pretending otherwise is worse than naming them:
+//
+//   - the path is inside the project but serena ignores it (gitignored build/,
+//     vendored trees, .venv). serena answers "ValueError: ... while the path is
+//     ignored" — the very error that opened this investigation. Knowing this at
+//     PreToolUse time would mean reading serena's own ignore config from a hook
+//     that must stay fast and fail-open.
+//   - the pattern is one symbol but a ubiquitous one. `def __init__` is a clean
+//     single-symbol lookup whose find_symbol answer measured 40,381 bytes
+//     (`forward` 13,621). Which names explode is not knowable without asking,
+//     and asking is the thing a PreToolUse hook cannot do.
+//
+// So 123 is the count of firings, not the count of useful firings.
 const fs = require('fs');
 const path = require('path');
 
@@ -37,6 +71,47 @@ const USER_MARKER = /텍스트검색:/;
 // makes "I am looking for where this is defined" unambiguous.
 const DEF = /\b(?:def|class|function|func|fn|struct|interface|impl)\s+([A-Za-z_][A-Za-z0-9_]*)/;
 const SEARCH_CMD = /(?:^|[|&;(]|\s)(?:rg|grep|egrep|ack|ag)\s/;
+// True only when the pattern is `def foo` and nothing else — anchors allowed,
+// since `^def foo` is still one symbol. Anything else left over (a paren, a
+// character class, an alternation, a second word) means the search is not the
+// question find_symbol answers, so the gate must stay out of the way.
+//
+// `hit` is the DEF match, so removing hit[0] removes the keyword AND the name
+// in one step; whatever survives is by definition not part of the lookup.
+//
+// There was an explicit alternation test here first. It was dead: an
+// alternation cannot exist without leaving a token outside the `def foo` match,
+// so this check already catches every one. Checked against the corpus rather
+// than argued — of the patterns this hook would fire on, the number carrying an
+// alternation AND no leftover token is 0, and a mutation removing the
+// alternation test killed no test.
+//
+// Strict on purpose. `class Foo\b` is a single-symbol lookup that this rejects,
+// because the asymmetry runs one way: a gate that stays quiet costs nothing,
+// while a gate that fires on a search serena cannot answer costs a denial, a
+// re-run and an escape — and teaches the escape as a reflex.
+function isSingleSymbol(pattern, hit) {
+  // No .trim() here: it was written, no test needed it, and dropping it only
+  // makes the rule stricter (a stray space keeps the gate quiet), which is the
+  // side this hook should err on.
+  const rest = (pattern.slice(0, hit.index) + pattern.slice(hit.index + hit[0].length))
+    .replace(/^\^+/, '')
+    .replace(/\$+$/, '');
+  if (rest !== '') return false;
+  // A trailing underscore rejects two different things at once, which is why
+  // there is one rule here and not two:
+  //   - prefix sweeps, how every one in the corpus was written (`^def test_`,
+  //     `^def _red_`). serena has no prefix mode reachable from a name, so
+  //     these are denials with no destination.
+  //   - dunders. `def __init__` is a single symbol by shape and a catastrophe
+  //     by answer, because every class in the tree defines one: find_symbol
+  //     measured 40,381 bytes against the ~20KB cap rg's output would have hit.
+  //     A separate /^__.*__$/ rule was written for this and every mutation of
+  //     it survived — this line already covered it.
+  // It does NOT reject a leading underscore: `def _validate_shapes` is a normal
+  // private definition and serena answers it in 195 bytes.
+  return !hit[1].endsWith('_');
+}
 
 // Same scan as bash-size-guard.js — duplicated on purpose: requiring a sibling
 // hook would run its stdin loop.
@@ -123,6 +198,7 @@ process.stdin.on('end', () => {
     if (pattern === null) return process.exit(0);
     const hit = DEF.exec(pattern);
     if (!hit) return process.exit(0);
+    if (!isSingleSymbol(pattern, hit)) return process.exit(0);
     const symbol = hit[1];
     if (userAllowedTextSearch(payload.transcript_path)) return process.exit(0);
 

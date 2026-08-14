@@ -87,6 +87,46 @@ check('glob flag value is not the pattern', 'rg -g "*.py" "TODO" .', serenaProj,
 // A glob shaped like a definition is still a glob, not the search term.
 check('glob that looks like a definition', 'rg -g "class Foo*" "TODO" .', serenaProj, 'pass');
 
+// --- false positive #3: shapes serena cannot answer, so denying is pure loss -
+// Every pattern below is copied verbatim from ~/.claude/projects, where this
+// hook would have fired on it. Replayed over all 337 firings, 56.7% looked like
+// these; serena returns [] for each, so the denial only bought a re-run with
+// the escape appended — which is exactly the 54% escape rate that was measured.
+check('alternation: a second definition would be silently dropped',
+      'rg "def torsion_action_kinematics|def a2_metric_basis" src/', serenaProj, 'pass');
+check('escaped alternation is the same question',
+      "rg '^def _red_exact_v\\|^def _red_' .", serenaProj, 'pass');
+check('alternation mixing definitions and plain text',
+      'rg "_MANIFEST_REQUIRED\\|CALIBRATION_GATE\\|def save_calibration_manifest" .',
+      serenaProj, 'pass');
+// A prefix sweep asks "every test", not "this symbol". find_symbol has no
+// prefix mode reachable from a name, so the denial has no destination.
+check('prefix sweep is not a symbol lookup', 'rg "^def test_" tests/', serenaProj, 'pass');
+check('underscore-suffixed prefix sweep', 'rg -n "^def _red_" src/', serenaProj, 'pass');
+// Regex machinery around the keyword means the search is a filter, not a lookup.
+check('regex metacharacters around the definition',
+      'rg "^-.*(def _red_|BOLTZ_RED_|tail_kill)" log.txt', serenaProj, 'pass');
+// These two carry no alternation and no trailing underscore, so the leftover-
+// token rule is the only thing that rejects them. Without them that rule is
+// redundant with the other two and a mutation removing it survives — which is
+// how it was found. Both are verbatim from the corpus: the first searches diff
+// lines for an added test, the second is a bounded-width extraction.
+check('a diff-line search is not a symbol lookup',
+      'rg "^\\+def test" patch.diff', serenaProj, 'pass');
+check('a bounded-width extraction is not a symbol lookup',
+      'rg "function EM([ -~]\\{0,600\\}" bundle.js', serenaProj, 'pass');
+// A dunder passes every shape rule and still must not fire: every class defines
+// one, so find_symbol returns the whole tree. `def __init__` measured 40,381
+// bytes against the ~20KB cap rg would have hit.
+check('a dunder is one symbol by shape and unbounded by answer',
+      'rg "def __init__" src/', serenaProj, 'pass');
+check('dunder rule does not swallow a leading-underscore private',
+      'rg "def _validate_shapes" src/', serenaProj, 'deny');
+
+// ...but an anchor alone still names exactly one symbol, so it must still fire.
+check('a leading anchor is still one symbol', 'rg "^def parse_config" src/', serenaProj, 'deny');
+check('both anchors are still one symbol', 'rg "^class Foo$" src/', serenaProj, 'deny');
+
 // --- ordinary searches must be untouched ------------------------------------
 check('plain word search', 'rg "TODO" docs/', serenaProj, 'pass');
 check('file listing', 'rg --files', serenaProj, 'pass');
