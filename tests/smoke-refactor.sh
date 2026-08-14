@@ -1041,6 +1041,158 @@ out="$(py24 "$t24/fake" "$L_HEAD/.serena/project.yml" "$L_HEAD/.serena/project.y
 [ "$(printf '%s\n' "$out" | grep -c '^\[MISS\]')" = 1 ] \
   || fail "[24] the same config was reported twice: $out"
 
+# --- layer 1b: --fix repairs the file instead of describing the repair --------
+# Reporting-only was the first design. It left one YAML to hand-edit per repo
+# per machine, which is what the operator objected to and what the harness's own
+# "config logic must be idempotent" rule forbids. The properties asserted here
+# are the ones that make a config rewrite safe to ship, and each was a real
+# failure mode raised in review rather than an imagined one.
+#
+# This fake parses the file as text, unlike the JSON one above: --fix edits
+# lines, so a JSON fixture would never exercise the code under test.
+mkdir -p "$t24/fake_yml/serena/config"
+: > "$t24/fake_yml/serena/__init__.py"; : > "$t24/fake_yml/serena/config/__init__.py"
+cat > "$t24/fake_yml/serena/config/serena_config.py" <<'PYEOF'
+class ProjectConfig:
+    FIELDS_WITHOUT_DEFAULTS = {"project_name", "languages"}
+    @staticmethod
+    def _load_yaml_dict(p):
+        d, cur = {}, None
+        for raw in open(p, encoding="utf-8"):
+            if raw.lstrip().startswith("#") or not raw.strip():
+                continue
+            if raw.startswith(" ") or raw.startswith("\t"):
+                if raw.strip().startswith("- ") and cur:
+                    d[cur].append(raw.strip()[2:])
+                continue
+            k, _, v = raw.partition(":")
+            v = v.split("#", 1)[0].strip()
+            d[k], cur = (v if v else []), k
+        return d, True
+PYEOF
+
+BROKEN24='project_name: fixture
+# a comment naming language_servers: must never be rewritten
+language_servers:
+  - python
+  - bash
+  indented_language_servers: keep-me
+language_backend:
+'
+mkcfg24 "$t24/fixme" "$BROKEN24"
+cp "$t24/fixme/.serena/project.yml" "$t24/expected-before.yml"
+
+# Default is the dry run. A health check that edits files when not asked is a
+# health check nobody can run safely.
+out="$(py24 "$t24/fake_yml" "$t24/fixme/.serena/project.yml")"
+cmp -s "$t24/expected-before.yml" "$t24/fixme/.serena/project.yml" \
+  || fail "[24] running without --fix modified the config"
+
+# The same worktree under two paths shares one inode here, exactly as the real
+# ones do. An atomic temp-write-then-rename would split that link and leave the
+# two paths silently diverged, so the write has to be in place.
+ln "$t24/fixme/.serena/project.yml" "$t24/hardlink.yml"
+ino_before="$(stat -c %i "$t24/fixme/.serena/project.yml")"
+
+out="$(py24 "$t24/fake_yml" --fix "$t24/fixme/.serena/project.yml")"
+printf '%s\n' "$out" | grep -q '\[FIXED\].*language_servers -> languages' \
+  || fail "[24] --fix did not repair a config the loader could not read: $out"
+[ "$(stat -c %i "$t24/fixme/.serena/project.yml")" = "$ino_before" ] \
+  || fail "[24] --fix replaced the inode — a hardlinked worktree config would have split"
+grep -q '^languages:' "$t24/hardlink.yml" \
+  || fail "[24] the hardlinked path did not see the repair"
+
+# Only the key changes. These files carry ~10KB of comments; a YAML round-trip
+# would delete all of it and the test would still pass on "it loads".
+grep -q '# a comment naming language_servers: must never be rewritten' "$t24/fixme/.serena/project.yml" \
+  || fail "[24] --fix rewrote a comment that merely mentions the key"
+grep -q '  indented_language_servers: keep-me' "$t24/fixme/.serena/project.yml" \
+  || fail "[24] --fix touched an indented key instead of the top-level one"
+grep -q '^language_backend:' "$t24/fixme/.serena/project.yml" \
+  || fail "[24] --fix renamed the empty decoy key as well"
+# Compared against the copy taken before the fix, not against a re-rendering of
+# the fixture string: the first version of this line rebuilt the expected text
+# with printf and counted one newline too many, so it failed on a correct fix.
+[ "$(wc -l < "$t24/expected-before.yml")" = "$(wc -l < "$t24/fixme/.serena/project.yml")" ] \
+  || fail "[24] --fix changed the line count — this is a key rename, not a reformat"
+# And only one line differs at all.
+[ "$(diff "$t24/expected-before.yml" "$t24/fixme/.serena/project.yml" | grep -c '^[<>]')" = 2 ] \
+  || fail "[24] --fix changed more than the single key line"
+
+# Idempotent, and it leaves nothing behind. A .bak accumulating next to a config
+# is how a later run restores a stale intermediate state.
+out="$(py24 "$t24/fake_yml" --fix "$t24/fixme/.serena/project.yml")"
+printf '%s\n' "$out" | grep -q '^\[OK\]' \
+  || fail "[24] a second --fix did not report the config as already loading: $out"
+[ -e "$t24/fixme/.serena/project.yml.oma-bak" ] \
+  && fail "[24] --fix left a backup behind"
+
+# Nothing to rename is not the same as a repair. Saying so keeps "could not fix"
+# out of the same output shape as "fixed".
+mkcfg24 "$t24/nocand" 'project_name: bare
+'
+out="$(py24 "$t24/fake_yml" --fix "$t24/nocand/.serena/project.yml")"
+printf '%s\n' "$out" | grep -q 'SKIP FIX' \
+  || fail "[24] a config with no rename candidate was not reported as unfixable: $out"
+
+# Two plausible candidates is a guess, and guessing which key holds the truth
+# is how a repair corrupts a config. Without this fixture the guard is
+# untested: removing it survived every other assertion here.
+mkcfg24 "$t24/twocand" 'project_name: ambiguous
+language_servers:
+  - python
+extra_languages_list:
+  - bash
+'
+out="$(py24 "$t24/fake_yml" --fix "$t24/twocand/.serena/project.yml")"
+printf '%s\n' "$out" | grep -q 'SKIP FIX' \
+  || fail "[24] --fix picked between two rename candidates instead of refusing: $out"
+grep -q '^language_servers:' "$t24/twocand/.serena/project.yml" \
+  || fail "[24] --fix edited a config it said it would not repair"
+
+# A rename that leaves the loader still unhappy must be undone. Fake build that
+# refuses an empty language list, so the rename lands and verification still
+# fails — the only shape that exercises the restore path.
+mkdir -p "$t24/fake_strict/serena/config"
+: > "$t24/fake_strict/serena/__init__.py"; : > "$t24/fake_strict/serena/config/__init__.py"
+# The candidate must hold a NON-EMPTY list or it is never a rename candidate at
+# all — the first version of this fixture used an empty one, so repair() was
+# never called and the assertions below passed without exercising anything.
+sed 's/return d, True/return (({} if "poison" in (d.get("languages") or []) else d), True)/' \
+  "$t24/fake_yml/serena/config/serena_config.py" > "$t24/fake_strict/serena/config/serena_config.py"
+mkcfg24 "$t24/strict" 'project_name: strict
+language_servers:
+  - poison
+'
+cp "$t24/strict/.serena/project.yml" "$t24/strict-before.yml"
+out="$(py24 "$t24/fake_strict" --fix "$t24/strict/.serena/project.yml")"
+printf '%s\n' "$out" | grep -q '\[FIX FAILED\]' \
+  || fail "[24] a rename the loader still rejects was not reported as failed: $out"
+printf '%s\n' "$out" | grep -q '\[FIXED\]' \
+  && fail "[24] --fix claimed success on a config the loader still rejects: $out"
+cmp -s "$t24/strict-before.yml" "$t24/strict/.serena/project.yml" \
+  || fail "[24] a failed repair was not rolled back"
+[ -e "$t24/strict/.serena/project.yml.oma-bak" ] \
+  && fail "[24] a failed repair left its backup behind"
+
+# --registered reaches the configs this checkout cannot see. Checking only the
+# current repo is why a broken config in a research repo stayed invisible until
+# doctor happened to run from inside it, and why fixing a machine meant one
+# `cd` per repo. serena's registry is the list it will actually open.
+reghome24="$t24/reghome"; mkdir -p "$reghome24/.serena"
+mkcfg24 "$t24/regproj" 'project_name: registered
+languages:
+  - python
+'
+printf 'projects:\n- %s\n' "$t24/regproj" > "$reghome24/.serena/serena_config.yml"
+out="$(HOME="$reghome24" py24 "$t24/fake_yml" --registered)"
+printf '%s\n' "$out" | grep -q "$t24/regproj" \
+  || fail "[24] --registered did not reach a project outside the given paths: $out"
+# And it is opt-in: without the flag the same call sees nothing.
+out="$(HOME="$reghome24" py24 "$t24/fake_yml")"
+printf '%s\n' "$out" | grep -q "$t24/regproj" \
+  && fail "[24] the registry was read without --registered"
+
 # --- layer 2: the bash wiring ------------------------------------------------
 # A stand-in serena whose shebang names a stand-in interpreter. The wiring reads
 # the interpreter out of the binary and hands it the checker plus the configs.
@@ -1109,9 +1261,28 @@ printf '%s\n' "$out" | grep -qx 'WARNINGS=1' \
 # Absent config and absent serena are both "nothing to check", and neither is a
 # problem worth a warning.
 bare24="$t24/bare"; mkdir -p "$bare24"
-out="$(run24 "$bare24" "$P_OK")"
-printf '%s\n' "$out" | grep -q '\[SKIP\]' || fail "[24] a non-activated checkout was not skipped: $out"
+# "Nothing to check" now means no activated checkout AND no serena registry.
+# Skipping on the checkout alone is what hid the configs that mattered: the
+# broken ones lived in research repos, so doctor only ever saw them if it
+# happened to be invoked from inside one, and repairing a machine meant
+# visiting each repo by hand. HOME is redirected so the developer's real
+# registry cannot decide this assertion either way.
+home24="$t24/nohome"; mkdir -p "$home24"
+out="$(HOME="$home24" run24 "$bare24" "$P_OK")"
+printf '%s\n' "$out" | grep -q '\[SKIP\]' || fail "[24] a non-activated checkout with no registry was not skipped: $out"
 printf '%s\n' "$out" | grep -qx 'WARNINGS=0' || fail "[24] a non-activated checkout warned: $out"
+
+# With a registry present the check runs even from a directory that is not
+# itself activated — that is the whole point of reaching the other repos.
+reg24="$t24/withhome"; mkdir -p "$reg24/.serena"
+printf 'projects:\n- %s\n' "$bare24" > "$reg24/.serena/serena_config.yml"
+mkdir -p "$bare24/.serena"; printf 'project_name: registered-only\nlanguages:\n- python\n' > "$bare24/.serena/project.yml"
+out="$(HOME="$reg24" run24 "$bare24" "$P_OK")"
+printf '%s\n' "$out" | grep -q '\[SKIP\]' \
+  && fail "[24] a registry was present and the check still skipped: $out"
+# Whether the registry is actually READ is asserted at layer 1 instead: the
+# stand-in interpreter here echoes a fixed verdict and cannot show which paths
+# it was handed.
 out="$(run24 "$ok24" "$P_NONE")"
 printf '%s\n' "$out" | grep -q '\[SKIP\]' || fail "[24] an uninstalled serena was not skipped: $out"
 printf '%s\n' "$out" | grep -qx 'WARNINGS=0' || fail "[24] an uninstalled serena warned: $out"

@@ -230,14 +230,27 @@ PYEOF
   done
   if [ -z "$_sr_bin" ]; then
     echo "  [SKIP] serena not installed"
-  elif [ -z "$_sr_cfgs" ]; then
-    echo "  [SKIP] .serena/project.yml absent — neither checkout is serena-activated"
+  elif [ -z "$_sr_cfgs" ] && [ ! -f "$HOME/.serena/serena_config.yml" ]; then
+    # Neither checkout is activated AND serena has no registry, so there is
+    # genuinely nothing to load. With a registry present the check still runs:
+    # the configs that matter most are in other repos, and skipping on "this
+    # directory is not activated" is what hid them.
+    echo "  [SKIP] .serena/project.yml absent and no serena registry — nothing to load"
   else
     _sr_py="$(sed -n '1s/^#!//p' "$_sr_bin" 2>/dev/null)"
     _sr_out=""
     if [ -n "$_sr_py" ] && [ -x "$_sr_py" ]; then
       # shellcheck disable=SC2086
-      _sr_out="$(maybe_timeout 30 "$_sr_py" "$SCRIPT_DIR/lib/doctor/serena-schema.py" $_sr_cfgs 2>/dev/null || true)"
+      # --registered adds every project in serena's own registry, so one run
+      # covers the machine instead of only whichever repo doctor was invoked
+      # from. OMA_FIX=1 turns the report into a repair; the default stays a
+      # dry run, because a config rewrite is not something a health check
+      # should do without being asked.
+      _sr_fix=""
+      [ "${OMA_FIX:-0}" = "1" ] && _sr_fix="--fix"
+      # shellcheck disable=SC2086
+      _sr_out="$(maybe_timeout 60 "$_sr_py" "$SCRIPT_DIR/lib/doctor/serena-schema.py" \
+        --registered $_sr_fix $_sr_cfgs 2>/dev/null || true)"
     fi
     if [ -z "$_sr_out" ]; then
       # Not "fine" — we could not ask. Staying quiet here is the same shape as
