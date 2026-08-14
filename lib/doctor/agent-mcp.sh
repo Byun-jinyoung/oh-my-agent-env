@@ -188,7 +188,43 @@ PYEOF
   fi
 
   echo ""
-  echo "[ Serena project config ]"
+  echo "[ Code graph freshness ]"
+# What doctor checked before: `graphify` resolves on PATH, SKILL.md exists. Both
+# were true on a machine whose CRG graph was 351 commits behind HEAD and whose
+# worktree had no graphify output at all. Installed is not current, and a stale
+# graph answers confidently about code that has moved.
+_gf="$SCRIPT_DIR/lib/doctor/graph-freshness.sh"
+_gf_roots="$SCRIPT_DIR $(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -f "$HOME/.serena/serena_config.yml" ] && command -v python3 >/dev/null 2>&1; then
+  # Same registry the serena check reads: the repos work actually happens in.
+  _gf_roots="$_gf_roots $(python3 - <<'PYEOF' 2>/dev/null || true
+import os, sys
+try:
+    import yaml
+    d = yaml.safe_load(open(os.path.expanduser("~/.serena/serena_config.yml"))) or {}
+except Exception:
+    sys.exit(0)
+print(" ".join(str(p) for p in (d.get("projects") or [])))
+PYEOF
+)"
+fi
+if [ ! -x "$_gf" ]; then
+  echo "  [SKIP] graph-freshness.sh missing"
+else
+  # shellcheck disable=SC2086
+  _gf_out="$(maybe_timeout 30 bash "$_gf" $_gf_roots 2>/dev/null || true)"
+  if [ -z "$_gf_out" ]; then
+    echo "  [SKIP] no git repo among the known roots"
+  else
+    printf '%s\n' "$_gf_out"
+    if printf '%s\n' "$_gf_out" | grep -q '^  \[STALE\]'; then
+      WARNINGS=$((WARNINGS+1))
+    fi
+  fi
+fi
+echo
+
+echo "[ Serena project config ]"
   # Registered is not the same as able to start, and that gap is exactly how
   # serena failed here: the entry resolved, the binary existed, and the server
   # still died before the handshake because .serena/project.yml had been written

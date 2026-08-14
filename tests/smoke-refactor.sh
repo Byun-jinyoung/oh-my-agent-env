@@ -1619,4 +1619,96 @@ out28="$(
 )"
 [ -z "$out28" ] || fail "[28] a checkout with no .claude/rules emitted an index anyway: $out28"
 
+echo "[29] a code graph is judged by how stale it is, not by whether the tool installed"
+# Measured on the research worktree: the CRG graph was built at 0c0ebdcd while
+# HEAD was 785f565f — 351 commits and 51 changed source files later, including
+# every directory that work actually touched. doctor reported nothing, because
+# what it checks is that the `graphify` command exists and that SKILL.md is on
+# disk. Installed is stage one of five; this is the same shape as the serena
+# configs that were present, prescribed, and unloadable.
+#
+# A stale graph is worse than an absent one: absent is obvious, stale answers
+# confidently about code that no longer exists.
+gf29="$ROOT/lib/doctor/graph-freshness.sh"
+[ -x "$gf29" ] || fail "[29] no graph freshness check ships (expected $gf29)"
+
+mkrepo29() { # mkrepo29 <dir>  -> a git repo with one commit
+  mkdir -p "$1"; ( cd "$1" && git init -q . && git config user.email t@t && git config user.name t \
+    && echo x > f.py && git add f.py && git commit -qm one ) >/dev/null 2>&1
+}
+run29() { bash "$gf29" "$@" 2>&1; }
+
+# absent: the tool never produced anything here. Named, because "no output" is
+# how graphify stayed dead in every checkout for its whole life.
+r29a="$TMP/g29/absent"; mkrepo29 "$r29a"
+out29="$(run29 "$r29a")"
+printf '%s\n' "$out29" | grep -q '\[MISS\]' \
+  || fail "[29] a repo with no graph at all was not reported: $out29"
+
+# stale: artifact older than HEAD. The count is the point — "stale" without a
+# magnitude reads as a nit, and 351 is not a nit.
+r29s="$TMP/g29/stale"; mkrepo29 "$r29s"
+mkdir -p "$r29s/graphify-out"; echo '{}' > "$r29s/graphify-out/graph.json"
+touch -d '2020-01-01' "$r29s/graphify-out/graph.json"
+( cd "$r29s" && echo y >> f.py && git commit -qam two ) >/dev/null 2>&1
+out29="$(run29 "$r29s")"
+printf '%s\n' "$out29" | grep -q '\[STALE\]' \
+  || fail "[29] a graph older than HEAD was not reported stale: $out29"
+printf '%s\n' "$out29" | grep -qE '\[STALE\].*[0-9]+ commit' \
+  || fail "[29] staleness was reported without saying how far behind: $out29"
+
+# fresh: no warning, or the check cries wolf and gets ignored like every other
+# channel this harness measured at 0-5%.
+r29f="$TMP/g29/fresh"; mkrepo29 "$r29f"
+mkdir -p "$r29f/graphify-out"; echo '{}' > "$r29f/graphify-out/graph.json"
+out29="$(run29 "$r29f")"
+printf '%s\n' "$out29" | grep -q '\[OK\]' \
+  || fail "[29] a graph newer than HEAD was not reported healthy: $out29"
+printf '%s\n' "$out29" | grep -q '\[STALE\]' \
+  && fail "[29] a fresh graph was reported stale"
+
+# The false green this check shipped with: a CRG database records the commit it
+# was built from, and reading that database rewrites its mtime. On the machine
+# that prompted this, a graph 351 commits old reported itself current the first
+# time the check ran, because the file had just been opened. The recorded commit
+# is the only honest basis; mtime is the fallback for graphify, which records
+# nothing.
+r29d="$TMP/g29/mtime-lies"; mkrepo29 "$r29d"
+old29="$(git -C "$r29d" rev-parse HEAD)"
+( cd "$r29d" && echo z >> f.py && git commit -qam two && echo w >> f.py && git commit -qam three ) >/dev/null 2>&1
+mkdir -p "$r29d/.code-review-graph"
+python3 - "$r29d/.code-review-graph/graph.db" "$old29" <<'PY'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+con.execute("create table metadata (key text, value text)")
+con.execute("insert into metadata values ('git_head_sha', ?)", (sys.argv[2],))
+con.commit()
+PY
+# Freshly touched: mtime alone would call this current.
+touch "$r29d/.code-review-graph/graph.db"
+out29="$(run29 "$r29d")"
+printf '%s\n' "$out29" | grep -qE '\[STALE\].*2 commit' \
+  || fail "[29] a graph whose recorded commit is 2 behind was judged by mtime instead: $out29"
+printf '%s\n' "$out29" | grep -q 'recorded commit' \
+  || fail "[29] the verdict did not say it used the recorded commit: $out29"
+
+# The harness tells the model to run `graphify update .`; doing so drops
+# graphify-out/ into the repo root. With no ignore entry that is untracked
+# noise in someone else's project, which is why it has not been run.
+out29="$(run29 "$r29f")"
+printf '%s\n' "$out29" | grep -qi 'ignore' \
+  || fail "[29] an unignored graph artifact was not flagged as git pollution: $out29"
+printf 'graphify-out/\n' > "$r29f/.gitignore"
+out29="$(run29 "$r29f")"
+printf '%s\n' "$out29" | grep -qi 'ignore' \
+  && fail "[29] an already-ignored artifact was still flagged"
+
+# One checkout arrives three ways — as SCRIPT_DIR, as the cwd git root, and as a
+# registered serena project — and on the real machine it printed three identical
+# verdicts, which reads as three repos in trouble. Seen once on stdout, not
+# noticed by any assertion until a mutation removing the dedupe survived.
+out29="$(run29 "$r29f" "$r29f" "$r29f/.")"
+[ "$(printf '%s\n' "$out29" | grep -c 'graphify-out/graph.json')" = 1 ] \
+  || fail "[29] the same repo was reported once per path it was named by: $out29"
+
 echo "smoke-refactor OK"
