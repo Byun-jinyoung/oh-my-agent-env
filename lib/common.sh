@@ -730,6 +730,48 @@ PYEOF
 #   Layer B — runtimes/<cli>/tools.md  (CLI-specific tool guidance)
 # Regenerated on every sync; idempotent. No @-include — concatenated so it
 # works regardless of per-CLI include support.
+# Layer C — an index of the coding rules, by absolute path.
+#
+# Reported from a worktree: "코드 작성 규칙을 못 찾는데". Not a bug in that repo.
+# .claude/rules/*.md — backend, quality, debug, database, frontend, commit — live
+# in this checkout only, and Layer A carries rules/*.md (how to work) plus
+# tools.md. So outside this repo the coding standards did not exist at all, and
+# no test here could notice: every test runs inside the checkout, and a check
+# that only looks where the files are cannot see where they are not.
+#
+# An index rather than the content. Inlining all thirteen would add ~22KB to a
+# file that is resident in every session of every project, most of which will
+# never touch a database or an .arb. The index is ~1KB and names the trigger, so
+# the file is read when it applies. Note this is NOT the on-demand skill channel
+# measured at 0-5% uptake — that number is about Skill() calls; this text is
+# resident, the same channel as the rules above it, which are followed.
+#
+# Absolute paths because the reader is in another repo: a relative path resolves
+# against their cwd, which is the mistake that left the graphify hook gated on a
+# graph.json no checkout here has.
+emit_rule_index() {
+  local dir="$SCRIPT_DIR/.claude/rules" f
+  ls "$dir"/*.md >/dev/null 2>&1 || return 0
+  printf '\n# 코드 작성 규칙 — 파일 위치 (Layer C)\n\n'
+  printf '아래 규칙은 이 파일에 인라인되어 있지 않다. 해당 작업을 할 때 경로를 읽는다.\n'
+  printf '어느 프로젝트에서 작업하든 경로는 그대로 유효하다 (절대 경로).\n\n'
+  printf '| 규칙 | 적용 시점 | 경로 |\n|---|---|---|\n'
+  for f in "$dir"/*.md; do
+    [ -f "$f" ] || continue
+    # Title from the file's own H1 so the index cannot drift from the rule; the
+    # scope column is read from the project CLAUDE.md table where one exists.
+    local name title scope
+    name="$(basename "$f" .md)"
+    title="$(sed -n 's/^# *//p' "$f" | head -1)"
+    # The path cell must name .agents/rules/, or the workflows table matches
+    # first: it carries a `| debug |` row too, and the index then advertised
+    # debug.md's scope as "Root cause + minimal fix".
+    scope="$(sed -n "s#^| *$name *| *\`[^\`]*\.agents/rules/[^\`]*\` *| *\([^|]*\).*#\1#p" \
+      "$SCRIPT_DIR/CLAUDE.md" 2>/dev/null | head -1 | sed 's/[[:space:]]*$//')"
+    printf '| %s | %s | %s |\n' "${title:-$name}" "${scope:-on request}" "$f"
+  done
+}
+
 assemble_global_rules() {
   local rules_dir="$SCRIPT_DIR/rules"
   if [ ! -d "$rules_dir" ] || ! ls "$rules_dir"/*.md >/dev/null 2>&1; then
@@ -750,7 +792,7 @@ assemble_global_rules() {
       continue
     fi
     mkdir -p "$dir"
-    { cat "$rules_dir"/*.md; printf '\n'; cat "$tools"; } > "$dir/.oma-assembled.tmp"
+    { cat "$rules_dir"/*.md; emit_rule_index; printf '\n'; cat "$tools"; } > "$dir/.oma-assembled.tmp"
     # [OK] used to print unconditionally, including on the runs where
     # write_managed_block had just refused to touch the file. The line a human
     # reads to decide the sync worked was the line least able to tell them.

@@ -1546,4 +1546,77 @@ printf '%s\n' "$out27" | grep -q 'holding' \
 printf '%s\n' "$out27" | grep -q 'NOT BELOW BASELINE' \
   && fail "[27] a passing escape share still tripped the sunset"
 
+echo "[28] the coding rules are reachable from a project that is not this checkout"
+# Reported from a worktree: "코드 작성 규칙을 못 찾는데". It was not a bug in
+# that repo — .claude/rules/*.md (backend, quality, debug, database, frontend…)
+# live in THIS checkout only, and the assembled global file carries rules/*.md
+# (process rules) plus tools.md and nothing else. So in any other directory the
+# coding standards simply do not exist, by design.
+#
+# Every test in this suite runs inside this checkout, which is why none of them
+# could see it: a check that only ever looks here cannot find what is missing
+# everywhere else. The assertion is therefore about the GLOBAL artifact — the
+# one file that is present in every project — and it names each rule by its
+# absolute path, so following the pointer does not depend on the reader's cwd.
+t28="$TMP/global-rules"; mkdir -p "$t28"
+(
+  SCRIPT_DIR="$ROOT" CONFIG_DIR="$t28/claude" CODEX_DIR="$t28/codex" GEMINI_DIR="$t28/gemini"
+  export SCRIPT_DIR CONFIG_DIR CODEX_DIR GEMINI_DIR
+  # shellcheck disable=SC1091
+  source "$ROOT/lib/common.sh" 2>/dev/null || true
+  assemble_global_rules
+) >/dev/null 2>&1 || true
+# Judged by the artifact, not the subshell's status: log_and_print writes to a
+# log path this harness does not set up here, so the exit code reports the
+# logging, not the assembly. Asserting on the status was the first version and
+# it failed for that reason while the assembly had in fact succeeded.
+g28="$t28/claude/CLAUDE.md"
+[ -f "$g28" ] || fail "[28] no global instruction file was assembled"
+
+missing28=""
+for r in "$ROOT"/.claude/rules/*.md; do
+  [ -f "$r" ] || continue
+  grep -qF "$r" "$g28" || missing28="$missing28 $(basename "$r")"
+done
+[ -z "$missing28" ] \
+  || fail "[28] the global file names no path for:$missing28 — these rules are unreachable outside this checkout"
+
+# A pointer to a file that is not there is worse than no pointer: it reads as
+# coverage. Every path the index offers has to resolve.
+while IFS= read -r p28; do
+  [ -e "$p28" ] || fail "[28] the global file points at a rule that does not exist: $p28"
+done < <(grep -oE "$ROOT/\.claude/rules/[A-Za-z0-9._-]+\.md" "$g28" | sort -u)
+
+# Absolute, not relative: the reader is in another repo, so a relative path
+# resolves against the wrong root — the same cwd assumption that left the
+# graphify hook pointing at a graph.json no checkout here has.
+grep -qE '(^|[^A-Za-z0-9_./-])\.claude/rules/' "$g28" \
+  && fail "[28] the index offers a cwd-relative rule path"
+
+# The scope cell is read out of the project CLAUDE.md, whose rule table is not
+# the only table with a `| debug |` row — the workflow table has one too, and
+# the first version of this index advertised debug.md as applying to "Root cause
+# + minimal fix". A scope has to be one of the shapes that table actually uses,
+# or the index is quietly describing a different document.
+while IFS= read -r sc28; do
+  case "$sc28" in
+    always|"on request"|'**/*'*) ;;
+    *) fail "[28] rule index carries a scope that is not a real scope: '$sc28'" ;;
+  esac
+done < <(sed -n '/^| 규칙 | 적용 시점 |/,/^$/p' "$g28" \
+           | sed -n 's/^| *[^|]* *| *\([^|]*[^| ]\) *|.*/\1/p' \
+           | grep -v '^적용 시점$' | grep -v '^-\+$')
+
+# A checkout with no rule directory must emit nothing, not a heading over an
+# empty table — an index that lists no rules reads as "there are none", which is
+# the same false reassurance this whole step exists to remove.
+empty28="$TMP/no-rules"; mkdir -p "$empty28"
+out28="$(
+  SCRIPT_DIR="$empty28"; export SCRIPT_DIR
+  # shellcheck disable=SC1091
+  source "$ROOT/lib/common.sh" 2>/dev/null || true
+  emit_rule_index 2>/dev/null
+)"
+[ -z "$out28" ] || fail "[28] a checkout with no .claude/rules emitted an index anyway: $out28"
+
 echo "smoke-refactor OK"
