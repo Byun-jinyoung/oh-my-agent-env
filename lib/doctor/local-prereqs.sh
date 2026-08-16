@@ -66,7 +66,10 @@ doctor_local_prereqs() {
   echo ""
 
   echo "[ CLI tools ]"
-  for cmd in git node npm python3 uv claude codex gemini rtk graphify context-mode playwright; do
+  # ocr / semantica-mcp: operator-requested 2026-08-16, installed by
+  # sync_external_tools. Listed here so a machine where that install failed
+  # says so instead of the /ocr plugin and semantica MCP dying quietly.
+  for cmd in git node npm python3 uv claude codex gemini rtk graphify context-mode playwright ocr semantica-mcp; do
     if command -v $cmd &>/dev/null; then echo "  [OK] $cmd"
     else echo "  [MISS] $cmd"; WARNINGS=$((WARNINGS+1)); fi
   done

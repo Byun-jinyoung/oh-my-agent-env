@@ -5,7 +5,8 @@
 doctor_claude_surfaces() {
   echo "[ Plugins ]"
   if command -v claude &>/dev/null; then
-    for p in "octo@nyldn" "claude-mem@thedotmack" "ouroboros@ouroboros" "document-skills@anthropic" "context-mode@context-mode" "codex@openai-codex"; do
+    for p in "octo@nyldn" "claude-mem@thedotmack" "ouroboros@ouroboros" "document-skills@anthropic" "context-mode@context-mode" "codex@openai-codex" \
+             "open-code-review@open-code-review" "andrej-karpathy-skills@karpathy-skills"; do
       if claude plugin list 2>/dev/null | grep -q "$p"; then echo "  [OK] $p"
       else echo "  [MISS] $p"; WARNINGS=$((WARNINGS+1)); fi
     done
@@ -51,7 +52,7 @@ for name, cfg in servers.items():
 PYEOF
 )"
     fi
-    for m in codex-mcp antigravity-mcp serena supermemory; do
+    for m in codex-mcp antigravity-mcp serena supermemory semantica; do
       if printf '%s\n' "$_mcp_list" | grep -qE "$m.*(Connected|Needs authentication)"; then echo "  [OK] $m"
       else
         _why="$(printf '%s\n' "$_mcp_why" | sed -n "s/^$m	//p" | head -1)"

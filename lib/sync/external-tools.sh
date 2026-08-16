@@ -37,6 +37,43 @@ sync_external_tools() {
       log_and_print "    [WARN] cc-alchemy-statusline still not on PATH after install — statusline reset countdown will be stale."
     fi
   fi
+  # open-code-review (`ocr`) — alibaba's deterministic-pipeline code reviewer.
+  # Surveyed 2026-08-07 and rated "conditional" (manual CLI; automatic only
+  # when wired into CI); the operator chose to install it anyway on 2026-08-16.
+  # Package name verified against the upstream README (line 108) and the npm
+  # registry: repository.url = github.com/alibaba/open-code-review, v1.9.4.
+  # The Claude/Codex plugins that expose /ocr slash commands are registered in
+  # sync_plugins_mcp; this is only the binary they shell out to.
+  if command -v ocr &>/dev/null; then
+    log_and_print "    [OK] open-code-review (ocr) installed"
+  else
+    log_and_print "    Installing open-code-review (npm global → $USER_NPM_PREFIX)..."
+    run_with_timeout "open-code-review install" "$NPM_USER_ENV npm install -g @alibaba-group/open-code-review < /dev/null" \
+      | tail -3 || true
+    if command -v ocr &>/dev/null; then
+      log_and_print "    [OK] open-code-review installed -> $(command -v ocr)"
+    else
+      log_and_print "    [WARN] ocr still not on PATH after install — /ocr plugin commands will fail to spawn it."
+    fi
+  fi
+  # semantica — typed context graph + provenance (semantica-agi/semantica, the
+  # enterprise KG the operator confirmed on 2026-08-07, not the 17-star AST
+  # search of the same name). Installed as a uv tool like serena so it lands
+  # in ~/.local/bin without touching the system Python; ships `semantica-mcp`,
+  # which sync_plugins_mcp registers at user scope.
+  if command -v semantica-mcp &>/dev/null; then
+    log_and_print "    [OK] semantica installed"
+  elif command -v uv &>/dev/null; then
+    log_and_print "    Installing semantica (uv tool install semantica → ~/.local/bin)..."
+    run_with_timeout "semantica install" "uv tool install semantica < /dev/null" | tail -3 || true
+    if command -v semantica-mcp &>/dev/null; then
+      log_and_print "    [OK] semantica installed -> $(command -v semantica-mcp)"
+    else
+      log_and_print "    [WARN] semantica-mcp still not on PATH after install — MCP registration below will point at a missing binary."
+    fi
+  else
+    log_and_print "    [SKIP] semantica — uv not found (install uv, then re-run sync)"
+  fi
   # @openai/codex CLI — REQUIRED by codex-mcp (the MCP spawns `codex` from PATH).
   # Without this, codex-mcp connects but every request fails on first spawn.
   #

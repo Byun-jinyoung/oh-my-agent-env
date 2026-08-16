@@ -114,6 +114,16 @@ sync_plugins_mcp() {
     # OpenAI official: /codex:review, /codex:adversarial-review, /codex:rescue, etc.
     # Uses the global `codex` CLI + ~/.codex/config.toml. Coexists with codex-mcp.
     install_plugin "codex-plugin-cc" "codex@openai-codex" "openai/codex-plugin-cc" "codex@openai-codex"
+    # Operator-requested 2026-08-16 (surveyed 2026-08-07, see docs/ADOPTION.md).
+    # open-code-review: /ocr slash commands; shells out to the `ocr` binary that
+    # sync_external_tools installs. Delegation mode (the agent's own LLM does the
+    # review) needs no OCR API key — the mode that fits a single-user machine.
+    install_plugin "open-code-review" "open-code-review@open-code-review" "alibaba/open-code-review" "open-code-review@open-code-review"
+    # karpathy-skills: four prose principles, no enforcement (measured 0 hooks).
+    # Marketplace id `karpathy-skills` and plugin `andrej-karpathy-skills` are
+    # read from the repo's own .claude-plugin/marketplace.json, not the README,
+    # which still names the author's old fork.
+    install_plugin "karpathy-skills" "andrej-karpathy-skills@karpathy-skills" "multica-ai/andrej-karpathy-skills" "andrej-karpathy-skills@karpathy-skills"
   else
     log_and_print "    [SKIP] Claude Code not found"
   fi
@@ -430,5 +440,13 @@ PYEOF
       "claude mcp add -s user serena -e PATH=${CODEX_PATH} -- serena start-mcp-server --context claude-code --open-web-dashboard false" \
       "serena"
     add_mcp "supermemory" "claude mcp add -s user --transport http supermemory https://mcp.supermemory.ai/mcp" ""
+    # semantica-mcp — the MCP entry point of the uv tool sync_external_tools
+    # installs (semantica-agi/semantica). Same baked-PATH pattern as serena so a
+    # Claude spawned from a launcher with a bare PATH still finds ~/.local/bin;
+    # same `binary` guard so a machine where the install failed SKIPs loudly
+    # instead of registering a server that can never start.
+    add_mcp "semantica" \
+      "claude mcp add -s user semantica -e PATH=${CODEX_PATH} -- semantica-mcp" \
+      "semantica-mcp"
   fi
 }
