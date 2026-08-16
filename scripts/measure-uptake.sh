@@ -175,7 +175,7 @@ print()
 # key are a denominator; rows without it are reported as such.
 print("-- tools installed 2026-08-16: are they used at all? --")
 INSTALLED = (("nav", "ocr", "ocr (Bash)"), ("nav", "semantica", "semantica (MCP)"),
-             ("skills", "karpathy", "karpathy skill"))
+             ("skills", "karpathy", "karpathy skill"), ("skills", "ponytail", "ponytail skill"))
 for key, sub, label in INSTALLED:
     carrying = [r for r in rows if sub in (r.get(key) or {})]
     if not carrying:

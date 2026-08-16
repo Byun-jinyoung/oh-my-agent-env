@@ -71,7 +71,7 @@ function scan(file) {
                 ocr: 0, semantica: 0 };
   // Skill loads are not navigation; karpathy-guidelines is a norm the model
   // opts into, and whether it ever does is the whole question about it.
-  const skills = { karpathy: 0 };
+  const skills = { karpathy: 0, ponytail: 0 };
   // `denied` counts firings; the `to_*` counters say what the firing achieved.
   // A denial rate cannot tell a working gate from one the model routes around:
   // in the 28 firings recorded so far, 21% reached serena and 54% re-ran the
@@ -109,6 +109,10 @@ function scan(file) {
         if (n.indexOf('mcp__serena__') === 0) nav.serena++;
         if (n.indexOf('mcp__semantica__') === 0) nav.semantica++;
         if (n === 'Skill' && (inp.skill || '') === 'karpathy-guidelines') skills.karpathy++;
+        // ponytail ships six skills (ponytail, ponytail-review, -audit, -debt,
+        // -gain, -help), plugin-scoped as `ponytail:<name>`. Any of them is an
+        // explicit opt-in on top of the always-on hook injection.
+        if (n === 'Skill' && /^(ponytail:)?ponytail(-[a-z]+)?$/.test(inp.skill || '')) skills.ponytail++;
         if (n.indexOf('lsp_') !== -1) nav.lsp++;
         if (n.indexOf('ast_grep') !== -1) nav.ast_grep++;
         if (n === 'Read') {

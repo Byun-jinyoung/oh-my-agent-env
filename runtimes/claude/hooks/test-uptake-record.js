@@ -79,12 +79,16 @@ const tr5 = transcript([
   use('mcp__semantica__get_graph_summary', {}, 'e'),
   use('Skill', { skill: 'karpathy-guidelines' }, 'f'),
   use('Skill', { skill: 'spec-interview' }, 'g'),                            // not karpathy
+  use('Skill', { skill: 'ponytail:ponytail-review' }, 'h'),
+  use('Skill', { skill: 'ponytail' }, 'i'),
+  use('Skill', { skill: 'ponytailor' }, 'j'),                                 // not ponytail
 ]);
 rows = run({ session_id: 's5', cwd: '/p', reason: 'exit', transcript_path: tr5 }, fresh());
 const r5 = rows[0] || { nav: {}, skills: {} };
 check('ocr counted as a command, not a substring', r5.nav.ocr === 2, JSON.stringify(r5.nav));
 check('semantica MCP calls counted', r5.nav.semantica === 2, JSON.stringify(r5.nav));
 check('karpathy skill load counted, other skills not', r5.skills && r5.skills.karpathy === 1, JSON.stringify(r5.skills));
+check('ponytail skills counted (scoped and bare), lookalike not', r5.skills && r5.skills.ponytail === 2, JSON.stringify(r5.skills));
 // A row from a session that used none of them must still CARRY the keys with
 // 0 — key-absent-vs-zero: absent means "scanner predates the counter", and
 // the consumer renders only rows that carry the key.

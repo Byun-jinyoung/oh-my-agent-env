@@ -124,6 +124,14 @@ sync_plugins_mcp() {
     # read from the repo's own .claude-plugin/marketplace.json, not the README,
     # which still names the author's old fork.
     install_plugin "karpathy-skills" "andrej-karpathy-skills@karpathy-skills" "multica-ai/andrej-karpathy-skills" "andrej-karpathy-skills@karpathy-skills"
+    # ponytail (DietrichGebert, 103k stars): "laziest senior dev" — YAGNI,
+    # stdlib first. Unlike karpathy-skills it is NOT prose-only: plugin.json
+    # declares hooks/claude-codex-hooks.json — SessionStart, SubagentStart and
+    # UserPromptSubmit, all additionalContext injectors, none blocking. Our own
+    # manifest has no SessionStart/SubagentStart hook and one UserPromptSubmit
+    # (inject-core-rules.js), so the two coexist on that event. Requires `node`
+    # on the non-interactive PATH or the hooks stay silent (README:112).
+    install_plugin "ponytail" "ponytail@ponytail" "DietrichGebert/ponytail" "ponytail@ponytail"
   else
     log_and_print "    [SKIP] Claude Code not found"
   fi
