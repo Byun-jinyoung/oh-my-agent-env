@@ -64,6 +64,33 @@ check('serena counted', r.nav.serena === 1);
 check('ranged vs full reads', r.reads.full === 2 && r.reads.ranged === 1, JSON.stringify(r.reads));
 check('duplicate read counted', r.reads.dup === 1, JSON.stringify(r.reads));
 
+// --- the three tools installed 2026-08-16 (ocr, semantica, karpathy) ---------
+// Installed through the harness on the operator's call after the 2026-08-07
+// survey rated them "manual delivery, 0-5% uptake expected". Whether that
+// prediction holds is exactly what this ledger is for, so each gets a counter
+// from the day it was installed. Negative fixtures for ocr: the binary is a
+// 3-letter word and `cmd.indexOf('ocr')` would count `docr`, `ocrypt`, and a
+// path containing it.
+const tr5 = transcript([
+  use('Bash', { command: 'ocr delegate preview' }, 'a'),
+  use('Bash', { command: 'git status && ocr review --from main' }, 'b'),
+  use('Bash', { command: 'ls docr/ ocrypt.py /tmp/ocr-notes.txt' }, 'c'),   // none of these
+  use('mcp__semantica__record_decision', { category: 'x' }, 'd'),
+  use('mcp__semantica__get_graph_summary', {}, 'e'),
+  use('Skill', { skill: 'karpathy-guidelines' }, 'f'),
+  use('Skill', { skill: 'spec-interview' }, 'g'),                            // not karpathy
+]);
+rows = run({ session_id: 's5', cwd: '/p', reason: 'exit', transcript_path: tr5 }, fresh());
+const r5 = rows[0] || { nav: {}, skills: {} };
+check('ocr counted as a command, not a substring', r5.nav.ocr === 2, JSON.stringify(r5.nav));
+check('semantica MCP calls counted', r5.nav.semantica === 2, JSON.stringify(r5.nav));
+check('karpathy skill load counted, other skills not', r5.skills && r5.skills.karpathy === 1, JSON.stringify(r5.skills));
+// A row from a session that used none of them must still CARRY the keys with
+// 0 — key-absent-vs-zero: absent means "scanner predates the counter", and
+// the consumer renders only rows that carry the key.
+check('new keys present at 0 on a session that used none', r.nav.ocr === 0 && r.nav.semantica === 0 && r.skills && r.skills.karpathy === 0,
+      JSON.stringify({ nav: r.nav, skills: r.skills }));
+
 // --- the gate.* counters (hook retired 2026-08-16; still scanned for old rows) --
 const tr2 = transcript([
   use('Bash', { command: 'rg "def foo" lib/' }, 'g'),

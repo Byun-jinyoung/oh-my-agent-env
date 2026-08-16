@@ -166,6 +166,26 @@ elif sc:
 elif sc_all:
     print("  serena calls: %d total, %d in rows that record errors" % (sc_all, sc))
 print()
+# The three tools installed 2026-08-16 (ocr, semantica, karpathy-guidelines).
+# The 2026-08-07 survey predicted 0-5% uptake for anything the model must
+# choose to call; this block is where that prediction gets checked. Key-absent
+# rule again, and it bites harder here than anywhere: every row before the
+# install day lacks these keys, so a .get(k, 0) sum would print "0 sessions"
+# for a window in which the tools did not exist yet. Only rows that CARRY the
+# key are a denominator; rows without it are reported as such.
+print("-- tools installed 2026-08-16: are they used at all? --")
+INSTALLED = (("nav", "ocr", "ocr (Bash)"), ("nav", "semantica", "semantica (MCP)"),
+             ("skills", "karpathy", "karpathy skill"))
+for key, sub, label in INSTALLED:
+    carrying = [r for r in rows if sub in (r.get(key) or {})]
+    if not carrying:
+        print("  %-16s not recorded — no session in window postdates the counter" % label)
+        continue
+    used = sum(1 for r in carrying if r[key][sub] > 0)
+    calls = sum(r[key][sub] for r in carrying)
+    print("  %-16s %d of %d sessions (%.0f%%), %d calls — from rows carrying the field"
+          % (label, used, len(carrying), 100.0 * used / len(carrying), calls))
+print()
 print("-- reads --")
 for sub in ("full", "ranged", "dup"):
     print("  %-8s %6d" % (sub, sum((r.get("reads") or {}).get(sub, 0) for r in rows)))

@@ -1872,4 +1872,40 @@ grep -q 'one behavioural row per session' "$ROOT/runtimes/claude/hooks/uptake-re
 grep -q 'one behavioural row per session' "$ROOT/runtimes/claude/hooks/manifest.json" \
   && fail "[31] manifest.json still claims one row per session; it writes one per SessionEnd"
 
+echo "[32] the ledger reports the 2026-08-16 tools only from rows that carry their counters"
+# ocr / semantica / karpathy were installed 2026-08-16 and counted from that day.
+# Every earlier row lacks the keys. A window of pre-install rows must say "not
+# recorded", never "0 of N sessions" — that is the key-absent-vs-zero rule the
+# ledger already applies to gate.* and serena_err, and this is its third
+# instance, so it is pinned rather than assumed to carry over.
+t32="$TMP/uptake-tools"; mkdir -p "$t32/pre" "$t32/mix"
+printf '{"ts":"2026-08-10T00:00:00Z","session":"old","cwd":"/p","calls":5,"nav":{"rg":3}}\n' > "$t32/pre/rows.jsonl"
+{
+  printf '{"ts":"2026-08-10T00:00:00Z","session":"old","cwd":"/p","calls":5,"nav":{"rg":3}}\n'
+  printf '{"ts":"2026-08-17T00:00:00Z","session":"n1","cwd":"/p","calls":9,"nav":{"rg":1,"ocr":2,"semantica":0},"skills":{"karpathy":1}}\n'
+  printf '{"ts":"2026-08-17T01:00:00Z","session":"n2","cwd":"/p","calls":9,"nav":{"rg":1,"ocr":0,"semantica":0},"skills":{"karpathy":0}}\n'
+} > "$t32/mix/rows.jsonl"
+run32() { OMA_UPTAKE_DIR="$t32/$1" bash "$ROOT/scripts/measure-uptake.sh" trend 2>&1; }
+
+out32="$(run32 pre)"
+for label in 'ocr (Bash)' 'semantica (MCP)' 'karpathy skill'; do
+  printf '%s\n' "$out32" | grep -qF "$label" \
+    || fail "[32] tool line missing for '$label': $out32"
+  printf '%s\n' "$out32" | grep -F "$label" | grep -q 'not recorded' \
+    || fail "[32] pre-install rows were not reported as 'not recorded' for '$label': $out32"
+done
+printf '%s\n' "$out32" | grep -F 'ocr (Bash)' | grep -qE '0 of' \
+  && fail "[32] a pre-install window printed '0 of N' for ocr — key-absent read as zero"
+
+# Mixed window: the denominator is the two rows carrying the keys, not three.
+out32="$(run32 mix)"
+printf '%s\n' "$out32" | grep -F 'ocr (Bash)' | grep -qE '1 of 2 sessions \(50%\), 2 calls' \
+  || fail "[32] ocr was not 1 of 2 carrying sessions with 2 calls: $out32"
+printf '%s\n' "$out32" | grep -F 'semantica (MCP)' | grep -qE '0 of 2 sessions \(0%\), 0 calls' \
+  || fail "[32] semantica carried at 0 was not reported as 0 of 2: $out32"
+printf '%s\n' "$out32" | grep -F 'karpathy skill' | grep -qE '1 of 2 sessions \(50%\), 1 calls' \
+  || fail "[32] karpathy was not 1 of 2 carrying sessions: $out32"
+printf '%s\n' "$out32" | grep -F 'ocr (Bash)' | grep -qE 'of 3 ' \
+  && fail "[32] the row without the key was counted in the denominator"
+
 echo "smoke-refactor OK"

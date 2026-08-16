@@ -60,7 +60,18 @@ function findTranscript(sessionId) {
 }
 
 function scan(file) {
-  const nav = { rg: 0, serena: 0, serena_err: 0, lsp: 0, ast_grep: 0, graphify: 0, toolsearch: 0 };
+  // ocr / semantica added 2026-08-16 with the tools themselves (sync installs
+  // them; see lib/sync/external-tools.sh). The 2026-08-07 survey predicted
+  // 0-5% uptake for anything the model must choose to call; these are the
+  // numbers that check that prediction. Present at 0 from day one so a row
+  // that carries the key at 0 means "installed and unused", and a row without
+  // the key means "predates the counter" — the consumer renders only rows
+  // that carry it.
+  const nav = { rg: 0, serena: 0, serena_err: 0, lsp: 0, ast_grep: 0, graphify: 0, toolsearch: 0,
+                ocr: 0, semantica: 0 };
+  // Skill loads are not navigation; karpathy-guidelines is a norm the model
+  // opts into, and whether it ever does is the whole question about it.
+  const skills = { karpathy: 0 };
   // `denied` counts firings; the `to_*` counters say what the firing achieved.
   // A denial rate cannot tell a working gate from one the model routes around:
   // in the 28 firings recorded so far, 21% reached serena and 54% re-ran the
@@ -74,6 +85,9 @@ function scan(file) {
   const seenRead = new Set();
   const idName = new Map();
   const RG = /(?:^|[|&;(]|\s)(?:rg|grep|egrep|ack|ag)\s/;
+  // Same shape as RG: the binary in command position, not the substring. `ocr`
+  // is three letters and appears inside docr/, ocrypt.py, /tmp/ocr-notes.txt.
+  const OCR = /(?:^|[|&;(]|\s)ocr(?:\s|$)/;
   // Linear event trace, needed because the outcome of a denial is whatever tool
   // runs NEXT — which is not knowable at the moment the denial is read.
   const trace = [];
@@ -93,6 +107,8 @@ function scan(file) {
         idName.set(c.id, n);
         if (n === 'ToolSearch') nav.toolsearch++;
         if (n.indexOf('mcp__serena__') === 0) nav.serena++;
+        if (n.indexOf('mcp__semantica__') === 0) nav.semantica++;
+        if (n === 'Skill' && (inp.skill || '') === 'karpathy-guidelines') skills.karpathy++;
         if (n.indexOf('lsp_') !== -1) nav.lsp++;
         if (n.indexOf('ast_grep') !== -1) nav.ast_grep++;
         if (n === 'Read') {
@@ -104,6 +120,7 @@ function scan(file) {
         if (n === 'Bash') {
           cmd = inp.command || '';
           if (RG.test(cmd)) nav.rg++;
+          if (OCR.test(cmd)) nav.ocr++;
           if (cmd.indexOf('graphify') !== -1) nav.graphify++;
           if (cmd.indexOf('텍스트검색:') !== -1) gate.escape++;
         }
@@ -142,7 +159,7 @@ function scan(file) {
     }
     if (!done) gate.to_other++;
   }
-  return { nav, gate, fail, reads, calls: Object.values(tools).reduce((a, b) => a + b, 0) };
+  return { nav, gate, fail, reads, skills, calls: Object.values(tools).reduce((a, b) => a + b, 0) };
 }
 
 const stdinTimeout = setTimeout(() => process.exit(0), 5000);
