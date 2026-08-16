@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Fixture tests for uptake-record.js (spec: one row per tool-using session,
 // located by transcript_path or by globbing session_id, counting the channels
-// and the two symbol-search-gate counters; silent, fail-open, no row for a
+// and the gate.* counters of the retired symbol-search-gate; silent, fail-open, no row for a
 // session that used no tools).
 // Run: node test-uptake-record.js  → exits non-zero on any failure.
 const { execSync } = require('child_process');
@@ -64,7 +64,7 @@ check('serena counted', r.nav.serena === 1);
 check('ranged vs full reads', r.reads.full === 2 && r.reads.ranged === 1, JSON.stringify(r.reads));
 check('duplicate read counted', r.reads.dup === 1, JSON.stringify(r.reads));
 
-// --- the two counters that answer whether symbol-search-gate works ----------
+// --- the gate.* counters (hook retired 2026-08-16; still scanned for old rows) --
 const tr2 = transcript([
   use('Bash', { command: 'rg "def foo" lib/' }, 'g'),
   result('g', '[탐색 게이트] 이 검색은 `foo` 의 정의를 찾는 것으로 보입니다.', true),

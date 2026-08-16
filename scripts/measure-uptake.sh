@@ -95,7 +95,7 @@ for sub, label in (("rg", "rg/grep"), ("serena", "serena"), ("lsp", "lsp_*"),
     n, pct = rate("nav", sub)
     print("  %-12s %8d %7.1f%% %10d" % (label, n, pct, sum((r.get("nav") or {}).get(sub, 0) for r in rows)))
 print()
-print("-- symbol-search-gate: did it move serena, and does it misfire? --")
+print("-- symbol-search-gate (retired 2026-08-16): what it did while it ran --")
 # Summing with .get(k, 0) over rows that have no `gate` key prints "denials: 0",
 # which reads as "the gate ran and never fired" — the exact confusion between a
 # key that is absent and a value that is zero that misdiagnosed the serena
@@ -138,26 +138,13 @@ else:
         for k, label in outs:
             n = sum(r["gate"].get(k, 0) for r in out_rows)
             print("    %-22s %5d  (%s)" % (label, n, "%.0f%%" % (100.0 * n / tot) if tot else "-"))
-        # SUNSET. Keeping this gate was argued for on one prediction: that
-        # narrowing it to single-symbol lookups removes the misfires, and so the
-        # escape share falls away from its 54% baseline. A prediction nobody
-        # checks is how the gate reached 28 firings at 54% escape before anyone
-        # noticed, so the check is computed here rather than promised in prose.
-        #
-        # Reported per FIRING, not per session: firings are the unit the 54%
-        # was measured in, and one session can hold several.
-        SUNSET_N, BASELINE = 20, 54.0
-        esc = sum(r["gate"].get("to_escape", 0) for r in out_rows)
-        share = 100.0 * esc / tot if tot else 0.0
-        print("  -- sunset check (escape share vs the %.0f%% that motivated narrowing) --" % BASELINE)
-        if tot < SUNSET_N:
-            print("    %d/%d firings — undecided, and undecided is not a pass" % (tot, SUNSET_N))
-        elif share >= BASELINE:
-            print("    %.0f%% over %d firings: NOT BELOW BASELINE — narrowing did not work." % (share, tot))
-            print("    The case for keeping the gate was this number falling. Retire it:")
-            print("    hooks/manifest.json (move to `retired`), then delete the hook and its test.")
-        else:
-            print("    %.0f%% over %d firings (baseline %.0f%%) — narrowing is holding." % (share, tot, BASELINE))
+        # The sunset check that used to follow (escape share vs its 54% baseline)
+        # is gone with the gate. It never reached its 20-firing threshold: the
+        # gate was retired 2026-08-16 on the direct measurement instead — rg
+        # returned the definition in 205/205 sampled lookups, serena answered
+        # 73x slower, and every serena call the gate redirected in the target
+        # repo failed with "No active project". Rows above are kept readable so
+        # that record survives; nothing here decides anything any more.
 # Same key-absent-vs-zero rule as the gate block above, and it was NOT applied
 # here at first — the discipline was installed on gate.* only. What that cost,
 # measured on the real ledger: 72 rows, 13 of them with serena calls, and zero

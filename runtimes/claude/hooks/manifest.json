@@ -34,7 +34,10 @@
     "ours and its settings.json entry would linger forever. Naming it here keeps it",
     "prunable. Entries can be dropped once every machine has synced past them."
   ],
-  "retired": ["fail-ledger.js"],
+  "retired": [
+    "fail-ledger.js",
+    "symbol-search-gate.js"
+  ],
   "settings": {
     "autoCompactWindow": 700000
   },
@@ -56,12 +59,6 @@
       "matcher": "Bash",
       "script": "bash-size-guard.js",
       "enforces": "rules-core rule 7 — closes the heredoc/tee/echo bypass of pre-edit-gate"
-    },
-    {
-      "event": "PreToolUse",
-      "matcher": "Bash",
-      "script": "symbol-search-gate.js",
-      "enforces": "a definition lookup typed as rg/grep is denied and pointed at serena. Measured cause: symbol tools are installed and prescribed in prose, and sit at 0-0.9% of 220 sessions while the one hook-backed channel sits at 44%. Narrow on purpose — quoted definition patterns only, serena-activated projects only; escape via ' 텍스트검색:'"
     },
     {
       "event": "PreToolUse",

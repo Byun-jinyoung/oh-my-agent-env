@@ -1511,40 +1511,21 @@ out27="$(run27 mix)"
 printf '%s\n' "$out27" | grep -q 'rows carrying gate\.\* *: *1 of 2' \
   || fail "[27] mixed window did not name how many rows carried the key: $out27"
 
-# The gate was kept on one prediction: narrowing it to single-symbol lookups
-# drops the escape share below the 54% that motivated the narrowing. The gate
-# reached 28 firings at 54% before anyone looked, so the prediction is checked
-# by this script rather than left as an intention. Three boundaries, because a
-# verdict that cannot say "not yet" will say "pass" while the sample is empty.
-mk27() { # mk27 <dir> <to_escape> <to_serena>
-  mkdir -p "$t27/$1"
-  printf '{"ts":"2026-08-20T00:00:00Z","session":"s","cwd":"/p","calls":9,"nav":{"rg":1},"gate":{"denied":%d,"escape":%d,"to_escape":%d,"to_serena":%d}}\n' \
-    "$(( $2 + $3 ))" "$2" "$2" "$3" > "$t27/$1/rows.jsonl"
-}
-mk27 sun-few 3 2                       # 5 firings — under the threshold
-out27="$(run27 sun-few)"
-printf '%s\n' "$out27" | grep -qi 'undecided' \
-  || fail "[27] a sample too small to judge was not reported as undecided: $out27"
-
-mk27 sun-bad 15 10                     # 25 firings, 60% escape — worse than baseline
-out27="$(run27 sun-bad)"
-printf '%s\n' "$out27" | grep -q 'NOT BELOW BASELINE' \
-  || fail "[27] an escape share at/above baseline did not trip the sunset: $out27"
-# Two separate lines, asserted separately. A single alternation over both was
-# the first version and it let a mutation deleting one of them survive: the
-# word it matched was still present in the other line. A verdict has to say
-# BOTH that the gate should go and where to go to remove it.
-printf '%s\n' "$out27" | grep -q 'Retire it' \
-  || fail "[27] the sunset tripped without saying to retire the gate: $out27"
-printf '%s\n' "$out27" | grep -q 'manifest\.json' \
-  || fail "[27] the sunset said to retire the gate without naming where: $out27"
-
-mk27 sun-ok 4 21                       # 25 firings, 16% escape — narrowing holding
-out27="$(run27 sun-ok)"
-printf '%s\n' "$out27" | grep -q 'holding' \
-  || fail "[27] an escape share below baseline was not reported as holding: $out27"
-printf '%s\n' "$out27" | grep -q 'NOT BELOW BASELINE' \
-  && fail "[27] a passing escape share still tripped the sunset"
+# The gate is retired (2026-08-16; hooks/manifest.json `retired`, files
+# deleted). The sunset verdicts that used to be asserted here went with it —
+# they judged a hook that no longer runs. What survives is the record: rows
+# written while it ran still carry gate.to_* and must still render, and no
+# verdict line may reappear to read them as a live decision.
+mkdir -p "$t27/hist"
+printf '{"ts":"2026-08-12T00:00:00Z","session":"s","cwd":"/p","calls":9,"nav":{"rg":1},"gate":{"denied":25,"escape":15,"to_escape":15,"to_serena":10}}\n' \
+  > "$t27/hist/rows.jsonl"
+out27="$(run27 hist)"
+printf '%s\n' "$out27" | grep -q 'retired' \
+  || fail "[27] the gate section does not say the gate is retired: $out27"
+printf '%s\n' "$out27" | grep -qE '탈출로 강행 +15' \
+  || fail "[27] historical gate.to_escape rows stopped rendering after retirement: $out27"
+printf '%s\n' "$out27" | grep -qE 'undecided|NOT BELOW BASELINE|holding' \
+  && fail "[27] a sunset verdict was printed for a hook that no longer exists"
 
 # The same key-absent-vs-zero rule, applied to nav.serena_err — which the first
 # version of this step did NOT cover, so the discipline was only half installed.

@@ -33,10 +33,12 @@
 // documented contract, and a row silently going missing is worse than a slower
 // lookup across 16 directories.
 //
-// Two of the counters exist to answer one open question — whether
-// symbol-search-gate.js works: `nav.serena` should rise from its 0.9% baseline,
-// and `gate.escape` is the false-positive alarm. If the escape is used often,
-// the gate is firing on searches it should not.
+// The gate.* counters were added to answer whether symbol-search-gate.js
+// worked. It did not (rg found the definition in 205/205 lookups; serena was
+// 73x slower and every redirected call in the target repo hit "No active
+// project"), and it was retired 2026-08-16. The counters stay: rows written
+// while it ran are the record of that, and a scanner that stops emitting a
+// key makes old rows look like they never carried it.
 //
 // Silent, side-effect-only, fail-open: a SessionEnd hook must never speak and
 // must never be able to hold up a session ending.
