@@ -152,6 +152,19 @@ PYEOF
     WARNINGS=$((WARNINGS+1))
   fi
 
+  # A hook registered in settings.json reaches a session only if that session
+  # started AFTER the registration; a running claude reads settings once. Found
+  # live 2026-08-16: serena-attach.js was registered at 19:25, all four of the
+  # operator's research sessions had started at 18:25, doctor printed [OK] for
+  # the hook, and the operator reported "it does not work in the worktree". Both
+  # were true. sync already says "Restart Claude Code to apply" in prose — the
+  # 0-5% channel — so this names the sessions instead: cwd and start time for
+  # every live claude older than the file, compared on the OS clock (`ps
+  # lstart` vs the settings mtime), which is what settled the report above.
+  echo ""
+  echo "[ Sessions that predate the hook registration ]"
+  report_stale_sessions "$CONFIG_DIR/settings.json" || WARNINGS=$((WARNINGS+1))
+
   echo ""
   echo "[ Project hooks (.claude/settings.json) ]"
   # The section above validates ~/.claude/settings.json. A project can register

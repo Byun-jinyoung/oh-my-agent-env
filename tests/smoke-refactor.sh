@@ -1908,4 +1908,42 @@ printf '%s\n' "$out32" | grep -F 'karpathy skill' | grep -qE '1 of 2 sessions \(
 printf '%s\n' "$out32" | grep -F 'ocr (Bash)' | grep -qE 'of 3 ' \
   && fail "[32] the row without the key was counted in the denominator"
 
+echo "[33] doctor names the live sessions that started before the hook registration"
+# A hook registered in settings.json reaches only sessions started after it; a
+# running claude reads settings once. sync said "restart" in prose and doctor
+# said [OK] while the operator's four research sessions, all older than the
+# file, ran without the hook. The check compares the OS clock: `ps lstart` of
+# each live claude vs the settings mtime. Exercised here by moving the mtime
+# around the start time of the claude processes that already exist on the
+# machine running this suite — no live process is touched.
+t33="$TMP/stale-sessions"; mkdir -p "$t33"
+printf '{}\n' > "$t33/settings.json"
+if pgrep -x claude >/dev/null 2>&1 || pgrep -f '(^|/)claude( |$)' >/dev/null 2>&1; then
+  # settings newer than every live session -> every one is stale
+  touch -d '+1 day' "$t33/settings.json"
+  # `set -e` would end the suite on the non-zero return this branch EXPECTS.
+  rc33=0; out33="$(bash -c "source '$ROOT/lib/common.sh' 2>/dev/null; report_stale_sessions '$t33/settings.json'" 2>&1)" || rc33=$?
+  printf '%s\n' "$out33" | grep -q '\[STALE\] pid [0-9]* started' \
+    || fail "[33] a settings.json newer than every live claude produced no [STALE] line: $out33"
+  printf '%s\n' "$out33" | grep -qE 'restart them' \
+    || fail "[33] stale sessions were listed without saying to restart them: $out33"
+  [ "$rc33" -ne 0 ] || fail "[33] stale sessions found but the function returned 0"
+  # settings older than every live session -> none stale, exit 0
+  touch -d '2000-01-01' "$t33/settings.json"
+  rc33=0; out33="$(bash -c "source '$ROOT/lib/common.sh' 2>/dev/null; report_stale_sessions '$t33/settings.json'" 2>&1)" || rc33=$?
+  printf '%s\n' "$out33" | grep -q '\[STALE\]' \
+    && fail "[33] a settings.json older than every session still flagged one as stale: $out33"
+  printf '%s\n' "$out33" | grep -qE '\[OK\] all [0-9]+ live session' \
+    || fail "[33] no stale sessions but no [OK] line naming the live count: $out33"
+  [ "$rc33" -eq 0 ] || fail "[33] nothing stale but the function returned $rc33"
+else
+  echo "  (no live claude on this machine — judgement not exercised)"
+fi
+# The doctor section and the sync closing line both call it; assert the
+# wiring, since a helper nobody calls is the shape this harness keeps finding.
+grep -q 'report_stale_sessions "\$CONFIG_DIR/settings.json"' "$ROOT/lib/doctor/claude.sh" \
+  || fail "[33] doctor does not call report_stale_sessions"
+grep -q 'report_stale_sessions "\$CONFIG_DIR/settings.json"' "$ROOT/lib/sync.sh" \
+  || fail "[33] sync closing line does not call report_stale_sessions"
+
 echo "smoke-refactor OK"

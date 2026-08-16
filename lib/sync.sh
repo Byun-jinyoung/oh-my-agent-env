@@ -29,6 +29,10 @@ sync_closing_line() {
   else
     echo "=== $1 ==="
   fi
+  # settings.json may have just changed. Say WHICH sessions will not see it,
+  # not just "restart" — see report_stale_sessions in lib/common.sh.
+  echo "[ Sessions that predate the hook registration ]"
+  report_stale_sessions "$CONFIG_DIR/settings.json" || true
 }
 
 cmd_sync() {

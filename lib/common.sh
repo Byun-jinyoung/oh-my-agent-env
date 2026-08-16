@@ -9,7 +9,7 @@
 #   append_section_if_missing, ensure_line_in_file,
 #   ensure_codex_multi_agent, ensure_codex_context_mode,
 #   write_graphify_project_config,
-#   assemble_global_rules.
+#   assemble_global_rules, report_stale_sessions.
 # shellcheck shell=bash   # sourced fragment: no shebang by design
 
 log() {
@@ -834,6 +834,48 @@ assemble_global_rules() {
     return 1
   }
 }
+
+# A hook registered in settings.json reaches a session only if that session
+# started AFTER the registration; a running claude reads settings once. Found
+# live 2026-08-16: serena-attach.js was registered at 19:25, all four of the
+# operator's research sessions had started at 18:25, doctor printed [OK] for
+# the hook, and the operator reported "it does not work in the worktree". Both
+# were true. sync already said "Restart Claude Code to apply" in prose — the
+# 0-5% channel — so this names the sessions instead: cwd and start time for
+# every live claude older than the file, compared on the OS clock (`ps lstart`
+# vs the settings mtime), which is what settled the report above.
+# Prints one line per stale session; returns 1 if any, 0 otherwise. Called from
+# doctor and from the end of sync (the moment the file just changed).
+report_stale_sessions() {
+  local settings="$1" reg stale=0 live=0 pid args start start_e cwd
+  command -v ps >/dev/null 2>&1 || { echo "  (ps unavailable — not checked)"; return 0; }
+  [ -f "$settings" ] || { echo "  (no $settings — not checked)"; return 0; }
+  reg="$(stat -c %Y "$settings" 2>/dev/null || echo 0)"
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    args="$(ps -o args= -p "$pid" 2>/dev/null)"
+    # The claude CLI itself, not its MCP/plugin children (node ..., uvx ...).
+    case "$args" in claude|claude\ *|*/claude|*/claude\ *) ;; *) continue ;; esac
+    live=$((live+1))
+    start="$(ps -o lstart= -p "$pid" 2>/dev/null)"
+    start_e="$(date -d "$start" +%s 2>/dev/null || echo 0)"
+    if [ "$start_e" -gt 0 ] && [ "$start_e" -lt "$reg" ]; then
+      cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || echo '?')"
+      echo "  [STALE] pid $pid started $(date -d "@$start_e" +%H:%M 2>/dev/null) < settings.json $(date -d "@$reg" +%H:%M 2>/dev/null) — ${cwd/#$HOME/~}"
+      stale=$((stale+1))
+    fi
+  done < <({ pgrep -x claude 2>/dev/null; pgrep -f '(^|/)claude( |$)' 2>/dev/null; } | sort -un)
+  if [ "$stale" -gt 0 ]; then
+    echo "         $stale of $live live session(s) will not run hooks registered after they started — restart them (/exit, then resume)"
+    return 1
+  elif [ "$live" -gt 0 ]; then
+    echo "  [OK] all $live live session(s) started after the current settings.json"
+  else
+    echo "  (no live claude session found)"
+  fi
+  return 0
+}
+
 
 # Script basenames listed in the Claude hook manifest, one per line.
 # The manifest (runtimes/claude/hooks/manifest.json) is the SSOT shared by the
