@@ -68,7 +68,7 @@ function scan(file) {
   // the key means "predates the counter" — the consumer renders only rows
   // that carry it.
   const nav = { rg: 0, serena: 0, serena_err: 0, lsp: 0, ast_grep: 0, graphify: 0, toolsearch: 0,
-                ocr: 0, semantica: 0 };
+                ocr: 0, semantica: 0, serena_attached: 0 };
   // Skill loads are not navigation; karpathy-guidelines is a norm the model
   // opts into, and whether it ever does is the whole question about it.
   const skills = { karpathy: 0, ponytail: 0 };
@@ -93,7 +93,18 @@ function scan(file) {
   const trace = [];
 
   for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-    if (!line || line.indexOf('"tool_') === -1) continue;
+    if (!line) continue;
+    // serena-attach.js delivers its answer as additionalContext, which lands
+    // in a `user` record, not a tool_result — so it is counted BEFORE the
+    // `"tool_"` prefilter below, which would drop it. This is the numerator of
+    // the pre-registered outcome metric for that hook: attachments delivered,
+    // against nav.rg definition lookups. Matched on the hook's fixed phrase,
+    // not its name, because the name never reaches the transcript.
+    // Matched on the raw JSON line, where the quote is escaped (`\"`), so the
+    // marker stops before it. `serena find_symbol(` is what the hook writes and
+    // nothing else on this machine does.
+    if (line.indexOf('serena find_symbol(') !== -1) nav.serena_attached++;
+    if (line.indexOf('"tool_') === -1) continue;
     let row;
     try { row = JSON.parse(line); } catch (e) { continue; }
     const content = ((row.message || {}).content) || [];

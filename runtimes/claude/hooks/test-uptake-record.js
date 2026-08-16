@@ -89,6 +89,21 @@ check('ocr counted as a command, not a substring', r5.nav.ocr === 2, JSON.string
 check('semantica MCP calls counted', r5.nav.semantica === 2, JSON.stringify(r5.nav));
 check('karpathy skill load counted, other skills not', r5.skills && r5.skills.karpathy === 1, JSON.stringify(r5.skills));
 check('ponytail skills counted (scoped and bare), lookalike not', r5.skills && r5.skills.ponytail === 2, JSON.stringify(r5.skills));
+
+// serena-attach.js output lands as additionalContext in a `user` record with
+// no tool_use/tool_result block at all — the shape the scanner's "tool_"
+// prefilter skips. Two attachments and one unrelated user line.
+const tr6 = transcript([
+  use('Bash', { command: 'rg "def foo" src/' }, 'a'),
+  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'PostToolUse:Bash hook additional context: serena find_symbol("foo") — the definition(s)...\n  Function foo — a.py:1-9' }] } }),
+  use('Bash', { command: 'rg "def bar" src/' }, 'b'),
+  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'serena find_symbol("bar") — the definition(s)...' }] } }),
+  JSON.stringify({ type: 'user', message: { role: 'user', content: 'please continue' } }),
+]);
+rows = run({ session_id: 's6', cwd: '/p', reason: 'exit', transcript_path: tr6 }, fresh());
+const r6 = rows[0] || { nav: {} };
+check('serena attachments counted from user records', r6.nav.serena_attached === 2, JSON.stringify(r6.nav));
+check('serena_attached present at 0 when none delivered', r5.nav.serena_attached === 0, JSON.stringify(r5.nav));
 // A row from a session that used none of them must still CARRY the keys with
 // 0 — key-absent-vs-zero: absent means "scanner predates the counter", and
 // the consumer renders only rows that carry the key.

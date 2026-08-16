@@ -962,7 +962,15 @@ for item in want:
     # which keeps the default and the existing settings.json byte-identical.
     template = item.get("run") or 'node "{path}"'
     command = template.replace("{path}", f"{hooks_dir}/{script}")
-    group = {"hooks": [{"type": "command", "command": command}]}
+    hook = {"type": "command", "command": command}
+    # `async` / `timeout` pass through when the manifest names them. serena-attach
+    # is the first async hook: it waits ~3s on a serena answer and must not hold
+    # every Bash call for that. Omitted for every other hook, which keeps their
+    # settings.json entries byte-identical to before.
+    for opt in ("async", "timeout"):
+        if opt in item:
+            hook[opt] = item[opt]
+    group = {"hooks": [hook]}
     if matcher:
         group = {"matcher": matcher, **group}
     hooks.setdefault(event, []).append(group)

@@ -175,7 +175,13 @@ print()
 # key are a denominator; rows without it are reported as such.
 print("-- tools installed 2026-08-16: are they used at all? --")
 INSTALLED = (("nav", "ocr", "ocr (Bash)"), ("nav", "semantica", "semantica (MCP)"),
-             ("skills", "karpathy", "karpathy skill"), ("skills", "ponytail", "ponytail skill"))
+             ("skills", "karpathy", "karpathy skill"), ("skills", "ponytail", "ponytail skill"),
+             # serena-attach.js (2026-08-16): answers delivered beside an rg
+             # definition lookup. Pre-registered outcome metric for that hook:
+             # this count against nav.rg, and whether the same symbol is rg'd
+             # again after an attachment. Not a rate of model choice — the model
+             # chooses nothing here — but of the hook actually landing.
+             ("nav", "serena_attached", "serena attached"))
 for key, sub, label in INSTALLED:
     carrying = [r for r in rows if sub in (r.get(key) or {})]
     if not carrying:

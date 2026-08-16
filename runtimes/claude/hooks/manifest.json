@@ -61,6 +61,14 @@
       "enforces": "rules-core rule 7 — closes the heredoc/tee/echo bypass of pre-edit-gate"
     },
     {
+      "event": "PostToolUse",
+      "matcher": "Bash",
+      "script": "serena-attach.js",
+      "async": true,
+      "timeout": 20,
+      "enforces": "attaches serena find_symbol(kind + full body span) beside an rg/grep single-symbol DEFINITION lookup in a serena project — rg still runs, nothing is denied. Replaces the retired symbol-search-gate, whose deny-and-redirect saw 54% of firings re-run the same rg; here there is no choice to route around. async: serena answers warm in ~2.9s on the research repo, and that must not become the gate's +73x on every rg. First call spawns the project-server (port 24225) and returns; every path exits 0 with no output on failure."
+    },
+    {
       "event": "PreToolUse",
       "matcher": "Read",
       "script": "read-size-gate.js",
