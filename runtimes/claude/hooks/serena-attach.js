@@ -24,6 +24,18 @@
 // delivered when it lands. First call on a machine spawns the server and gives
 // up quietly; the second call finds it warm.
 //
+// WHEN it lands — measured 2026-08-16 on a fresh interactive session in the
+// research repo, tracing the hook's own lifetime and the transcript:
+//   rg ran 11:41:23Z  ->  hook POSTed at +4ms  ->  serena answered, hook
+//   wrote its JSON and exited 0 at +2.9s  ->  the runtime delivered it as an
+//   `attachment` record at 11:42:39Z, i.e. WITH THE NEXT USER PROMPT, and the
+//   model quoted it ("serena reports the symbol span as 1071-1819", correcting
+//   its own rg-based line number). Not the same turn: an async hook's
+//   additionalContext reaches the model one prompt later. That is the trade
+//   for not stalling every rg by 3s, and it is still zero model choice.
+// In headless `claude -p` the runtime SIGTERMs the hook at +1.79s, before
+// serena answers (traced), so nothing attaches there. Interactive only.
+//
 // Scope, reused verbatim from the gate because the corpus tuned it (337 -> 123
 // firings): a search command whose PATTERN is `def|class|function|... NAME`
 // and nothing else — no alternation, no prefix sweep, no dunder, no regex meta.
