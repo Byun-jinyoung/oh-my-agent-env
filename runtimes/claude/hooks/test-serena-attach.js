@@ -29,6 +29,12 @@ const tdir = fs.mkdtempSync(path.join(os.tmpdir(), 'serena-attach-'));
 const proj = path.join(tdir, 'proj');
 fs.mkdirSync(path.join(proj, '.serena'), { recursive: true });
 fs.writeFileSync(path.join(proj, '.serena', 'project.yml'), 'project_name: proj\nlanguages: [python]\n');
+// Real directories, because the hook only forwards a path argument it can see
+// on disk - a compound command tokenises into something that is not a path,
+// and serena answers a bad relative_path with an empty array the hook cannot
+// tell from "no such symbol".
+fs.mkdirSync(path.join(proj, 'src', 'boltz'), { recursive: true });
+fs.mkdirSync(path.join(proj, 'tests'), { recursive: true });
 const noserena = path.join(tdir, 'plain');
 fs.mkdirSync(noserena);
 
@@ -87,6 +93,34 @@ srv.listen(0, '127.0.0.1', async () => {
         && JSON.parse(seen[0].tool_params_json).name_path_pattern === 'get_potentials', JSON.stringify(seen[0]));
   check('project_name is the cwd', seen[0].project_name === proj, seen[0].project_name);
   check('context names the tool that answered', ctx(r).indexOf('serena') !== -1, ctx(r));
+
+  // --- scope: the rg path argument becomes serena's relative_path ------------
+  // Unscoped, find_symbol walks the project: 2727/2726/2751ms on boltz-red
+  // against 253/258/252ms scoped, for the same 171B answer (2026-08-17, n=3).
+  seen.length = 0;
+  r = await runHook(bash('rg -n "def get_potentials" src/boltz'));
+  check('path argument is forwarded as relative_path',
+        JSON.parse(seen[0].tool_params_json).relative_path === 'src/boltz', seen[0] && seen[0].tool_params_json);
+
+  seen.length = 0;
+  r = await runHook(bash('rg "def get_potentials" .'));
+  check('"." is the whole project - sent unscoped rather than as a scope',
+        JSON.parse(seen[0].tool_params_json).relative_path === undefined, seen[0] && seen[0].tool_params_json);
+
+  seen.length = 0;
+  r = await runHook(bash('rg "def get_potentials" src/nonexistent'));
+  check('a path that is not on disk falls back to unscoped, not a bad scope',
+        JSON.parse(seen[0].tool_params_json).relative_path === undefined, seen[0] && seen[0].tool_params_json);
+
+  seen.length = 0;
+  r = await runHook(bash('cd /tmp; echo "### mark:" ; rg "def get_potentials" src/boltz'));
+  check('compound command still scopes on the real path argument',
+        JSON.parse(seen[0].tool_params_json).relative_path === 'src/boltz', seen[0] && seen[0].tool_params_json);
+
+  seen.length = 0;
+  r = await runHook(bash('rg "def get_potentials"'));
+  check('no path argument at all - unscoped, still attaches',
+        ctx(r) !== null && JSON.parse(seen[0].tool_params_json).relative_path === undefined, r.out);
 
   seen.length = 0;
   r = await runHook(bash("grep -rn 'class Boltz2' src/boltz"));

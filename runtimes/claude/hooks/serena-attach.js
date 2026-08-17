@@ -24,6 +24,11 @@
 // delivered when it lands. First call on a machine spawns the server and gives
 // up quietly; the second call finds it warm.
 //
+// That 2.9s was self-inflicted and is gone. It measured an UNSCOPED
+// find_symbol - the hook held the rg path argument and did not pass it. Scoped
+// (see searchPath) the same query answers in ~255ms for a byte-identical
+// result, so the async budget is now ~400ms including node start.
+//
 // WHEN it lands — measured 2026-08-16 on a fresh interactive session in the
 // research repo, tracing the hook's own lifetime and the transcript:
 //   rg ran 11:41:23Z  ->  hook POSTed at +4ms  ->  serena answered, hook
@@ -33,8 +38,13 @@
 //   its own rg-based line number). Not the same turn: an async hook's
 //   additionalContext reaches the model one prompt later. That is the trade
 //   for not stalling every rg by 3s, and it is still zero model choice.
-// In headless `claude -p` the runtime SIGTERMs the hook at +1.79s, before
-// serena answers (traced), so nothing attaches there. Interactive only.
+// In headless `claude -p` the runtime SIGTERMs the hook at +1.79s. That killed
+// every unscoped query (2.9s) - the "interactive only" this file used to claim.
+// A scoped query finishes at ~255ms, inside the deadline, so headless delivery
+// is no longer structurally excluded; whether the runtime then surfaces it is a
+// separate question this hook cannot answer for itself. A command with no
+// usable path argument still falls back to the unscoped query and remains
+// interactive-only.
 //
 // Scope, reused verbatim from the gate because the corpus tuned it (337 -> 123
 // firings): a search command whose PATTERN is `def|class|function|... NAME`
@@ -55,6 +65,13 @@ const SEARCH_CMD = /(?:^|[|&;(]|\s)(?:rg|grep|egrep|ack|ag)\s/;
 // project-server binds an OS-assigned port by default (PROJECT_SERVER_PORT = 0
 // in serena's constants), so this hook pins one. Override for tests.
 const SERENA_URL = process.env.OMA_SERENA_URL || 'http://127.0.0.1:24225';
+// Two budgets, because the two query shapes are an order of magnitude apart
+// (see searchPath). A scoped query that has not answered in 1.5s is not going
+// to answer inside the headless SIGTERM either, and giving up on our own terms
+// beats being killed mid-write. An unscoped one is already past that deadline
+// on arrival — it only ever lands interactively, where the ceiling is the
+// runtime's patience, not 1.79s.
+const QUERY_TIMEOUT_SCOPED_MS = 1500;
 const QUERY_TIMEOUT_MS = 8000;
 
 // --- reused from the retired gate ---------------------------------------------
@@ -98,12 +115,61 @@ function skipOne(rest, from) {
   const t = tok.exec(rest);
   return t ? tok.lastIndex : from;
 }
+// The PATH argument — the first non-flag token AFTER the pattern. Without it
+// serena walks the whole project: measured 2026-08-17 against boltz-red with a
+// warm project-server, n=3 each, byte-identical 171B answers both ways —
+//   unscoped                    2727 / 2726 / 2751 ms
+//   relative_path "src/boltz"    253 /  258 /  252 ms
+// 10.8x, and it is the difference between an answer the headless runtime kills
+// at +1.79s and one that lands with ~1.4s to spare. In the corpus every command
+// that reaches this point carried a path (16/16 across the two harness
+// transcripts), so this is the normal shape, not an optimisation for a corner.
+//
+// Checked against the filesystem before it is sent. A compound command
+// (`cd x; echo "..."; rg ...`) tokenises into something that is not a path, and
+// serena answers a bad relative_path with an empty array — which this hook
+// cannot tell from "symbol does not exist" and would render as silence. A slow
+// attach is worth more than no attach, so an unverifiable path falls back to
+// the unscoped query rather than guessing.
+function searchPath(cmd, cwd) {
+  const m = /(?:^|[|&;(]|\s)(?:rg|grep|egrep|ack|ag)\s+([\s\S]*)$/.exec(cmd);
+  if (!m) return null;
+  const rest = m[1];
+  const tok = /'([^']*)'|"([^"]*)"|(\S+)/g;
+  let t;
+  let sawPattern = false;
+  while ((t = tok.exec(rest)) !== null) {
+    const quoted = t[1] !== undefined ? t[1] : t[2];
+    const bare = t[3];
+    let val;
+    if (quoted !== undefined) {
+      val = quoted;
+    } else if (bare === undefined) {
+      continue;
+    } else if (bare === '--') {
+      continue;
+    } else if (bare.startsWith('-')) {
+      if (/^-g$|^--glob$|^--iglob$/.test(bare)) tok.lastIndex = skipOne(rest, tok.lastIndex);
+      continue;
+    } else {
+      val = bare;
+    }
+    if (!sawPattern) { sawPattern = true; continue; }
+    // `.` is the whole project by another name — the scan serena would do anyway.
+    if (val === '.' || val === './') return null;
+    try {
+      if (!fs.existsSync(path.join(cwd, val))) return null;
+    } catch (e) { return null; }
+    return val;
+  }
+  return null;
+}
 
 // --- serena project-server -----------------------------------------------------
-function post(url, body, cb) {
+function post(url, body, timeoutMs, cb) {
   const u = new URL(url);
   const req = http.request({ host: u.hostname, port: u.port, path: '/query_project', method: 'POST',
-                             headers: { 'content-type': 'application/json' }, timeout: QUERY_TIMEOUT_MS },
+                             headers: { 'content-type': 'application/json' }, timeout: timeoutMs },
     (res) => {
       let data = '';
       res.on('data', (c) => { data += c; });
@@ -160,9 +226,11 @@ process.stdin.on('end', () => {
   if (!hit || !isSingleSymbol(pattern, hit)) return process.exit(0);
   const symbol = hit[1];
 
-  const body = { project_name: cwd, tool_name: 'find_symbol',
-                 tool_params_json: JSON.stringify({ name_path_pattern: symbol, include_body: false, max_answer_chars: 4000 }) };
-  post(SERENA_URL, body, (err, raw) => {
+  const params = { name_path_pattern: symbol, include_body: false, max_answer_chars: 4000 };
+  const scope = searchPath(cmd, cwd);
+  if (scope) params.relative_path = scope;
+  const body = { project_name: cwd, tool_name: 'find_symbol', tool_params_json: JSON.stringify(params) };
+  post(SERENA_URL, body, scope ? QUERY_TIMEOUT_SCOPED_MS : QUERY_TIMEOUT_MS, (err, raw) => {
     if (err) {
       if (err.code === 'ECONNREFUSED') spawnServer();
       return process.exit(0);
