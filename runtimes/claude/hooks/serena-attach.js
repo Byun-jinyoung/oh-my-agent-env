@@ -38,13 +38,18 @@
 //   its own rg-based line number). Not the same turn: an async hook's
 //   additionalContext reaches the model one prompt later. That is the trade
 //   for not stalling every rg by 3s, and it is still zero model choice.
-// In headless `claude -p` the runtime SIGTERMs the hook at +1.79s. That killed
-// every unscoped query (2.9s) - the "interactive only" this file used to claim.
-// A scoped query finishes at ~255ms, inside the deadline, so headless delivery
-// is no longer structurally excluded; whether the runtime then surfaces it is a
-// separate question this hook cannot answer for itself. A command with no
-// usable path argument still falls back to the unscoped query and remains
-// interactive-only.
+// Headless `claude -p` does not deliver this, and the reason is NOT the +1.79s
+// SIGTERM this file blamed. Traced 2026-08-17 in the boltz-red worktree over a
+// resumed session: the hook ran to completion and wrote its ledger row
+// (outcome scoped, 1144ms - well inside the window), and the transcript for
+// that session contains zero async_hook_response records. The next `-p` turn,
+// asked to quote any hook context it received, answered "none". A one-shot
+// invocation exits before an async hook's output can be attached to a prompt
+// that this process will never see, so making the query fast does not fix it.
+// Interactive only, still - but now for the real reason, and the ledger is
+// what distinguishes "the hook failed" from "the runtime never delivered it".
+// The latency work stands on its own: interactive delivery costs ~255ms of
+// project-server time instead of ~2.9s.
 //
 // Scope, reused verbatim from the gate because the corpus tuned it (337 -> 123
 // firings): a search command whose PATTERN is `def|class|function|... NAME`
