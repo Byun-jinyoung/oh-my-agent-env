@@ -95,14 +95,29 @@ check('ponytail skills counted (scoped and bare), lookalike not', r5.skills && r
 // prefilter skips. Two attachments and one unrelated user line.
 const tr6 = transcript([
   use('Bash', { command: 'rg "def foo" src/' }, 'a'),
-  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'PostToolUse:Bash hook additional context: serena find_symbol("foo") — the definition(s)...\n  Function foo — a.py:1-9' }] } }),
+  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"foo\") — the definition(s)...\n  Function foo — a.py:1-9" } } } }),
   use('Bash', { command: 'rg "def bar" src/' }, 'b'),
-  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'serena find_symbol("bar") — the definition(s)...' }] } }),
+  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"bar\") — the definition(s)..." } } } }),
   JSON.stringify({ type: 'user', message: { role: 'user', content: 'please continue' } }),
 ]);
 rows = run({ session_id: 's6', cwd: '/p', reason: 'exit', transcript_path: tr6 }, fresh());
 const r6 = rows[0] || { nav: {} };
-check('serena attachments counted from user records', r6.nav.serena_attached === 2, JSON.stringify(r6.nav));
+check('serena attachments counted from delivered async_hook_response records', r6.nav.serena_attached === 2, JSON.stringify(r6.nav));
+
+// --- a mention of an attachment is not an attachment ------------------------
+// This counter matched the rendered phrase anywhere on the line until
+// 2026-08-17, so the hook's own source, the commits touching it and every
+// session that discussed it scored as deliveries: 81 hits on the real ledger,
+// 31 of them from harness sessions that received nothing.
+const trMention = transcript([
+  use('Bash', { command: 'rg "def foo" src/' }, 'a'),
+  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'the hook writes serena find_symbol("foo") - Function foo - src/a.py:10-40 as its context' }] } }),
+  JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'right, serena find_symbol("foo") is the marker we grep for' }] } }),
+]);
+rows = run({ session_id: 'sm', cwd: '/p', reason: 'exit', transcript_path: trMention }, fresh());
+check('talking about an attachment is not receiving one',
+      rows[0].nav.serena_attached === 0 && rows[0].attach.delivered === 0,
+      JSON.stringify({ nav: rows[0].nav.serena_attached, attach: rows[0].attach }));
 
 // --- attach consumption: delivery is not use --------------------------------
 // The pre-registered outcome for serena-attach. The gate it replaced looked
@@ -110,7 +125,7 @@ check('serena attachments counted from user records', r6.nav.serena_attached ===
 // firing count.
 const tr7 = transcript([
   use('Bash', { command: 'rg "def foo" src/' }, 'a'),
-  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'serena find_symbol("foo")\n  Function foo — src/a.py:10-40' }] } }),
+  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"foo\")\n  Function foo — src/a.py:10-40" } } } }),
   use('Read', { file_path: 'src/a.py', offset: 10, limit: 30 }, 'b'),
 ]);
 rows = run({ session_id: 's7', cwd: '/p', reason: 'exit', transcript_path: tr7 }, fresh());
@@ -120,7 +135,7 @@ check('attachment read within the window counts as consumed',
 
 const tr8 = transcript([
   use('Bash', { command: 'rg "def foo" src/' }, 'a'),
-  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'serena find_symbol("foo")\n  Function foo — src/a.py:10-40' }] } }),
+  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"foo\")\n  Function foo — src/a.py:10-40" } } } }),
   use('Bash', { command: 'ls -la' }, 'b'),
   use('Read', { file_path: 'docs/other.md' }, 'c'),
   use('Bash', { command: 'git status' }, 'd'),
@@ -133,7 +148,7 @@ check('a file touched only after the window is not consumption',
 
 const tr9 = transcript([
   use('Bash', { command: 'rg "def foo" src/' }, 'a'),
-  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'serena find_symbol("foo")\n  Function foo — src/a.py:10-40' }] } }),
+  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"foo\")\n  Function foo — src/a.py:10-40" } } } }),
   use('ToolSearch', { query: 'symbol' }, 'b'),
   use('TaskUpdate', { id: 1 }, 'c'),
   use('Edit', { file_path: 'src/a.py', old_string: 'x', new_string: 'y' }, 'd'),

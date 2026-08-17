@@ -111,18 +111,31 @@ function scan(file) {
     // Matched on the raw JSON line, where the quote is escaped (`\"`), so the
     // marker stops before it. `serena find_symbol(` is what the hook writes and
     // nothing else on this machine does.
-    if (line.indexOf('serena find_symbol(') !== -1) {
-      nav.serena_attached++;
-      attach.delivered++;
-      // The rendered line is `  <kind> <name> - <relative_path>:<start>-<end>`.
-      // Paths are collected from the raw JSON line: the render survives the
-      // escaping intact, and reparsing the record to reach the same string
-      // costs a JSON.parse on every attachment for nothing.
-      const named = [];
-      const P = /([A-Za-z0-9_./-]+\.[A-Za-z0-9_]+):(\d+)-(\d+)/g;
-      let mm;
-      while ((mm = P.exec(line)) !== null) named.push(mm[1]);
-      if (named.length) trace.push({ attach: named });
+    // A DELIVERED attachment, not a mention of one. The runtime records an
+    // async hook's additionalContext as {type:"attachment", attachment:
+    // {type:"async_hook_response", response:{hookSpecificOutput:{...}}}}.
+    // Matching the rendered phrase anywhere on the line - which is what this
+    // did until 2026-08-17 - counts the hook's own source, the commits that
+    // changed it, and every session that discussed it. Measured on the real
+    // ledger that was 81 hits of which the harness sessions contributed 31
+    // while receiving none: the counter was reading this project's talk about
+    // the hook as if it were the hook working.
+    if (line.indexOf('serena find_symbol(') !== -1 && line.indexOf('async_hook_response') !== -1) {
+      let rec = null;
+      try { rec = JSON.parse(line); } catch (e) { rec = null; }
+      const att = rec && rec.attachment;
+      const ctx = att && att.type === 'async_hook_response' && att.response
+        && att.response.hookSpecificOutput && att.response.hookSpecificOutput.additionalContext;
+      if (typeof ctx === 'string' && ctx.indexOf('serena find_symbol(') === 0) {
+        nav.serena_attached++;
+        attach.delivered++;
+        // Rendered as `  <kind> <name> - <relative_path>:<start>-<end>`.
+        const named = [];
+        const P = /([A-Za-z0-9_./-]+\.[A-Za-z0-9_]+):(\d+)-(\d+)/g;
+        let mm;
+        while ((mm = P.exec(ctx)) !== null) named.push(mm[1]);
+        if (named.length) trace.push({ attach: named });
+      }
     }
     if (line.indexOf('"tool_') === -1) continue;
     let row;
