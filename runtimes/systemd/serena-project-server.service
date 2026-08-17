@@ -1,0 +1,33 @@
+[Unit]
+# serena's project-server answers find_symbol over HTTP. runtimes/claude/hooks/
+# serena-attach.js queries it on every rg definition lookup, and gives up
+# silently when the connect is refused - so a server that is not running turns
+# the hook into a no-op that reports nothing. That is the shape of the failure
+# this unit exists to prevent: every measurement of the hook was taken against
+# a server someone had started by hand, and nothing restarted it after a
+# reboot.
+#
+# The port is pinned to 24225 here and in serena-attach.js (SERENA_URL).
+# serena's own default is an OS-assigned port, which a hook cannot find, so the
+# two must be changed together or not at all.
+Description=serena project-server for oh-my-agent-env symbol lookups
+Documentation=https://github.com/oraios/serena
+After=default.target
+
+[Service]
+Type=simple
+# %h rather than a baked path: uv installs the launcher at ~/.local/bin/serena
+# on every machine this repo is synced to, and the unit is copied verbatim.
+ExecStart=%h/.local/bin/serena start-project-server --port 24225 --log-level ERROR
+# The hook's scoped query budget is 1500ms and it does not retry. A restart
+# delay longer than a working session's patience is indistinguishable from a
+# dead server, so come back fast and keep coming back.
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+# The server holds language-server processes for every activated project; let
+# them go down with it rather than leaking on restart.
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

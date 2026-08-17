@@ -311,6 +311,58 @@ PYEOF
     log_and_print "    [SKIP] $SERENA_CONFIG not found or python3 missing"
   fi
 
+  # [9d] serena project-server as a user service
+  # serena-attach.js queries this server on every rg definition lookup and exits
+  # silently when the connect is refused, so a server nobody restarted turns the
+  # hook into a no-op that reports nothing at all. Every latency number this
+  # repo has recorded for that hook was measured against a server started by
+  # hand; there was nothing to bring it back after a reboot.
+  #
+  # Copied, not symlinked like the hooks: systemd treats a symlink inside its
+  # unit directory as enablement state, so a link pointing into this checkout
+  # makes `enable`/`disable` mean something other than what they say. The cost
+  # is that `git pull` alone does not update it - doctor compares the bytes and
+  # says so.
+  log_and_print "[9d] serena project-server (systemd --user)"
+  _sps_src="$SCRIPT_DIR/runtimes/systemd/serena-project-server.service"
+  _sps_dir="$HOME/.config/systemd/user"
+  _sps_dst="$_sps_dir/serena-project-server.service"
+  if ! command -v systemctl &>/dev/null || ! systemctl --user show-environment &>/dev/null; then
+    log_and_print "    [SKIP] no systemd --user session on this host"
+  elif [ ! -x "$HOME/.local/bin/serena" ]; then
+    log_and_print "    [SKIP] serena not at ~/.local/bin/serena (the unit's ExecStart)"
+  elif [ ! -f "$_sps_src" ]; then
+    log_and_print "    [WARN] unit missing from checkout: $_sps_src"
+  else
+    mkdir -p "$_sps_dir"
+    if [ -f "$_sps_dst" ] && cmp -s "$_sps_src" "$_sps_dst"; then
+      log_and_print "    [OK] unit already current"
+    else
+      cp "$_sps_src" "$_sps_dst" && log_and_print "    [OK] installed $_sps_dst"
+    fi
+    systemctl --user daemon-reload &>/dev/null || true
+    if systemctl --user enable serena-project-server.service &>/dev/null; then
+      log_and_print "    [OK] enabled (starts at login)"
+    else
+      log_and_print "    [WARN] enable failed - run: systemctl --user enable serena-project-server.service"
+    fi
+    # Starting is conditional on the port being free. A project-server someone
+    # launched by hand already holds 24225, and starting the unit on top of it
+    # produces a bind failure that Restart=always then retries forever. Report
+    # the collision instead of fighting it or killing a process this script did
+    # not start.
+    if systemctl --user is-active --quiet serena-project-server.service; then
+      log_and_print "    [OK] running under systemd"
+    elif (echo > /dev/tcp/127.0.0.1/24225) &>/dev/null; then
+      log_and_print "    [WARN] 24225 held by an unmanaged process - unit is enabled but idle."
+      log_and_print "           Hand over with: pkill -f 'serena start-project-server' && systemctl --user start serena-project-server"
+    elif systemctl --user start serena-project-server.service &>/dev/null; then
+      log_and_print "    [OK] started"
+    else
+      log_and_print "    [WARN] start failed - systemctl --user status serena-project-server"
+    fi
+  fi
+
   # [10] Frameworks
   log_and_print "[10] Frameworks"
   export PATH="$HOME/.local/bin:$PATH"

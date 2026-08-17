@@ -302,6 +302,53 @@ echo "[ Serena project config ]"
     fi
   fi
 
+  # serena project-server (the HTTP side serena-attach.js talks to)
+  #
+  # Registered, installed and schema-valid says nothing about whether the
+  # project-server is up, and that is the piece the hook actually needs: it
+  # connects, and on refusal exits 0 with no output. A dead server and a repo
+  # with no matching symbol produce the same silence, which is how every
+  # attach measurement here ended up being taken against a server someone had
+  # started by hand.
+  #
+  # Four separate questions, because each fails differently: the unit is not
+  # installed (sync never ran) / it is stale (pulled but not synced - it is a
+  # copy, not a symlink) / it is installed but not enabled (dies at reboot) /
+  # it is enabled but the port does not answer.
+  _ps_unit="$HOME/.config/systemd/user/serena-project-server.service"
+  _ps_src="$SCRIPT_DIR/runtimes/systemd/serena-project-server.service"
+  if ! command -v systemctl &>/dev/null || ! systemctl --user show-environment &>/dev/null; then
+    echo "  [SKIP] serena project-server: no systemd --user session"
+  elif [ ! -f "$_ps_unit" ]; then
+    echo "  [MISS] serena project-server unit not installed — run 'setup.sh sync'"
+    WARNINGS=$((WARNINGS+1))
+  else
+    if [ -f "$_ps_src" ] && ! cmp -s "$_ps_src" "$_ps_unit"; then
+      echo "  [WARN] serena project-server unit differs from the checkout — run 'setup.sh sync'"
+      WARNINGS=$((WARNINGS+1))
+    fi
+    if systemctl --user is-enabled --quiet serena-project-server.service 2>/dev/null; then
+      echo "  [OK] serena project-server enabled (survives reboot)"
+    else
+      echo "  [WARN] serena project-server not enabled — attach dies at the next reboot"
+      WARNINGS=$((WARNINGS+1))
+    fi
+    # The port is what the hook actually depends on, so it is asked last and
+    # separately: a unit can be active while the server is still binding, and
+    # an unmanaged instance can answer while the unit is dead.
+    if (echo > /dev/tcp/127.0.0.1/24225) &>/dev/null; then
+      if systemctl --user is-active --quiet serena-project-server.service 2>/dev/null; then
+        echo "  [OK] serena project-server answering on 24225 (managed)"
+      else
+        echo "  [WARN] 24225 answers but the unit is not running — an unmanaged instance is holding the port"
+        WARNINGS=$((WARNINGS+1))
+      fi
+    else
+      echo "  [MISS] serena project-server not answering on 24225 — serena-attach will attach nothing"
+      WARNINGS=$((WARNINGS+1))
+    fi
+  fi
+
   echo ""
 
 }

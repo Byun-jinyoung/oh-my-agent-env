@@ -49,7 +49,8 @@
 // Interactive only, still - but now for the real reason, and the ledger is
 // what distinguishes "the hook failed" from "the runtime never delivered it".
 // The latency work stands on its own: interactive delivery costs ~255ms of
-// project-server time instead of ~2.9s.
+// project-server time instead of ~2.9s (3343ms on the first query after the
+// project-server restarts, before the project is loaded).
 //
 // Scope, reused verbatim from the gate because the corpus tuned it (337 -> 123
 // firings): a search command whose PATTERN is `def|class|function|... NAME`
@@ -96,13 +97,14 @@ const SEARCH_CMD = /(?:^|[|&;(]|\s)(?:rg|grep|egrep|ack|ag)\s/;
 // project-server binds an OS-assigned port by default (PROJECT_SERVER_PORT = 0
 // in serena's constants), so this hook pins one. Override for tests.
 const SERENA_URL = process.env.OMA_SERENA_URL || 'http://127.0.0.1:24225';
-// Two budgets, because the two query shapes are an order of magnitude apart
-// (see searchPath). A scoped query that has not answered in 1.5s is not going
-// to answer inside the headless SIGTERM either, and giving up on our own terms
-// beats being killed mid-write. An unscoped one is already past that deadline
-// on arrival — it only ever lands interactively, where the ceiling is the
-// runtime's patience, not 1.79s.
-const QUERY_TIMEOUT_SCOPED_MS = 1500;
+// One budget, sized for a cold project rather than a warm one. This was split
+// (1500ms scoped / 8000ms otherwise) so a scoped query would give up before
+// the headless +1.79s SIGTERM instead of being killed mid-write. Then headless
+// turned out not to deliver at any latency, which left the short budget buying
+// nothing and costing the first lookup after every server restart: measured
+// against boltz-red immediately after `systemctl --user kill`, the first query
+// takes 3343ms (project load + language server) and the next three take 255ms.
+// 1500ms discarded exactly the query that had to pay for the others.
 const QUERY_TIMEOUT_MS = 8000;
 
 // --- reused from the retired gate ---------------------------------------------
@@ -262,7 +264,7 @@ process.stdin.on('end', () => {
   const scope = searchPath(cmd, cwd);
   if (scope) params.relative_path = scope;
   const body = { project_name: cwd, tool_name: 'find_symbol', tool_params_json: JSON.stringify(params) };
-  post(SERENA_URL, body, scope ? QUERY_TIMEOUT_SCOPED_MS : QUERY_TIMEOUT_MS, (err, raw) => {
+  post(SERENA_URL, body, QUERY_TIMEOUT_MS, (err, raw) => {
     const shape = scope ? 'scoped' : 'fallback';
     if (err) {
       if (err.code === 'ECONNREFUSED') spawnServer();
