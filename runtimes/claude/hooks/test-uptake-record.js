@@ -103,6 +103,47 @@ const tr6 = transcript([
 rows = run({ session_id: 's6', cwd: '/p', reason: 'exit', transcript_path: tr6 }, fresh());
 const r6 = rows[0] || { nav: {} };
 check('serena attachments counted from user records', r6.nav.serena_attached === 2, JSON.stringify(r6.nav));
+
+// --- attach consumption: delivery is not use --------------------------------
+// The pre-registered outcome for serena-attach. The gate it replaced looked
+// active in the transcript too; what retired it was the outcome, not the
+// firing count.
+const tr7 = transcript([
+  use('Bash', { command: 'rg "def foo" src/' }, 'a'),
+  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'serena find_symbol("foo")\n  Function foo — src/a.py:10-40' }] } }),
+  use('Read', { file_path: 'src/a.py', offset: 10, limit: 30 }, 'b'),
+]);
+rows = run({ session_id: 's7', cwd: '/p', reason: 'exit', transcript_path: tr7 }, fresh());
+check('attachment read within the window counts as consumed',
+      rows[0].attach && rows[0].attach.delivered === 1 && rows[0].attach.consumed === 1,
+      JSON.stringify(rows[0].attach));
+
+const tr8 = transcript([
+  use('Bash', { command: 'rg "def foo" src/' }, 'a'),
+  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'serena find_symbol("foo")\n  Function foo — src/a.py:10-40' }] } }),
+  use('Bash', { command: 'ls -la' }, 'b'),
+  use('Read', { file_path: 'docs/other.md' }, 'c'),
+  use('Bash', { command: 'git status' }, 'd'),
+  use('Read', { file_path: 'src/a.py' }, 'e'),
+]);
+rows = run({ session_id: 's8', cwd: '/p', reason: 'exit', transcript_path: tr8 }, fresh());
+check('a file touched only after the window is not consumption',
+      rows[0].attach.delivered === 1 && rows[0].attach.consumed === 0,
+      JSON.stringify(rows[0].attach));
+
+const tr9 = transcript([
+  use('Bash', { command: 'rg "def foo" src/' }, 'a'),
+  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'serena find_symbol("foo")\n  Function foo — src/a.py:10-40' }] } }),
+  use('ToolSearch', { query: 'symbol' }, 'b'),
+  use('TaskUpdate', { id: 1 }, 'c'),
+  use('Edit', { file_path: 'src/a.py', old_string: 'x', new_string: 'y' }, 'd'),
+]);
+rows = run({ session_id: 's9', cwd: '/p', reason: 'exit', transcript_path: tr9 }, fresh());
+check('bookkeeping calls do not spend the window',
+      rows[0].attach.consumed === 1, JSON.stringify(rows[0].attach));
+
+check('attach keys present at 0 when nothing was attached',
+      r.attach && r.attach.delivered === 0 && r.attach.consumed === 0, JSON.stringify(r.attach));
 check('serena_attached present at 0 when none delivered', r5.nav.serena_attached === 0, JSON.stringify(r5.nav));
 // A row from a session that used none of them must still CARRY the keys with
 // 0 — key-absent-vs-zero: absent means "scanner predates the counter", and

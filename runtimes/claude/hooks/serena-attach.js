@@ -56,9 +56,35 @@
 // subtract.
 'use strict';
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
+
+// One line per firing, because the transcript records only the attachments
+// that ARRIVED. A scoped hit and a query the runtime killed look identical
+// from there - both absent - and so do a fallback that took 3s and a scoped
+// query that took 255ms. Without this the fallback rate is unobservable and
+// "293ms" silently describes only the paths that happened to hit.
+// Written with the session id the hook is already given, so rows join to the
+// SessionEnd ledger. Silent and fail-open like everything else here: a
+// counter that can break the hook is worse than no counter.
+const LEDGER = path.join(process.env.OMA_UPTAKE_DIR || path.join(os.homedir(), '.claude', 'uptake'), 'attach.jsonl');
+const started = Date.now();
+let recorded = false;
+function done(outcome, extra) {
+  if (!recorded) {
+    recorded = true;
+    try {
+      fs.mkdirSync(path.dirname(LEDGER), { recursive: true });
+      fs.appendFileSync(LEDGER, JSON.stringify(Object.assign(
+        { ts: new Date().toISOString(), session: SESSION, outcome: outcome, ms: Date.now() - started }, extra || {}
+      )) + '\n');
+    } catch (e) { /* a ledger that cannot be written is not a reason to fail */ }
+  }
+  process.exit(0);
+}
+let SESSION = '-';
 
 const DEF = /\b(?:def|class|function|func|fn|struct|interface|impl)\s+([A-Za-z_][A-Za-z0-9_]*)/;
 const SEARCH_CMD = /(?:^|[|&;(]|\s)(?:rg|grep|egrep|ack|ag)\s/;
@@ -215,6 +241,7 @@ process.stdin.on('end', () => {
   clearTimeout(stdinTimeout);
   let p;
   try { p = JSON.parse(input || '{}'); } catch (e) { return process.exit(0); }
+  SESSION = p.session_id || '-';
   if (p.tool_name !== 'Bash') return process.exit(0);
   const cmd = (p.tool_input && p.tool_input.command) || '';
   if (!SEARCH_CMD.test(cmd)) return process.exit(0);
@@ -231,13 +258,14 @@ process.stdin.on('end', () => {
   if (scope) params.relative_path = scope;
   const body = { project_name: cwd, tool_name: 'find_symbol', tool_params_json: JSON.stringify(params) };
   post(SERENA_URL, body, scope ? QUERY_TIMEOUT_SCOPED_MS : QUERY_TIMEOUT_MS, (err, raw) => {
+    const shape = scope ? 'scoped' : 'fallback';
     if (err) {
       if (err.code === 'ECONNREFUSED') spawnServer();
-      return process.exit(0);
+      return done(err.message === 'timeout' ? 'timeout' : 'error', { shape: shape, symbol: symbol });
     }
     const text = render(symbol, raw);
-    if (!text) return process.exit(0);
+    if (!text) return done('empty', { shape: shape, symbol: symbol });
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: text } }));
-    process.exit(0);
+    done(shape, { symbol: symbol, scope: scope || null });
   });
 });

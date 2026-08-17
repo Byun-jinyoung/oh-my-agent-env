@@ -79,6 +79,14 @@ function scan(file) {
   // tighten or drop the gate needs the outcome, and computing it by hand from
   // transcripts is the remembered measurement this file exists to replace.
   const gate = { denied: 0, escape: 0, to_serena: 0, to_escape: 0, to_rg: 0, to_read: 0, to_other: 0 };
+  // Delivery is not consumption. serena-attach puts an answer in the context;
+  // whether it changes what the model does next has never been measured, and
+  // the reminder channel it replaced looked equally present in the transcript
+  // while moving behaviour 0-5%. `consumed` is the pre-registered outcome:
+  // within the next 3 tool calls, the model touches a file the attachment
+  // named. Below 20% over 20 attachments the attachment is noise; the same
+  // rule that retired the gate applies to its replacement.
+  const attach = { delivered: 0, consumed: 0 };
   const fail = { bash: 0, edit: 0 };
   const reads = { full: 0, ranged: 0, dup: 0 };
   const tools = {};
@@ -103,7 +111,19 @@ function scan(file) {
     // Matched on the raw JSON line, where the quote is escaped (`\"`), so the
     // marker stops before it. `serena find_symbol(` is what the hook writes and
     // nothing else on this machine does.
-    if (line.indexOf('serena find_symbol(') !== -1) nav.serena_attached++;
+    if (line.indexOf('serena find_symbol(') !== -1) {
+      nav.serena_attached++;
+      attach.delivered++;
+      // The rendered line is `  <kind> <name> - <relative_path>:<start>-<end>`.
+      // Paths are collected from the raw JSON line: the render survives the
+      // escaping intact, and reparsing the record to reach the same string
+      // costs a JSON.parse on every attachment for nothing.
+      const named = [];
+      const P = /([A-Za-z0-9_./-]+\.[A-Za-z0-9_]+):(\d+)-(\d+)/g;
+      let mm;
+      while ((mm = P.exec(line)) !== null) named.push(mm[1]);
+      if (named.length) trace.push({ attach: named });
+    }
     if (line.indexOf('"tool_') === -1) continue;
     let row;
     try { row = JSON.parse(line); } catch (e) { continue; }
@@ -132,6 +152,7 @@ function scan(file) {
           if (seenRead.has(fp)) reads.dup++; else seenRead.add(fp);
         }
         let cmd = '';
+        const file = inp.file_path || inp.path || '';
         if (n === 'Bash') {
           cmd = inp.command || '';
           if (RG.test(cmd)) nav.rg++;
@@ -139,7 +160,7 @@ function scan(file) {
           if (cmd.indexOf('graphify') !== -1) nav.graphify++;
           if (cmd.indexOf('텍스트검색:') !== -1) gate.escape++;
         }
-        trace.push({ use: n, cmd: cmd });
+        trace.push({ use: n, cmd: cmd, file: file });
       } else if (c.type === 'tool_result') {
         const n = idName.get(c.tool_use_id) || '';
         const body = typeof c.content === 'string' ? c.content : JSON.stringify(c.content || '');
@@ -174,7 +195,27 @@ function scan(file) {
     }
     if (!done) gate.to_other++;
   }
-  return { nav, gate, fail, reads, skills, calls: Object.values(tools).reduce((a, b) => a + b, 0) };
+
+  // Did the attachment get used? Same bookkeeping skips as the gate outcome, so
+  // both numbers are read by the same clock, but a window of 3 real tool calls
+  // rather than 12: an answer that has not been touched by then was not what
+  // the model went on to do. A file the attachment named appearing in a Read,
+  // an Edit or a command is the whole test - quoting the span in prose is not
+  // counted, because a regex over prose is exactly what scored 100% false
+  // positives when this harness last tried to read intent out of text.
+  for (let i = 0; i < trace.length; i++) {
+    const names = trace[i].attach;
+    if (!names) continue;
+    let seen = 0;
+    for (let j = i + 1; j < trace.length && seen < 3; j++) {
+      const ev = trace[j];
+      if (!ev.use || SKIP[ev.use]) continue;
+      seen++;
+      const hay = (ev.file || '') + ' ' + (ev.cmd || '');
+      if (names.some((n) => n && hay.indexOf(n) !== -1)) { attach.consumed++; break; }
+    }
+  }
+  return { nav, gate, attach, fail, reads, skills, calls: Object.values(tools).reduce((a, b) => a + b, 0) };
 }
 
 const stdinTimeout = setTimeout(() => process.exit(0), 5000);
