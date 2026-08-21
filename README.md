@@ -176,7 +176,7 @@ surface is:
 
 ```bash
 codex plugin list | grep 'omo@sisyphuslabs'
-~/.local/bin/omo --version
+~/.local/bin/omo-agent-toolkit --version   # LazyCodex >= 5; 4.x linked it as ~/.local/bin/omo
 ```
 
 After the first sync on a new machine, restart Codex App/CLI and approve the
