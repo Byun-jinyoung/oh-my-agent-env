@@ -13,6 +13,8 @@
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/sync/skills.sh"
 # shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/sync/agent-clis.sh"
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/sync/external-tools.sh"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/sync/plugins-mcp.sh"
@@ -84,6 +86,9 @@ cmd_sync() {
   # Local-only, so it runs before the --skip-network branch below: the snapshot
   # is machine state, not something fetched.
   sync_machine_snapshot
+  # Local configuration is also independent of network availability. It writes
+  # only managed keys/blocks and installs repository-backed wrapper symlinks.
+  sync_agent_cli_configs
 
   # Network-dependent steps (skip with --skip-network)
   if $SKIP_NETWORK; then
@@ -95,6 +100,7 @@ cmd_sync() {
     return
   fi
 
+  sync_agent_cli_install
   sync_external_tools
   sync_plugins_mcp
   sync_agent_mcp_frameworks

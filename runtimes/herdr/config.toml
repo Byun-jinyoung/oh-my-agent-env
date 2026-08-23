@@ -1,0 +1,3 @@
+[keys]
+# Ctrl+V is reserved for Herdr prefix mode inside Herdr-managed panes.
+prefix = "ctrl+v"

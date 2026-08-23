@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Launch GJC with Herdr recognition only inside a Herdr-managed pane.
+set -u
+
+GJC="$(command -v gjc 2>/dev/null || true)"
+[ -n "$GJC" ] || GJC="$HOME/.bun/bin/gjc"
+
+if [ "${HERDR_ENV:-}" != "1" ] || [ -z "${HERDR_PANE_ID:-}" ]; then
+  exec "$GJC" "$@"
+fi
+
+BUN="$(command -v bun 2>/dev/null || true)"
+[ -n "$BUN" ] || BUN="$HOME/.bun/bin/bun"
+GJC_REAL="$(readlink -f "$GJC" 2>/dev/null || printf '%s\n' "$GJC")"
+
+if [ ! -x "$BUN" ] || [ ! -f "$GJC_REAL" ]; then
+  exec "$GJC" "$@"
+fi
+
+herdr_label() {
+  local pane="$HERDR_PANE_ID" n
+  command -v herdr >/dev/null 2>&1 || return 0
+  for _ in $(seq 1 30); do
+    if herdr agent get "$pane" >/dev/null 2>&1; then
+      for n in gjc gjc-2 gjc-3 gjc-4 gjc-5; do
+        herdr agent rename "$pane" "$n" >/dev/null 2>&1 && return 0
+      done
+      return 0
+    fi
+    sleep 1
+  done
+}
+
+( herdr_label ) >/dev/null 2>&1 &
+disown 2>/dev/null || true
+exec -a pi "$BUN" "$GJC_REAL" "$@"

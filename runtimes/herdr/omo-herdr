@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Launch OMO with Herdr recognition only inside a Herdr-managed pane.
+set -u
+
+OMO="$(command -v omo 2>/dev/null || true)"
+[ -n "$OMO" ] || OMO="$HOME/.npm-global/bin/omo"
+
+if [ "${HERDR_ENV:-}" != "1" ] || [ -z "${HERDR_PANE_ID:-}" ]; then
+  exec "$OMO" "$@"
+fi
+
+NODE="$(command -v node 2>/dev/null || true)"
+OMO_REAL="$(readlink -f "$OMO" 2>/dev/null || printf '%s\n' "$OMO")"
+
+if [ ! -x "$NODE" ] || [ ! -f "$OMO_REAL" ]; then
+  exec "$OMO" "$@"
+fi
+
+herdr_label() {
+  local pane="$HERDR_PANE_ID" n
+  command -v herdr >/dev/null 2>&1 || return 0
+  for _ in $(seq 1 30); do
+    if herdr agent get "$pane" >/dev/null 2>&1; then
+      for n in omo omo-2 omo-3 omo-4 omo-5; do
+        herdr agent rename "$pane" "$n" >/dev/null 2>&1 && return 0
+      done
+      return 0
+    fi
+    sleep 1
+  done
+}
+
+( herdr_label ) >/dev/null 2>&1 &
+disown 2>/dev/null || true
+exec -a omp "$NODE" "$OMO_REAL" "$@"

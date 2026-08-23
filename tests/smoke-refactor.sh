@@ -33,6 +33,7 @@ for f in \
   "$ROOT/lib/sync/core.sh" \
   "$ROOT/lib/sync/rules.sh" \
   "$ROOT/lib/sync/skills.sh" \
+  "$ROOT/lib/sync/agent-clis.sh" \
   "$ROOT/lib/sync/external-tools.sh" \
   "$ROOT/lib/sync/plugins-mcp.sh" \
   "$ROOT/lib/sync/frameworks.sh"; do
@@ -1945,5 +1946,77 @@ grep -q 'report_stale_sessions "\$CONFIG_DIR/settings.json"' "$ROOT/lib/doctor/c
   || fail "[33] doctor does not call report_stale_sessions"
 grep -q 'report_stale_sessions "\$CONFIG_DIR/settings.json"' "$ROOT/lib/sync.sh" \
   || fail "[33] sync closing line does not call report_stale_sessions"
+
+echo "[34] GJC / OMO / Herdr configuration is portable, merged, and idempotent"
+t34="$TMP/agent-clis"; h34="$t34/home"
+mkdir -p "$h34/.gjc/agent" "$h34/.omo/agent" "$h34/.config/herdr"
+cat > "$h34/.gjc/agent/keybindings.json" <<'JSON'
+{"foreign.gjc.action":"keep"}
+JSON
+cat > "$h34/.omo/agent/keybindings.json" <<'JSON'
+{"foreign.omo.action":"keep"}
+JSON
+cat > "$h34/.config/herdr/config.toml" <<'TOML'
+onboarding = false
+[keys]
+prefix = "f12"
+[ui]
+mouse_capture = true
+TOML
+cat > "$h34/.bashrc" <<'SH'
+# user content
+export KEEP_ME=1
+SH
+run34() {
+  HOME="$h34" \
+  XDG_CONFIG_HOME="$h34/.config" \
+  GJC_CODING_AGENT_DIR="$h34/.gjc/agent" \
+  OMO_CODING_AGENT_DIR="$h34/.omo/agent" \
+  HERDR_CONFIG_DIR="$h34/.config/herdr" \
+  PATH="/usr/bin:/bin" \
+  bash -c "
+    SCRIPT_DIR='$ROOT'
+    LOG_FILE='$t34/sync.log'
+    WARNINGS=0
+    ERRORS=0
+    source '$ROOT/lib/common.sh'
+    source '$ROOT/lib/sync/agent-clis.sh'
+    sync_agent_cli_configs
+    test \"\$ERRORS\" -eq 0
+  " >/dev/null
+}
+run34
+python3 - "$h34" "$ROOT" <<'PY' || fail "[34] managed agent config did not merge correctly"
+import json, sys
+from pathlib import Path
+home, root = map(Path, sys.argv[1:3])
+for agent, foreign in (("gjc", "foreign.gjc.action"), ("omo", "foreign.omo.action")):
+    actual = json.loads((home / f".{agent}/agent/keybindings.json").read_text())
+    managed = json.loads((root / f"runtimes/{agent}/keybindings.json").read_text())
+    assert actual[foreign] == "keep"
+    assert all(actual.get(k) == v for k, v in managed.items())
+herdr = (home / ".config/herdr/config.toml").read_text()
+assert 'prefix = "ctrl+v"' in herdr
+assert "[ui]" in herdr and "mouse_capture = true" in herdr
+bashrc = (home / ".bashrc").read_text()
+assert "export KEEP_ME=1" in bashrc
+assert bashrc.count("oh-my-agent-env:herdr-agents >>>") == 1
+PY
+test -L "$h34/.local/bin/gjc-herdr" || fail "[34] gjc-herdr wrapper was not linked"
+test -L "$h34/.local/bin/omo-herdr" || fail "[34] omo-herdr wrapper was not linked"
+cp -a "$h34" "$t34/snapshot"
+run34
+diff -ru "$t34/snapshot" "$h34" >/dev/null \
+  || fail "[34] a second local config sync was not idempotent"
+grep -q 'https://herdr.dev/install.sh' "$ROOT/lib/sync/agent-clis.sh" \
+  || fail "[34] Herdr installer is not wired"
+grep -q 'npm install -g omo-ai' "$ROOT/lib/sync/agent-clis.sh" \
+  || fail "[34] OMO installer is not wired"
+grep -q 'bun install -g gajae-code' "$ROOT/lib/sync/agent-clis.sh" \
+  || fail "[34] GJC installer is not wired"
+grep -q 'sync_agent_cli_configs' "$ROOT/lib/sync.sh" \
+  || fail "[34] local agent configuration is not called by sync"
+grep -q 'sync_agent_cli_install' "$ROOT/lib/sync.sh" \
+  || fail "[34] agent installers are not called by sync"
 
 echo "smoke-refactor OK"

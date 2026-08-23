@@ -19,6 +19,7 @@ bash setup.sh
 | **GEMINI.md** | Global reliability rules for Antigravity (agy reads `~/.gemini/GEMINI.md` via gemini-cli inheritance) |
 | **instructions.md** | Global reliability rules for Codex CLI |
 | **LazyCodex** | Codex plugin `omo@sisyphuslabs` installed via `npx lazycodex-ai@latest install --no-tui` |
+| **Herdr + GJC + OMO** | Installs all three CLIs and merges portable Herdr recognition, Emacs keybindings, aliases, and the GJC `codex-pro` profile |
 | **oh-my-agent (oma)** | Per-project multi-agent harness (first-fluke/oh-my-agent), installed via `setup.sh oma <path>` |
 | **Graphify** | Knowledge graph CLI (`graphifyy` package, `graphify` command), Claude/Codex skills, and project hooks |
 
@@ -34,6 +35,7 @@ oh-my-agent-env/
 │   │   ├── core.sh                       #   Claude commands/hooks
 │   │   ├── rules.sh                      #   Codex/Gemini dirs + global rules
 │   │   ├── skills.sh                     #   registry.yaml skill links + statusline
+│   │   ├── agent-clis.sh                 #   Herdr/GJC/OMO install + portable config merge
 │   │   ├── external-tools.sh             #   context-mode, Codex CLI, LazyCodex, fork install
 │   │   ├── plugins-mcp.sh                #   Claude plugins + Claude MCP registration
 │   │   └── frameworks.sh                 #   Codex/Antigravity MCPs, Serena, GSD/RTK/Graphify/CRG/codegraph
@@ -59,6 +61,9 @@ oh-my-agent-env/
 │   ├── codex/
 │   │   ├── instructions.md               # Codex global rules
 │   │   └── tools.md                      # Codex tool guidance
+│   ├── herdr/                             # Herdr config + GJC/OMO recognition wrappers
+│   ├── gjc/                               # GJC keybindings + default model profile
+│   ├── omo/                               # OMO keybindings
 │   └── antigravity/
 │       ├── tools.md                      # Antigravity (agy) tool guidance
 │       └── skills/
@@ -181,6 +186,23 @@ codex plugin list | grep 'omo@sisyphuslabs'
 
 After the first sync on a new machine, restart Codex App/CLI and approve the
 `omo@sisyphuslabs` hooks when Codex asks.
+
+## Herdr, GJC, and OMO
+
+`setup.sh sync` installs Herdr, OMO, Bun, and GJC when missing, then applies the
+tracked configuration under `runtimes/{herdr,gjc,omo}`. The sync:
+
+- merges only managed keybinding IDs into `~/.gjc/agent/keybindings.json` and
+  `~/.omo/agent/keybindings.json`, preserving unrelated user bindings;
+- sets Herdr's prefix to `Ctrl+V` while preserving other
+  `~/.config/herdr/config.toml` sections;
+- links `gjc-herdr` and `omo-herdr` into `~/.local/bin` and installs an
+  idempotent managed alias block in `~/.bashrc`;
+- sets GJC's default model profile to `codex-pro`.
+
+Network installation is skipped by `setup.sh sync --skip-network`, but all
+local configuration still applies. Re-run normal `setup.sh sync` after
+installing a previously missing CLI.
 
 ## Project Graphify Setup
 

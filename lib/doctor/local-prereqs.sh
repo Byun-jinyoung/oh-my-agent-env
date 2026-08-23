@@ -69,7 +69,7 @@ doctor_local_prereqs() {
   # ocr / semantica-mcp: operator-requested 2026-08-16, installed by
   # sync_external_tools. Listed here so a machine where that install failed
   # says so instead of the /ocr plugin and semantica MCP dying quietly.
-  for cmd in git node npm python3 uv claude codex gemini rtk graphify context-mode playwright ocr semantica-mcp; do
+  for cmd in git node npm python3 bun claude codex gemini herdr gjc omo rtk graphify context-mode playwright ocr semantica-mcp; do
     if command -v $cmd &>/dev/null; then echo "  [OK] $cmd"
     else echo "  [MISS] $cmd"; WARNINGS=$((WARNINGS+1)); fi
   done
@@ -82,6 +82,58 @@ doctor_local_prereqs() {
   else
     echo "  [MISS] omo-agent-toolkit (installed by LazyCodex; run setup.sh sync)"
     WARNINGS=$((WARNINGS+1))
+  fi
+
+  echo ""
+  echo "[ GJC / OMO / Herdr portable configuration ]"
+  local _portable_ok=0
+  python3 - "$HOME/.gjc/agent/keybindings.json" "$SCRIPT_DIR/runtimes/gjc/keybindings.json" \
+              "$HOME/.omo/agent/keybindings.json" "$SCRIPT_DIR/runtimes/omo/keybindings.json" <<'PY' \
+    || _portable_ok=$?
+import json, sys
+from pathlib import Path
+for actual_name, managed_name in ((sys.argv[1], sys.argv[2]), (sys.argv[3], sys.argv[4])):
+    actual_path, managed_path = Path(actual_name), Path(managed_name)
+    if not actual_path.exists():
+        print(f"  [MISS] {actual_path}")
+        raise SystemExit(1)
+    try:
+        actual = json.loads(actual_path.read_text())
+        managed = json.loads(managed_path.read_text())
+    except Exception as exc:
+        print(f"  [MISS] invalid keybindings JSON: {actual_path}: {exc}")
+        raise SystemExit(1)
+    missing = [key for key, value in managed.items() if actual.get(key) != value]
+    if missing:
+        print(f"  [MISS] {actual_path} differs for: {', '.join(missing)}")
+        raise SystemExit(1)
+    print(f"  [OK]   {actual_path}")
+PY
+  if [ "$_portable_ok" -ne 0 ]; then WARNINGS=$((WARNINGS+1)); fi
+  if grep -qE '^[[:space:]]*prefix[[:space:]]*=[[:space:]]*"ctrl\+v"' \
+      "${HERDR_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr}/config.toml" 2>/dev/null; then
+    echo "  [OK]   Herdr prefix ctrl+v"
+  else
+    echo "  [MISS] Herdr prefix ctrl+v (run setup.sh sync)"
+    WARNINGS=$((WARNINGS+1))
+  fi
+  for _wrapper in gjc-herdr omo-herdr; do
+    if [ -x "$HOME/.local/bin/$_wrapper" ]; then
+      echo "  [OK]   $_wrapper"
+    else
+      echo "  [MISS] $HOME/.local/bin/$_wrapper"
+      WARNINGS=$((WARNINGS+1))
+    fi
+  done
+  if command -v gjc >/dev/null 2>&1; then
+    local _profile
+    _profile="$(gjc config get modelProfile.default 2>/dev/null || true)"
+    if [ "$_profile" = "codex-pro" ]; then
+      echo "  [OK]   GJC default profile codex-pro"
+    else
+      echo "  [MISS] GJC default profile codex-pro (current: ${_profile:-unset})"
+      WARNINGS=$((WARNINGS+1))
+    fi
   fi
 
   echo ""
