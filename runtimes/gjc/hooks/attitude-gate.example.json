@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "Attitude-gate config for GJC pre_tool_use hooks (write/edit/bash mutations).",
+    "Merge order: built-in defaults <- ~/.gjc/agent/hooks/attitude-gate.json (user)",
+    "            <- <project>/.gjc/attitude-gate.json (project). Later wins.",
+    "Default enabled=false, so a global install is a NO-OP until you opt in here.",
+    "To use globally: copy this to ~/.gjc/agent/hooks/attitude-gate.json and set enabled=true.",
+    "Per project, put the agreed spec in <project>/.gjc/spec.md.",
+    "",
+    "Gates:",
+    "  specExists     - .gjc/spec.md must exist & be non-empty (HARD; no adaptation)",
+    "  specReferenced - the spec must be read this session before a mutation",
+    "  intentReported - an 'INTENT: <goal>' / '의도: <목표>' line must precede a mutation",
+    "  investigated   - >= minInvestigations read/search/find/grep/list calls first",
+    "  todoActive     - a todo_write list or goal(create/resume) must exist before a",
+    "                   mutation, so GJC compaction auto-continue keeps firing on",
+    "                   unfinished work (default false; opt in per machine)",
+    "",
+    "failClosed: on internal hook error, true=block (safe), false=allow (never brick).",
+    "NOTE: intentReported/specReferenced must appear in a PRIOR assistant turn; if the",
+    "model emits them in the same turn as the mutation the first attempt may block and",
+    "the model retries. This is by design (it forces the behavior)."
+  ],
+  "enabled": false,
+  "specPath": ".gjc/spec.md",
+  "minInvestigations": 1,
+  "failClosed": false,
+  "gates": {
+    "specExists": true,
+    "specReferenced": true,
+    "intentReported": true,
+    "investigated": true,
+    "todoActive": false
+  }
+}
