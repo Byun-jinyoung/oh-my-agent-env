@@ -44,3 +44,9 @@ skills/slurm-hpc/references/cluster.generated.md
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# Timestamped backup files (per-machine, never synced)
+*.bak-*
+
+# oh-my-omo runtime evidence (local artifacts — do not commit)
+.omo/evidence/
