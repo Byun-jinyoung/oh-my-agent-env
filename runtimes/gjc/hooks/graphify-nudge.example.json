@@ -1,0 +1,5 @@
+{
+  "_comment": "GJC graphify-freshness nudge (pre/search.ts -> _graphify-nudge.ts). Companion to graft-nudge: graft drives uptake, this drives FRESHNESS. On the `search` tool, AFTER graft was used this session, if graphify-out/graph.json is stale relative to files this session edited (mtime), it nudges `graphify update .` (AST-only, $0, no --deep). sync_gjc_hooks seeds this to ~/.gjc/agent/hooks/graphify-nudge.json if absent; per-project override at <repo>/.gjc/graphify-nudge.json (later wins). enabled=true so it works out of the box, and is a NO-OP in any repo without graphify-out/graph.json. maxNudges bounds nudges per session (deadlock guard). NOTE: DEFAULT_CONFIG.enabled in _graphify-nudge.ts stays false — this seed file is what turns it on, so an uninstalled/absent config is inert.",
+  "enabled": true,
+  "maxNudges": 2
+}

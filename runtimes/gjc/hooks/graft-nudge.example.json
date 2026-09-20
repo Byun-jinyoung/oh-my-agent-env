@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "graft-uptake nudge config for the GJC pre_tool_use discovery hooks.",
+    "Surfaces: search / search_tool_bm25 / find / read, plus grep-like bash.",
+    "Merge order: built-in defaults <- ~/.gjc/agent/hooks/graft-nudge.json (user)",
+    "            <- <project>/.gjc/graft-nudge.json (project). Later wins.",
+    "Default enabled=true: this harness drives graft uptake globally, so sync_gjc_hooks",
+    "seeds this as ~/.gjc/agent/hooks/graft-nudge.json (only if absent — your enabled choice",
+    "is never overwritten). It stays a NO-OP in any repo without a built graft/ graph.",
+    "To disable globally: set enabled=false here (or in ~/.gjc/agent/hooks/graft-nudge.json).",
+    "To pilot/override one repo: put { \"enabled\": true|false } in <project>/.gjc/graft-nudge.json.",
+    "",
+    "What it does: when a repo has a built graft/ code-graph and the model reaches",
+    "for a discovery tool (search / search_tool_bm25 / find / whole-file read) or a",
+    "raw grep/rg bash scan BEFORE using graft this session, the hook runs",
+    "`graft ask <query> --json -n <results>` and returns the top pointers as the",
+    "block reason, steering the model into the graph. block-until-graft: the FIRST",
+    "`graft …` bash call flips the session state and unblocks every surface (so the",
+    "attitude-gate spec read and graft pointer reads are always reachable). A `graft`",
+    "command and mutating bash are never gated. maxNudges bounds total blocks.",
+    "",
+    "Fields:",
+    "  enabled      - master switch (default false).",
+    "  maxNudges    - max blocks per session before yielding (deadlock guard).",
+    "  askTimeoutMs - upper bound on the `graft ask` child, in ms.",
+    "  results      - how many pointers to surface (graft ask -n)."
+  ],
+  "enabled": true,
+  "maxNudges": 3,
+  "askTimeoutMs": 8000,
+  "results": 3
+}
