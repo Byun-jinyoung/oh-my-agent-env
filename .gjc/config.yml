@@ -8,12 +8,12 @@
 compaction: 
   enabled: true
   strategy: handoff
-  thresholdTokens: 100000
-  keepRecentTokens: 25000
+  thresholdTokens: 150000
+  keepRecentTokens: 40000
   autoContinue: true
   handoffSaveToDisk: true
   idleEnabled: true
-  idleThresholdTokens: 60000
+  idleThresholdTokens: 100000
 contextPromotion: 
   enabled: false
 memory: 
