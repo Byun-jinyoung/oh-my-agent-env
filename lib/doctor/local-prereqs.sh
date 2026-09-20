@@ -126,12 +126,13 @@ PY
     fi
   done
   if command -v gjc >/dev/null 2>&1; then
-    local _profile
+    local _profile _expected_profile
+    _expected_profile="$(tr -d '[:space:]' < "$SCRIPT_DIR/runtimes/gjc/default-profile")"
     _profile="$(gjc config get modelProfile.default 2>/dev/null || true)"
-    if [ "$_profile" = "codex-pro" ]; then
-      echo "  [OK]   GJC default profile codex-pro"
+    if [ "$_profile" = "$_expected_profile" ]; then
+      echo "  [OK]   GJC default profile $_expected_profile"
     else
-      echo "  [MISS] GJC default profile codex-pro (current: ${_profile:-unset})"
+      echo "  [MISS] GJC default profile $_expected_profile (current: ${_profile:-unset})"
       WARNINGS=$((WARNINGS+1))
     fi
   fi
@@ -142,6 +143,56 @@ PY
     "$CODEX_DIR/instructions.md" "$GEMINI_DIR/GEMINI.md"; do
     if [ -L "$f" ] || [ -f "$f" ]; then echo "  [OK] $(basename "$f")"
     else echo "  [MISS] $f"; WARNINGS=$((WARNINGS+1)); fi
+  done
+
+  echo ""
+  echo "[ Global instruction contract ]"
+  # Exactly one resident contract per supported runtime. User text outside the
+  # managed block is allowed; a missing, duplicate or stale block is not.
+  # Generate the expected body without calling assemble_global_rules, because
+  # doctor is diagnostic and must never repair the live files it inspects.
+  local _gc_cli _gc_target _gc_tools _gc_expected _gc_rc
+  for _gc_cli in claude codex antigravity; do
+    case "$_gc_cli" in
+      claude)
+        _gc_target="$CONFIG_DIR/CLAUDE.md"
+        _gc_tools="$SCRIPT_DIR/runtimes/claude/tools.md"
+        ;;
+      codex)
+        _gc_target="$CODEX_DIR/AGENTS.md"
+        _gc_tools="$SCRIPT_DIR/runtimes/codex/tools.md"
+        ;;
+      antigravity)
+        _gc_target="$GEMINI_DIR/GEMINI.md"
+        _gc_tools="$SCRIPT_DIR/runtimes/antigravity/tools.md"
+        ;;
+    esac
+    _gc_expected="$(mktemp)"
+    { cat "$SCRIPT_DIR"/rules/*.md; emit_rule_index; printf '\n'; cat "$_gc_tools"; } > "$_gc_expected"
+    python3 - "$_gc_target" "$_gc_expected" "$OMA_BLOCK_BEGIN" "$OMA_BLOCK_END" <<'PYEOF'
+import sys
+from pathlib import Path
+
+target, expected = Path(sys.argv[1]), Path(sys.argv[2])
+begin, end = sys.argv[3], sys.argv[4]
+if not target.is_file():
+    raise SystemExit(1)
+text = target.read_text(encoding="utf-8")
+if text.count(begin) != 1 or text.count(end) != 1:
+    raise SystemExit(1)
+body = text.split(begin, 1)[1].split(end, 1)[0].strip()
+want = expected.read_text(encoding="utf-8").strip()
+if body != want:
+    raise SystemExit(1)
+PYEOF
+    _gc_rc=$?
+    rm -f "$_gc_expected"
+    if [ "$_gc_rc" -eq 0 ]; then
+      echo "  [OK]   $_gc_cli: exactly one current managed contract"
+    else
+      echo "  [STALE] $_gc_cli: global contract missing, duplicate, or out of date — run setup.sh sync"
+      WARNINGS=$((WARNINGS+1))
+    fi
   done
 
   echo ""

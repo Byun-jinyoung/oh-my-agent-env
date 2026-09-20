@@ -339,6 +339,46 @@ echo "[ Serena project config ]"
     if (echo > /dev/tcp/127.0.0.1/24225) &>/dev/null; then
       if systemctl --user is-active --quiet serena-project-server.service 2>/dev/null; then
         echo "  [OK] serena project-server answering on 24225 (managed)"
+        if python3 - "$SCRIPT_DIR" <<'PYEOF'
+import json
+import sys
+import urllib.request
+
+root = sys.argv[1]
+body = {
+    "project_name": root,
+    "tool_name": "find_symbol",
+    "tool_params_json": json.dumps({
+        "name_path_pattern": "record",
+        "relative_path": "runtimes/claude/hooks/serena-attach.js",
+        "include_body": False,
+        "max_answer_chars": 1000,
+    }),
+}
+try:
+    request = urllib.request.Request(
+        "http://127.0.0.1:24225/query_project",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        parsed = json.loads(response.read().decode("utf-8"))
+    if not isinstance(parsed, list) or not any(
+        row.get("name_path") == "record"
+        and row.get("relative_path") == "runtimes/claude/hooks/serena-attach.js"
+        for row in parsed if isinstance(row, dict)
+    ):
+        raise ValueError("sentinel symbol missing")
+except Exception:
+    raise SystemExit(1)
+PYEOF
+        then
+          echo "  [OK] serena project-server executes a scoped symbol query"
+        else
+          echo "  [MISS] 24225 accepts TCP but a scoped symbol query fails — check the unit PATH and language-server logs"
+          WARNINGS=$((WARNINGS+1))
+        fi
       else
         echo "  [WARN] 24225 answers but the unit is not running — an unmanaged instance is holding the port"
         WARNINGS=$((WARNINGS+1))
