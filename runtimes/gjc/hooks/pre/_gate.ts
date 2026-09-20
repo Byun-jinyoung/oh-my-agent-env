@@ -118,6 +118,14 @@ export function scanEntries(entries: any[], specPath: string): SessionState {
 	let specReferenced = false;
 	let todoActive = false;
 	for (const e of entries ?? []) {
+		// GJC injects goal-mode-context / goal-continuation custom entries whenever a
+		// persistent goal is active. These survive a handoff even though the original
+		// goal(create) toolCall does not, so an active goal is a valid unfinished-work
+		// signal that keeps auto-continue from being blocked by the todo gate.
+		if (e?.customType === "goal-mode-context" || e?.customType === "goal-continuation") {
+			todoActive = true;
+			continue;
+		}
 		if (e?.type !== "message" || e?.message?.role !== "assistant" || !Array.isArray(e.message.content)) continue;
 		for (const c of e.message.content) {
 			if (c?.type === "toolCall") {

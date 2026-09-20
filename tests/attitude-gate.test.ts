@@ -76,6 +76,14 @@ test("scanEntries: goal create/resume marks todoActive, but get/complete does no
 	expect(scanEntries([asst([{ type: "toolCall", name: "goal", arguments: { op: "get" } }])], ".gjc/spec.md").todoActive).toBe(false);
 	expect(scanEntries([asst([{ type: "toolCall", name: "goal", arguments: { op: "complete" } }])], ".gjc/spec.md").todoActive).toBe(false);
 });
+test("scanEntries: a handoff-injected active goal context marks todoActive", () => {
+	// GJC re-injects these custom entries into the post-handoff session even though
+	// the original goal(create) toolCall is gone; the gate must honor them so
+	// auto-continue is not blocked.
+	expect(scanEntries([{ type: "custom_message", customType: "goal-mode-context" }], ".gjc/spec.md").todoActive).toBe(true);
+	expect(scanEntries([{ type: "custom_message", customType: "goal-continuation" }], ".gjc/spec.md").todoActive).toBe(true);
+	expect(scanEntries([{ type: "custom_message", customType: "workflow-intent-diff" }], ".gjc/spec.md").todoActive).toBe(false);
+});
 test("scanEntries: reading a non-spec file is not a spec reference", () => {
 	const s = scanEntries([asst([{ type: "toolCall", name: "read", arguments: { path: "src/a.ts" } }])], ".gjc/spec.md");
 	expect(s.specReferenced).toBe(false);
