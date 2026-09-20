@@ -19,7 +19,7 @@ bash setup.sh
 | **GEMINI.md** | Global reliability rules for Antigravity (agy reads `~/.gemini/GEMINI.md` via gemini-cli inheritance) |
 | **instructions.md** | Global reliability rules for Codex CLI |
 | **LazyCodex** | Codex plugin `omo@sisyphuslabs` installed via `npx lazycodex-ai@latest install --no-tui` |
-| **Herdr + GJC + OMO** | Installs all three CLIs and merges portable Herdr recognition, Emacs keybindings, aliases, and the GJC `codex-pro` profile |
+| **Herdr + GJC + OMO** | Installs all three CLIs and merges portable Herdr recognition, Emacs keybindings, aliases, and the GJC `combo-custom` profile (`openai-codex/gpt-5.6-sol` by default) |
 | **oh-my-agent (oma)** | Per-project multi-agent harness (first-fluke/oh-my-agent), installed via `setup.sh oma <path>` |
 | **Graphify** | Knowledge graph CLI (`graphifyy` package, `graphify` command), Claude/Codex skills, and project hooks |
 
@@ -57,16 +57,16 @@ oh-my-agent-env/
 │   ├── claude/hooks/                     # Rules-enforcement hooks (see below)
 │   │   ├── manifest.json                 #   SSOT: which hooks install AND register
 │   │   └── *.js                          #   one file per enforced rule
-│   ├── claude/rules-core.md              # Compressed rules injected every turn
 │   ├── codex/
 │   │   ├── instructions.md               # Codex global rules
 │   │   └── tools.md                      # Codex tool guidance
 │   ├── herdr/                             # Herdr config + GJC/OMO recognition wrappers
-│   ├── gjc/                               # GJC keybindings + default model profile
 │   ├── omo/                               # OMO keybindings
 │   └── antigravity/
 │       ├── tools.md                      # Antigravity (agy) tool guidance
 │       └── skills/
+├── gjc/                                  # GJC config bundle (top-level): keybindings, default-profile,
+│                                          #   settings.conf, hooks/ (attitude-gate) — deployed to ~/.gjc by `setup.sh sync`
 ├── rules/                                # SRP-split global rule modules (Layer A)
 ├── skills/                               # Shared oh-my-agent-env skills (codebase-scan, triangle-review, ...)
 ├── scripts/                              # Helper shell scripts
@@ -85,9 +85,10 @@ are now visible in the file tree instead of being hidden in monolithic scripts.
 
 ## Rules Enforcement
 
-`rules/*.md` is prose the CLI reads; it is not enforced. The enforced layer is
-`runtimes/claude/rules-core.md` — a compressed rule list injected on every turn
-— plus one hook per rule that can actually block a tool call.
+`rules/*.md` is the single always-on prose contract assembled into each CLI's
+global instruction file. It guides model judgment; it is not presented as a
+hard gate. Hooks enforce only signals they can observe directly, such as the
+destination path, payload size, file size, and service state.
 
 `runtimes/claude/hooks/manifest.json` is the single source of truth: it decides
 both which hook files get symlinked into `~/.claude/hooks/` and which entries get
@@ -122,25 +123,25 @@ root, so running it never touches your real `~/.claude` or vault.
 
 ## Where a Rule Should Live
 
-Rules sit in one of three places, and they are not interchangeable: resident
-(`~/.claude/CLAUDE.md`, assembled from `rules/*.md` + `tools.md`), per-turn
-(`rules-core.md`, injected by a `UserPromptSubmit` hook), or on-demand (a skill,
-loaded only if something calls `Skill`).
+Rules sit in one of two places, and they are not interchangeable: resident
+(`~/.claude/CLAUDE.md`, assembled from `rules/*.md` + `tools.md`) or on-demand
+(a skill, loaded only if something calls `Skill`). The former per-turn copy was
+retired after 2,397 duplicate injections across 79 sessions: repetition added
+context pressure but no independent authority or enforcement.
 
 ```bash
 scripts/measure-uptake.sh     # reads ~/.claude/projects, prints aggregates only
 ```
 
-The obvious way to shrink the resident file is to push rules into skills. Across
-179 tool-using transcripts, `Skill` was called 14 times in 9 sessions (5%). Of
-those, 12 were slash commands the user typed; 2 were model-initiated. The ToDo
-tools, which have a Stop hook behind them, appear in 13%.
+The obvious way to shrink the resident file is to push rules into skills, but
+raw session prevalence is not an adoption metric: a session where no skill
+applied looks the same as one where a relevant skill was ignored. The script
+therefore reports explicit opportunity/attempt/delivery/consumption stages where
+a trusted producer exists and labels older session totals as legacy context.
 
-Two autonomous loads in 179 sessions is not a channel a rule can depend on, so
-that restructuring is not on the table until the number changes. The measurement
-does not control for relevance — a session where no skill applied looks the same
-as one where a relevant skill was ignored — so it bounds the upside rather than
-proving the mechanism.
+Historical ToDo usage remains visible, but its Stop gate was retired: any old
+ToDo call or assistant-authored marker could satisfy it, so it measured ceremony
+rather than a current task lifecycle.
 
 `tests/smoke-refactor.sh` step [11] guards the related trap: `rules/*.md` feeds
 Claude, Codex *and* Antigravity, so a module moved into a Claude-only skill
@@ -190,7 +191,7 @@ After the first sync on a new machine, restart Codex App/CLI and approve the
 ## Herdr, GJC, and OMO
 
 `setup.sh sync` installs Herdr, OMO, Bun, and GJC when missing, then applies the
-tracked configuration under `runtimes/{herdr,gjc,omo}`. The sync:
+tracked configuration under `runtimes/{herdr,omo}` and the top-level `gjc/` bundle. The sync:
 
 - merges only managed keybinding IDs into `~/.gjc/agent/keybindings.json` and
   `~/.omo/agent/keybindings.json`, preserving unrelated user bindings;
@@ -198,7 +199,11 @@ tracked configuration under `runtimes/{herdr,gjc,omo}`. The sync:
   `~/.config/herdr/config.toml` sections;
 - links `gjc-herdr` and `omo-herdr` into `~/.local/bin` and installs an
   idempotent managed alias block in `~/.bashrc`;
-- sets GJC's default model profile to `codex-pro`.
+- sets GJC's default model profile to `combo-custom`, whose primary model is
+  `openai-codex/gpt-5.6-sol`;
+- applies `runtimes/gjc/settings.conf` via `gjc config set`, and deploys the `runtimes/gjc/hooks/`
+  attitude-gate hooks to `~/.gjc/agent/hooks/pre/` (inert until opted in via
+  `~/.gjc/agent/hooks/attitude-gate.json`).
 
 Network installation is skipped by `setup.sh sync --skip-network`, but all
 local configuration still applies. Re-run normal `setup.sh sync` after
@@ -228,6 +233,8 @@ This first ensures the **full-pipeline prerequisites** (idempotent, step `[0]`),
 
 - **oma CLI + serena** — oma workflows (e.g. `ultrawork`) shell out to the `oma` CLI (`state:emit` / `state:verify` / `agent:spawn`) and to the **serena** MCP server (`.mcp.json` uses `command: serena`). Without both on `PATH` the workflow files load but the full pipeline can't run. `setup.sh oma` installs them into per-user prefixes — `bun add -g oh-my-agent` (→ `~/.bun/bin/oma`) and `uv tool install serena-agent` (→ `~/.local/bin/serena`). No sudo; reversible via `bun remove -g oh-my-agent` / `uv tool uninstall serena-agent`. Set `OMA_SKIP_DEPS=1` to skip (e.g. offline). `~/.bun/bin` and `~/.local/bin` must be on `PATH` so Claude Code can spawn them.
 - **`.agents/oma-config.yaml` is a managed file** — `setup.sh oma` overwrites it from `templates/oma/oma-config.yaml` on every run. This is the single source of truth (cross-machine reproducibility, no drift). **To change config, edit `templates/oma/oma-config.yaml`** (tracked) and re-run — do not hand-edit the generated copy, it is overwritten.
+- **workflow activation is explicit-only** — `setup.sh oma` removes OMA's project `UserPromptSubmit` keyword-routing hook without removing installed workflow skills or OMA's `PreToolUse`/`Stop` state hooks. Run a workflow through its explicit slash command or by naming it in the prompt; ordinary keywords do not activate one.
+- **tracked project instructions are protected** — OMA rewrites root `CLAUDE.md` and `.claude/settings.json`. `setup.sh oma` refuses before installation when either file is tracked; a deliberate migration must set `OMA_ALLOW_TRACKED_PROJECT_FILES=1`.
 - **statusline** — oma points the project statusLine at its own `hud.ts`. `setup.sh oma` re-pins our unified statusline in `.claude/settings.local.json` (gitignored, outranks project `settings.json`), so it wins and survives every oma re-link. Always install oma via `setup.sh oma` (not `bunx` directly) to keep this pin.
 
 oma's generated tree (`.agents/`, vendor `.claude/*`, `.mcp.json`) is gitignored; only `templates/oma/oma-config.yaml` is tracked.
