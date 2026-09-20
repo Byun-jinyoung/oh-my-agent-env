@@ -5,35 +5,13 @@
 // Staged rollout (cross-reviewed): 20-50KB warn, 50-100KB strong warn,
 // >100KB deny. Lower the deny line to 50KB after a false-positive
 // observation period. Reads WITH limit/offset/pages always pass.
-// Escape: current-turn user prompt contains "대용량허용:". Fail-open.
+// No transcript-text escape: bounded reads are the deterministic alternative.
+// Fail-open on parser or filesystem errors.
 const fs = require('fs');
 
 const WARN_BYTES = 20 * 1024;
 const STRONG_BYTES = 50 * 1024;
 const DENY_BYTES = 100 * 1024;
-const USER_MARKER = /대용량허용:/;
-
-// Same logic as pre-edit-gate.js / bash-size-guard.js (self-contained copy).
-function userAllowedLargeRead(transcriptPath) {
-  if (!transcriptPath || !fs.existsSync(transcriptPath)) return false;
-  let lastPromptText = '';
-  for (const l of fs.readFileSync(transcriptPath, 'utf8').split('\n')) {
-    if (!l) continue;
-    let d;
-    try { d = JSON.parse(l); } catch (e) { continue; }
-    if (d.type !== 'user') continue;
-    const m = d.message || {};
-    if (m.role !== 'user') continue;
-    const c = m.content;
-    if (typeof c === 'string' && c.trim() !== '') lastPromptText = c;
-    else if (Array.isArray(c)) {
-      const texts = c.filter((it) => it && it.type === 'text').map((it) => it.text || '');
-      if (texts.length) lastPromptText = texts.join('\n');
-    }
-  }
-  return USER_MARKER.test(lastPromptText);
-}
-
 function ctx(text) {
   process.stdout.write(
     JSON.stringify({
@@ -60,7 +38,6 @@ process.stdin.on('end', () => {
     const kb = Math.round(size / 1024);
 
     if (size > DENY_BYTES) {
-      if (userAllowedLargeRead(payload.transcript_path)) return process.exit(0);
       process.stdout.write(
         JSON.stringify({
           hookSpecificOutput: {
@@ -70,8 +47,7 @@ process.stdin.on('end', () => {
               '[분량 게이트] 이 파일은 ' + kb + 'KB로 전체 Read 차단 기준(' +
               Math.round(DENY_BYTES / 1024) + 'KB)을 초과합니다. offset/limit로 필요한 구간만 읽거나, ' +
               '분석 목적이면 ctx_execute_file로 샌드박스에서 처리해 답만 가져오세요. ' +
-              'Edit 목적이면 대상 구간 주변만 offset/limit로 읽으면 충분합니다. ' +
-              '전체 읽기가 정당하면 사용자가 프롬프트에 "대용량허용: <경로> <이유>"를 명시해야 통과됩니다.',
+              'Edit 목적이면 대상 구간 주변만 offset/limit로 읽으면 충분합니다.',
           },
         })
       );

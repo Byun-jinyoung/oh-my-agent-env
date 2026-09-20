@@ -42,6 +42,7 @@ fs.mkdirSync(noserena);
 // ~/.claude/uptake/attach.jsonl and corrupt the fallback rate it exists to
 // measure.
 const ledgerDir = path.join(tdir, 'uptake');
+let nextToolUseId = 0;
 function ledger() {
   try {
     return fs.readFileSync(path.join(ledgerDir, 'attach.jsonl'), 'utf8').trim().split('\n')
@@ -78,7 +79,7 @@ const srv = http.createServer((req, res) => {
 function runHook(payload, env) {
   return new Promise((resolve) => {
     const child = spawn('node', [HOOK], {
-      env: Object.assign({}, process.env, { OMA_SERENA_URL: 'http://127.0.0.1:' + srv.address().port, OMA_SERENA_NO_SPAWN: '1', OMA_UPTAKE_DIR: ledgerDir }, env || {}),
+      env: Object.assign({}, process.env, { OMA_SERENA_URL: 'http://127.0.0.1:' + srv.address().port, OMA_UPTAKE_DIR: ledgerDir }, env || {}),
     });
     let out = '', err = '';
     child.stdout.on('data', (c) => { out += c; });
@@ -90,6 +91,7 @@ function runHook(payload, env) {
 }
 function bash(cmd, cwd) {
   return { session_id: 't', transcript_path: '/dev/null', cwd: cwd || proj, hook_event_name: 'PostToolUse',
+           tool_use_id: 'tool-' + (++nextToolUseId),
            tool_name: 'Bash', tool_input: { command: cmd }, tool_response: { stdout: 'x', stderr: '' } };
 }
 function ctx(r) {
@@ -104,6 +106,10 @@ srv.listen(0, '127.0.0.1', async () => {
         && JSON.parse(seen[0].tool_params_json).name_path_pattern === 'get_potentials', JSON.stringify(seen[0]));
   check('project_name is the cwd', seen[0].project_name === proj, seen[0].project_name);
   check('context names the tool that answered', ctx(r).indexOf('serena') !== -1, ctx(r));
+  check('context carries the PostToolUse event id for typed delivery joins',
+        ctx(r).includes('<!-- oma-serena-event:tool-1 -->'), ctx(r));
+  check('zero-based Serena spans render as one-based editor lines',
+        ctx(r).includes('boltz2.py:42-1569'), ctx(r));
 
   // --- scope: the rg path argument becomes serena's relative_path ------------
   // Unscoped, find_symbol walks the project: 2727/2726/2751ms on boltz-red
@@ -176,21 +182,25 @@ srv.listen(0, '127.0.0.1', async () => {
   r = await runHook(bash('rg "def get_potentials" src/'));
   check('serena non-JSON -> silent exit 0', r.code === 0 && r.out === '', r.out);
 
-  // --- serena unreachable and spawning disabled: silent, exit 0 ---------------
+  // --- serena unreachable: silent, exit 0 -------------------------------------
   r = await runHook(bash('rg "def get_potentials" src/'), { OMA_SERENA_URL: 'http://127.0.0.1:1' });
-  check('server down (no spawn) -> silent exit 0', r.code === 0 && r.out === '', 'code=' + r.code + ' out=' + r.out);
+  check('server down -> silent exit 0', r.code === 0 && r.out === '', 'code=' + r.code + ' out=' + r.out);
 
-  // --- outcome ledger: the fallback rate has to be observable ----------------
-  // A scoped hit and a killed query are both absent from the transcript, so
-  // the only place the distinction can live is here.
+  // --- typed attempt ledger ----------------------------------------------------
   const rows = ledger();
-  const kinds = rows.reduce((a, r) => { a[r.outcome] = (a[r.outcome] || 0) + 1; return a; }, {});
-  check('ledger records scoped firings', (kinds.scoped || 0) > 0, JSON.stringify(kinds));
-  check('ledger records fallback firings', (kinds.fallback || 0) > 0, JSON.stringify(kinds));
-  check('ledger separates empty and error from a delivered attach',
-        (kinds.empty || 0) > 0 && (kinds.error || 0) > 0, JSON.stringify(kinds));
-  check('ledger rows carry session, symbol and elapsed ms',
-        rows.every((r) => r.session !== undefined && r.ms >= 0) && rows.some((r) => r.symbol === 'get_potentials'),
+  const kinds = rows.reduce((a, r) => { a[r.record_type] = (a[r.record_type] || 0) + 1; return a; }, {});
+  check('ledger writes opportunity, start and terminal records',
+        (kinds.opportunity || 0) > 0 && (kinds.attempt_started || 0) > 0 && (kinds.attempt_terminal || 0) > 0,
+        JSON.stringify(kinds));
+  check('terminal records retain outcomes and query duration',
+        rows.some((r) => r.record_type === 'attempt_terminal' && r.outcome === 'attached' && r.query_ms >= 0)
+          && rows.some((r) => r.record_type === 'attempt_terminal' && r.outcome === 'empty')
+          && rows.some((r) => r.record_type === 'attempt_terminal' && r.outcome === 'error'),
+        JSON.stringify(rows));
+  check('attempt records carry only hook-observed join fields',
+        rows.every((r) => r.schema_version === 1 && r.session_id === 't' && r.initiation === 'model'
+          && r.mode === 'unknown' && r.delivery_eligible === 'unknown')
+          && rows.some((r) => r.symbol === 'get_potentials' && r.scope !== undefined),
         JSON.stringify(rows[0]));
   // Measured, not asserted from the shape of a row: a case the hook declines
   // before it ever asks serena is not a firing, and counting it would put a
@@ -202,8 +212,17 @@ srv.listen(0, '127.0.0.1', async () => {
   check('a case declined before serena writes no ledger row', ledger().length === before,
         before + ' -> ' + ledger().length);
 
+  const missingId = bash('rg "def get_potentials" src/');
+  delete missingId.tool_use_id;
+  const missing = await runHook(missingId);
+  const afterMissing = ledger();
+  check('missing tool_use_id is unjoinable and never invents an event id',
+        missing.out === '' && afterMissing.some((r) => r.record_type === 'attempt_terminal'
+          && r.outcome === 'unjoinable' && r.event_id === null),
+        JSON.stringify(afterMissing[afterMissing.length - 1]));
+
   // --- garbage stdin -----------------------------------------------------------
-  const g = spawnSync('node', [HOOK], { input: '{not json', encoding: 'utf8', env: Object.assign({}, process.env, { OMA_SERENA_NO_SPAWN: '1' }), timeout: 15000 });
+  const g = spawnSync('node', [HOOK], { input: '{not json', encoding: 'utf8', timeout: 15000 });
   check('garbage stdin -> silent exit 0', g.status === 0 && (g.stdout || '').trim() === '', 'code=' + g.status);
 
   srv.close();

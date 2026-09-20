@@ -36,6 +36,9 @@
   ],
   "retired": [
     "fail-ledger.js",
+    "inject-core-rules.js",
+    "stop-todo-gate.js",
+    "stop-verify-gate.js",
     "symbol-search-gate.js"
   ],
   "settings": {
@@ -43,22 +46,16 @@
   },
   "hooks": [
     {
-      "event": "UserPromptSubmit",
-      "matcher": null,
-      "script": "inject-core-rules.js",
-      "enforces": "injects rules-core.md as additionalContext every turn"
-    },
-    {
       "event": "PreToolUse",
       "matcher": "Edit|Write|MultiEdit|NotebookEdit",
       "script": "pre-edit-gate.js",
-      "enforces": "rules-core rule 7 — incremental edit size (warn >300L/30KiB, deny >800L/80KiB)"
+      "enforces": "denies .agents destinations for Edit/Write/MultiEdit/NotebookEdit and oversized non-generated writes from observable tool input; Bash is guarded only by payload size because shell path semantics are not inferred"
     },
     {
       "event": "PreToolUse",
       "matcher": "Bash",
       "script": "bash-size-guard.js",
-      "enforces": "rules-core rule 7 — closes the heredoc/tee/echo bypass of pre-edit-gate"
+      "enforces": "closes the oversized heredoc/tee/echo bypass of pre-edit-gate"
     },
     {
       "event": "PostToolUse",
@@ -66,25 +63,21 @@
       "script": "serena-attach.js",
       "async": true,
       "timeout": 20,
-      "enforces": "attaches serena find_symbol(kind + full body span) beside an rg/grep single-symbol DEFINITION lookup in a serena project — rg still runs, nothing is denied. Replaces the retired symbol-search-gate, whose deny-and-redirect saw 54% of firings re-run the same rg; here there is no choice to route around. async: serena answers warm in ~2.9s on the research repo, and that must not become the gate's +73x on every rg. First call spawns the project-server (port 24225) and returns; every path exits 0 with no output on failure."
+      "enforces": "attaches scoped serena find_symbol(kind + one-based body span) beside an rg/grep single-symbol definition lookup without denying the original search; emits tool_use_id-keyed opportunity, attempt, terminal, delivery, and consumption evidence. The systemd project-server is the sole port owner; warm scoped queries measured about 255ms on boltz-red."
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+      "script": "graph-impact-attach.js",
+      "async": true,
+      "timeout": 50,
+      "enforces": "on exactly the third distinct repository-contained source destination in a current assistant turn, queries the existing Graphify graph and code-review-graph's read-only worktree impact, then attaches bounded tool_use_id-keyed context."
     },
     {
       "event": "PreToolUse",
       "matcher": "Read",
       "script": "read-size-gate.js",
-      "enforces": "rules-core rule 6 — token efficiency; staged by on-disk size, bounded reads pass"
-    },
-    {
-      "event": "Stop",
-      "matcher": null,
-      "script": "stop-verify-gate.js",
-      "enforces": "rules-core rule 6 — blocks a turn that edited a file without running a verification command"
-    },
-    {
-      "event": "Stop",
-      "matcher": null,
-      "script": "stop-todo-gate.js",
-      "enforces": "rules-core rule 3 — blocks a long multi-edit turn that never used the ToDo tools"
+      "enforces": "token efficiency; staged by on-disk size, bounded reads pass"
     },
     {
       "event": "PreCompact",

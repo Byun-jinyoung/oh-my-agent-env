@@ -21,8 +21,8 @@
 // find_symbol in ~2.9s on the research repo (cold 7s, server start 13s). Run
 // synchronously that would be the gate's +73x latency on every rg. With
 // "async": true in the manifest the hook returns at once and the context is
-// delivered when it lands. First call on a machine spawns the server and gives
-// up quietly; the second call finds it warm.
+// delivered when it lands. The managed systemd unit is the sole server owner;
+// an unavailable server is recorded and never replaced by a competing process.
 //
 // That 2.9s was self-inflicted and is gone. It measured an UNSCOPED
 // find_symbol - the hook held the rg path argument and did not pass it. Scoped
@@ -65,7 +65,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { spawn } = require('child_process');
 
 // One line per firing, because the transcript records only the attachments
 // that ARRIVED. A scoped hit and a query the runtime killed look identical
@@ -77,20 +76,34 @@ const { spawn } = require('child_process');
 // counter that can break the hook is worse than no counter.
 const LEDGER = path.join(process.env.OMA_UPTAKE_DIR || path.join(os.homedir(), '.claude', 'uptake'), 'attach.jsonl');
 const started = Date.now();
-let recorded = false;
+let terminalRecorded = false;
+let SESSION = '-';
+let EVENT_ID = null;
+let ATTEMPT = null;
+function record(type, extra) {
+  try {
+    fs.mkdirSync(path.dirname(LEDGER), { recursive: true });
+    fs.appendFileSync(LEDGER, JSON.stringify(Object.assign({
+      schema_version: 1,
+      record_type: type,
+      ts: new Date().toISOString(),
+      event_id: EVENT_ID,
+      session_id: SESSION,
+      initiation: 'model',
+      mode: 'unknown',
+      delivery_eligible: 'unknown',
+    }, extra || {})) + '\n');
+  } catch (e) { /* a ledger that cannot be written is not a reason to fail */ }
+}
 function done(outcome, extra) {
-  if (!recorded) {
-    recorded = true;
-    try {
-      fs.mkdirSync(path.dirname(LEDGER), { recursive: true });
-      fs.appendFileSync(LEDGER, JSON.stringify(Object.assign(
-        { ts: new Date().toISOString(), session: SESSION, outcome: outcome, ms: Date.now() - started }, extra || {}
-      )) + '\n');
-    } catch (e) { /* a ledger that cannot be written is not a reason to fail */ }
+  if (!terminalRecorded) {
+    terminalRecorded = true;
+    const terminal = Object.assign({ outcome: outcome }, ATTEMPT || {}, extra || {});
+    if (outcome !== 'unjoinable') terminal.query_ms = Date.now() - started;
+    record('attempt_terminal', terminal);
   }
   process.exit(0);
 }
-let SESSION = '-';
 
 const DEF = /\b(?:def|class|function|func|fn|struct|interface|impl)\s+([A-Za-z_][A-Za-z0-9_]*)/;
 const SEARCH_CMD = /(?:^|[|&;(]|\s)(?:rg|grep|egrep|ack|ag)\s/;
@@ -212,27 +225,18 @@ function post(url, body, timeoutMs, cb) {
   req.on('timeout', () => { req.destroy(); cb(new Error('timeout')); });
   req.end(JSON.stringify(body));
 }
-// First call on a machine: no server. Spawn one detached and give up quietly;
-// the next lookup finds it warm. Never awaited — this hook must not become the
-// 13-second server start.
-function spawnServer() {
-  if (process.env.OMA_SERENA_NO_SPAWN) return;
-  try {
-    const u = new URL(SERENA_URL);
-    const child = spawn('serena', ['start-project-server', '--port', String(u.port), '--log-level', 'ERROR'],
-                        { detached: true, stdio: 'ignore' });
-    child.on('error', () => {});
-    child.unref();
-  } catch (e) { /* no serena on PATH: nothing to attach, ever */ }
-}
-
 function render(symbol, raw) {
   let arr;
   try { arr = JSON.parse(raw); } catch (e) { return null; }
   if (!Array.isArray(arr) || arr.length === 0) return null;
   const lines = arr.slice(0, 8).map((s) => {
     const loc = s.body_location || {};
-    const span = loc.start_line ? `:${loc.start_line}-${loc.end_line || loc.start_line}` : '';
+    // Serena locations are zero-based; user-facing file tools and editors are
+    // one-based. Preserve a legitimate zero instead of treating it as absent.
+    const hasStart = Number.isInteger(loc.start_line);
+    const startLine = hasStart ? loc.start_line + 1 : null;
+    const endLine = Number.isInteger(loc.end_line) ? loc.end_line + 1 : startLine;
+    const span = hasStart ? `:${startLine}-${endLine}` : '';
     return `  ${s.kind || '?'} ${s.name_path || symbol} — ${s.relative_path || '?'}${span}`;
   });
   const more = arr.length > 8 ? `\n  (+${arr.length - 8} more)` : '';
@@ -248,7 +252,7 @@ process.stdin.on('end', () => {
   clearTimeout(stdinTimeout);
   let p;
   try { p = JSON.parse(input || '{}'); } catch (e) { return process.exit(0); }
-  SESSION = p.session_id || '-';
+  SESSION = typeof p.session_id === 'string' && p.session_id ? p.session_id : '-';
   if (p.tool_name !== 'Bash') return process.exit(0);
   const cmd = (p.tool_input && p.tool_input.command) || '';
   if (!SEARCH_CMD.test(cmd)) return process.exit(0);
@@ -259,20 +263,36 @@ process.stdin.on('end', () => {
   const hit = DEF.exec(pattern);
   if (!hit || !isSingleSymbol(pattern, hit)) return process.exit(0);
   const symbol = hit[1];
+  const scope = searchPath(cmd, cwd);
+  EVENT_ID = typeof p.tool_use_id === 'string' && p.tool_use_id ? p.tool_use_id : null;
+  ATTEMPT = { symbol: symbol, scope: scope || null };
+  // `tool_use_id` is the only stable join key supplied by PostToolUse. Do not
+  // turn a session, command, or content hash into an identity: those collide.
+  record('opportunity', Object.assign({ outcome: 'eligible' }, ATTEMPT));
+  if (!EVENT_ID) return done('unjoinable');
+  record('attempt_started', Object.assign({ outcome: 'started' }, ATTEMPT));
 
   const params = { name_path_pattern: symbol, include_body: false, max_answer_chars: 4000 };
-  const scope = searchPath(cmd, cwd);
   if (scope) params.relative_path = scope;
   const body = { project_name: cwd, tool_name: 'find_symbol', tool_params_json: JSON.stringify(params) };
   post(SERENA_URL, body, QUERY_TIMEOUT_MS, (err, raw) => {
     const shape = scope ? 'scoped' : 'fallback';
     if (err) {
-      if (err.code === 'ECONNREFUSED') spawnServer();
-      return done(err.message === 'timeout' ? 'timeout' : 'error', { shape: shape, symbol: symbol });
+      const outcome = err.message === 'timeout' ? 'timeout' : 'error';
+      return done(outcome, {
+        shape: shape,
+        symbol: symbol,
+        error_class: err.code === 'ECONNREFUSED' ? 'server_unavailable' : outcome,
+      });
     }
     const text = render(symbol, raw);
-    if (!text) return done('empty', { shape: shape, symbol: symbol });
-    process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: text } }));
-    done(shape, { symbol: symbol, scope: scope || null });
+    if (!text) return done('empty', { shape: shape });
+    process.stdout.write(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PostToolUse',
+        additionalContext: text + `\n<!-- oma-serena-event:${EVENT_ID} -->`,
+      },
+    }));
+    done('attached', { shape: shape });
   });
 });
