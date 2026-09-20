@@ -1,0 +1,20 @@
+# Harness-independent GJC config (tracked). Layers OVER ~/.gjc/agent/config.yml
+# for sessions launched from this repo (merge order [global, project, overrides],
+# settings.ts:1644). Source of truth: runtimes/gjc/settings.conf.
+#
+# Root cause of abnormal usage: context windows are huge (Claude 1M, Codex 372K),
+# so thresholdPercent=80 compacts only at 800K/297K and context balloons, re-processed
+# every turn. Fix = absolute cap via thresholdTokens (overrides percentage).
+compaction: 
+  enabled: true
+  strategy: handoff
+  thresholdTokens: 100000
+  keepRecentTokens: 25000
+  autoContinue: true
+  handoffSaveToDisk: true
+  idleEnabled: true
+  idleThresholdTokens: 60000
+contextPromotion: 
+  enabled: false
+memory: 
+  backend: local
