@@ -32,3 +32,15 @@ skills/slurm-hpc/references/cluster.generated.md
 .claude/rules/
 .antigravitycli/
 .migration-backup/
+
+# oh-my-agent runtime (local artifacts — do not commit)
+.agents/results/
+.agents/state/
+.agents/backup/
+
+# GJC local state (session/token logs, per-machine) — keep only tracked config
+.gjc/*
+!.gjc/config.yml
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
