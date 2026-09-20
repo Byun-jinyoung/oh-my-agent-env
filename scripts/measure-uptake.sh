@@ -4,7 +4,6 @@
 # This harness carries rules in three places, and they are not interchangeable:
 #
 #   resident   ~/.claude/CLAUDE.md   (rules/*.md + tools.md, assembled by sync)
-#   per-turn   rules-core.md         (UserPromptSubmit hook, every prompt)
 #   on-demand  skills/               (loaded only if something calls Skill)
 #
 # The tempting move is to shrink the resident file by pushing rules into skills.
@@ -26,23 +25,145 @@ set -uo pipefail
 # change that removes remembering worked.
 if [ "${1:-}" = "trend" ]; then
   ROWS="${OMA_UPTAKE_DIR:-$HOME/.claude/uptake}/rows.jsonl"
-  [ -f "$ROWS" ] || { echo "no rows yet: $ROWS (the SessionEnd hook writes one per session)" >&2; exit 1; }
+  ATTEMPTS="${OMA_UPTAKE_DIR:-$HOME/.claude/uptake}/attach.jsonl"
+  DELIVERIES="${OMA_UPTAKE_DIR:-$HOME/.claude/uptake}/delivery.jsonl"
+  GRAPH_IMPACTS="${OMA_UPTAKE_DIR:-$HOME/.claude/uptake}/opportunity.jsonl"
+  [ -f "$ROWS" ] || [ -f "$ATTEMPTS" ] || [ -f "$GRAPH_IMPACTS" ] || {
+    echo "no uptake ledgers yet: $ATTEMPTS (Serena), $GRAPH_IMPACTS (graph impact), or $ROWS (SessionEnd)" >&2
+    exit 1
+  }
   command -v python3 >/dev/null 2>&1 || { echo "python3 required" >&2; exit 1; }
-  python3 - "$ROWS" <<'PYEOF'
+  python3 - "$ROWS" "$ATTEMPTS" "$DELIVERIES" "$GRAPH_IMPACTS" <<'PYEOF'
 import json, sys
 
 raw = []
-for line in open(sys.argv[1], errors="ignore"):
-    line = line.strip()
-    if not line:
-        continue
+try:
+    for line in open(sys.argv[1], errors="ignore"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            raw.append(json.loads(line))
+        except ValueError:
+            continue
+except OSError:
+    pass
+
+def ledger(path):
+    rows = []
     try:
-        raw.append(json.loads(line))
-    except ValueError:
+        for line in open(path, errors="ignore"):
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if row.get("schema_version") == 1:
+                rows.append(row)
+    except OSError:
+        pass
+    return rows
+
+attempt_rows = ledger(sys.argv[2])
+delivery_rows = ledger(sys.argv[3])
+graph_impact_rows = [row for row in ledger(sys.argv[4]) if row.get("tool") == "graph-impact"]
+attempts = {}
+unjoinable = 0
+for row in attempt_rows:
+    event_id = row.get("event_id")
+    if row.get("record_type") == "attempt_terminal" and row.get("outcome") == "unjoinable":
+        unjoinable += 1
+    if not event_id or not row.get("session_id"):
         continue
+    state = attempts.setdefault((row["session_id"], event_id), {"opportunity": 0, "started": 0, "terminal": 0})
+    if row.get("record_type") == "opportunity":
+        state["opportunity"] += 1
+    elif row.get("record_type") == "attempt_started":
+        state["started"] += 1
+    elif row.get("record_type") == "attempt_terminal":
+        state["terminal"] += 1
+
+opportunities = sum(1 for state in attempts.values() if state["opportunity"] == 1)
+started = sum(1 for state in attempts.values() if state["opportunity"] == 1 and state["started"] == 1)
+terminals = sum(1 for state in attempts.values()
+                if state["opportunity"] == 1 and state["started"] == 1 and state["terminal"] == 1)
+delivered = [row for row in delivery_rows
+             if row.get("record_type") == "delivery" and row.get("tool") in (None, "serena-attach")]
+consumption_rows = [row for row in delivery_rows
+                    if row.get("record_type") == "consumption" and row.get("tool") in (None, "serena-attach")]
+consumption_rank = {"window_incomplete": 0, "no_match_in_three_calls": 1, "matched_named_path": 2}
+consumption_by_event = {}
+for row in consumption_rows:
+    key = (row.get("session_id"), row.get("event_id"), row.get("join_index"))
+    previous = consumption_by_event.get(key)
+    if previous is None or consumption_rank.get(row.get("outcome"), -1) > consumption_rank.get(previous.get("outcome"), -1):
+        consumption_by_event[key] = row
+consumption = list(consumption_by_event.values())
+join_counts = {kind: sum(1 for row in delivery_rows
+                         if row.get("record_type") == kind and row.get("tool") in (None, "serena-attach"))
+               for kind in ("invalid_join", "duplicate_join", "orphan_delivery")}
+matched = sum(1 for row in consumption if row.get("outcome") == "matched_named_path")
+no_match = sum(1 for row in consumption if row.get("outcome") == "no_match_in_three_calls")
+incomplete = sum(1 for row in consumption if row.get("outcome") == "window_incomplete")
+
+print("-- Serena adoption funnel (typed ledgers) --")
+print("  opportunity : %d" % opportunities)
+print("  attempt     : %d" % started)
+print("  terminal    : %d" % terminals)
+print("  delivery    : %d" % len(delivered))
+print("  consumption : %d (matched named path: %d; no match in three calls: %d; incomplete window: %d)"
+      % (len(consumption), matched, no_match, incomplete))
+print("  unjoinable attempts : %d" % unjoinable)
+print("  invalid joins       : %d" % join_counts["invalid_join"])
+print("  duplicate joins     : %d" % join_counts["duplicate_join"])
+print("  orphan deliveries   : %d" % join_counts["orphan_delivery"])
+modes = {row.get("mode") for row in attempt_rows + delivery_rows
+         if row.get("mode") in ("headless", "interactive")}
+if modes:
+    print("  trusted runtime-mode splits:")
+    for mode in ("headless", "interactive"):
+        print("    %-11s opportunities: %d, deliveries: %d" %
+              (mode,
+               sum(1 for row in attempt_rows if row.get("record_type") == "opportunity" and row.get("mode") == mode),
+               sum(1 for row in delivered if row.get("mode") == mode)))
+else:
+    print("  runtime mode : not recorded (no trusted headless/interactive data)")
+print()
+
+# Lifecycle completion is not delivery. SessionEnd observes the typed
+# async_hook_response and writes a tool_use_id-keyed delivery receipt.
+graph_impacts = {}
+for row in graph_impact_rows:
+    event_id = row.get("event_id")
+    session_id = row.get("session_id")
+    if not isinstance(event_id, str) or not event_id or not isinstance(session_id, str):
+        continue
+    state = graph_impacts.setdefault((session_id, event_id), {"opportunity": 0, "started": 0, "terminal": []})
+    if row.get("record_type") == "opportunity":
+        state["opportunity"] += 1
+    elif row.get("record_type") == "attempt_started":
+        state["started"] += 1
+    elif row.get("record_type") == "attempt_terminal":
+        state["terminal"].append(row.get("outcome"))
+
+impact_opportunities = sum(1 for state in graph_impacts.values() if state["opportunity"] == 1)
+impact_attempts = sum(1 for state in graph_impacts.values()
+                      if state["opportunity"] == 1 and state["started"] == 1)
+impact_terminals = sum(1 for state in graph_impacts.values()
+                       if state["opportunity"] == 1 and state["started"] == 1 and len(state["terminal"]) == 1)
+impact_delivery_rows = [row for row in delivery_rows
+                        if row.get("record_type") == "delivery" and row.get("tool") == "graph-impact"]
+impact_deliveries = len(impact_delivery_rows)
+impact_invalid = sum(1 for row in delivery_rows if row.get("tool") == "graph-impact"
+                     and row.get("record_type") in ("invalid_join", "duplicate_join", "orphan_delivery"))
+print("-- Graph-impact funnel (typed tool_use_id only) --")
+print("  opportunity : %d" % impact_opportunities)
+print("  attempt     : %d" % impact_attempts)
+print("  terminal    : %d" % impact_terminals)
+print("  delivery    : %d" % impact_deliveries)
+print("  invalid join: %d" % impact_invalid)
+print()
 if not raw:
-    print("rows file has no readable rows")
-    raise SystemExit(1)
+    raise SystemExit(0)
 
 # One row is one SessionEnd, NOT one session. uptake-record.js takes
 # p.transcript_path and rescans that one file from the top every time
@@ -175,13 +296,7 @@ print()
 # key are a denominator; rows without it are reported as such.
 print("-- tools installed 2026-08-16: are they used at all? --")
 INSTALLED = (("nav", "ocr", "ocr (Bash)"), ("nav", "semantica", "semantica (MCP)"),
-             ("skills", "karpathy", "karpathy skill"), ("skills", "ponytail", "ponytail skill"),
-             # serena-attach.js (2026-08-16): answers delivered beside an rg
-             # definition lookup. Pre-registered outcome metric for that hook:
-             # this count against nav.rg, and whether the same symbol is rg'd
-             # again after an attachment. Not a rate of model choice — the model
-             # chooses nothing here — but of the hook actually landing.
-             ("nav", "serena_attached", "serena attached"))
+             ("skills", "karpathy", "karpathy skill"), ("skills", "ponytail", "ponytail skill"))
 for key, sub, label in INSTALLED:
     carrying = [r for r in rows if sub in (r.get(key) or {})]
     if not carrying:
@@ -323,14 +438,14 @@ print()
 print("-- for contrast: a rule that has a hook behind it --")
 print(f"ToDo-tool sessions   : {len(todo_sessions)} ({pct(len(todo_sessions))})")
 print()
-print("-- per-turn channel: what the UserPromptSubmit hook costs --")
+print("-- retired per-turn channel: historical duplicate injection cost --")
 total_inject = sum(inject_records.values())
 worst = inject_records.most_common(1)
 print(f"rule injections      : {total_inject} across {len(inject_records)} sessions")
 if worst:
     sid, count = worst[0]
     print(f"worst session        : {count} injections ({sid[:8]}…)")
-print("bytes per injection  : wc -c runtimes/claude/rules-core.md")
+print("current injections   : retired; global managed contract is the only resident source")
 print()
 print("Reading: what decides whether a rule can live in a skill is the")
 print("model-initiated count, not the total — a slash invocation says the user")

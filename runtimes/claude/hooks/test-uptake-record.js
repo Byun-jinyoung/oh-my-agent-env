@@ -39,6 +39,26 @@ function fresh() {
   const d = fs.mkdtempSync(path.join(tdir, 'out-'));
   return d;
 }
+function attempt(outDir, sessionId, eventId, outcome) {
+  const rows = [
+    { schema_version: 1, record_type: 'opportunity', session_id: sessionId, event_id: eventId, outcome: 'eligible' },
+    { schema_version: 1, record_type: 'attempt_started', session_id: sessionId, event_id: eventId, outcome: 'started' },
+    { schema_version: 1, record_type: 'attempt_terminal', session_id: sessionId, event_id: eventId, outcome: outcome || 'attached' },
+  ];
+  fs.appendFileSync(path.join(outDir, 'attach.jsonl'), rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+}
+function graphAttempt(outDir, sessionId, eventId, outcome) {
+  const rows = [
+    { schema_version: 1, tool: 'graph-impact', record_type: 'opportunity', session_id: sessionId, event_id: eventId, outcome: 'eligible' },
+    { schema_version: 1, tool: 'graph-impact', record_type: 'attempt_started', session_id: sessionId, event_id: eventId, outcome: 'started' },
+    { schema_version: 1, tool: 'graph-impact', record_type: 'attempt_terminal', session_id: sessionId, event_id: eventId, outcome: outcome || 'attached' },
+  ];
+  fs.appendFileSync(path.join(outDir, 'opportunity.jsonl'), rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+}
+function observations(outDir) {
+  const f = path.join(outDir, 'delivery.jsonl');
+  return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
+}
 
 let failed = 0;
 function check(name, cond, detail) {
@@ -95,14 +115,42 @@ check('ponytail skills counted (scoped and bare), lookalike not', r5.skills && r
 // prefilter skips. Two attachments and one unrelated user line.
 const tr6 = transcript([
   use('Bash', { command: 'rg "def foo" src/' }, 'a'),
-  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"foo\") — the definition(s)...\n  Function foo — a.py:1-9" } } } }),
+  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"foo\") — the definition(s)...\n  Function foo — a.py:1-9\n<!-- oma-serena-event:a -->" } } } }),
   use('Bash', { command: 'rg "def bar" src/' }, 'b'),
-  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"bar\") — the definition(s)..." } } } }),
+  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"bar\") — the definition(s)...\n<!-- oma-serena-event:b -->" } } } }),
   JSON.stringify({ type: 'user', message: { role: 'user', content: 'please continue' } }),
 ]);
-rows = run({ session_id: 's6', cwd: '/p', reason: 'exit', transcript_path: tr6 }, fresh());
+const out6 = fresh();
+attempt(out6, 's6', 'a');
+attempt(out6, 's6', 'b');
+rows = run({ session_id: 's6', cwd: '/p', reason: 'exit', transcript_path: tr6 }, out6);
 const r6 = rows[0] || { nav: {} };
-check('serena attachments counted from delivered async_hook_response records', r6.nav.serena_attached === 2, JSON.stringify(r6.nav));
+check('valid async_hook_response joins emit delivery records keyed by event id',
+      observations(out6).filter((r) => r.record_type === 'delivery').length === 2,
+      JSON.stringify(observations(out6)));
+
+const trGraph = transcript([
+  use('Write', { file_path: 'src/c.js', content: 'x' }, 'graph-event'),
+  JSON.stringify({ type: 'attachment', attachment: { type: 'async_hook_response', hookName: 'PostToolUse:Write', response: { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Graph impact for the third source edit:\nchanged src/a.js -> src/c.js\n<!-- oma-graph-impact-event:graph-event -->' } } } }),
+]);
+const outGraph = fresh();
+graphAttempt(outGraph, 'sg', 'graph-event');
+run({ session_id: 'sg', cwd: '/p', reason: 'exit', transcript_path: trGraph }, outGraph);
+check('graph impact delivery requires a typed joined async attachment',
+      observations(outGraph).some((row) => row.tool === 'graph-impact'
+        && row.record_type === 'delivery' && row.event_id === 'graph-event'),
+      JSON.stringify(observations(outGraph)));
+
+const trGraphOrphan = transcript([
+  use('Write', { file_path: 'src/c.js', content: 'x' }, 'orphan'),
+  JSON.stringify({ type: 'attachment', attachment: { type: 'async_hook_response', hookName: 'PostToolUse:Write', response: { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Graph impact for the third source edit:\nchanged\n<!-- oma-graph-impact-event:orphan -->' } } } }),
+]);
+const outGraphOrphan = fresh();
+run({ session_id: 'sgo', cwd: '/p', reason: 'exit', transcript_path: trGraphOrphan }, outGraphOrphan);
+check('graph impact terminal claims do not substitute for observed joined delivery',
+      observations(outGraphOrphan).some((row) => row.tool === 'graph-impact'
+        && row.record_type === 'orphan_delivery' && row.event_id === 'orphan'),
+      JSON.stringify(observations(outGraphOrphan)));
 
 // --- a mention of an attachment is not an attachment ------------------------
 // This counter matched the rendered phrase anywhere on the line until
@@ -114,10 +162,11 @@ const trMention = transcript([
   JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'the hook writes serena find_symbol("foo") - Function foo - src/a.py:10-40 as its context' }] } }),
   JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'right, serena find_symbol("foo") is the marker we grep for' }] } }),
 ]);
-rows = run({ session_id: 'sm', cwd: '/p', reason: 'exit', transcript_path: trMention }, fresh());
+const outMention = fresh();
+rows = run({ session_id: 'sm', cwd: '/p', reason: 'exit', transcript_path: trMention }, outMention);
 check('talking about an attachment is not receiving one',
-      rows[0].nav.serena_attached === 0 && rows[0].attach.delivered === 0,
-      JSON.stringify({ nav: rows[0].nav.serena_attached, attach: rows[0].attach }));
+      observations(outMention).length === 0,
+      JSON.stringify(rows[0].nav));
 
 // --- attach consumption: delivery is not use --------------------------------
 // The pre-registered outcome for serena-attach. The gate it replaced looked
@@ -125,41 +174,129 @@ check('talking about an attachment is not receiving one',
 // firing count.
 const tr7 = transcript([
   use('Bash', { command: 'rg "def foo" src/' }, 'a'),
-  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"foo\")\n  Function foo — src/a.py:10-40" } } } }),
+  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"foo\")\n  Function foo — src/a.py:10-40\n<!-- oma-serena-event:a -->" } } } }),
   use('Read', { file_path: 'src/a.py', offset: 10, limit: 30 }, 'b'),
 ]);
-rows = run({ session_id: 's7', cwd: '/p', reason: 'exit', transcript_path: tr7 }, fresh());
-check('attachment read within the window counts as consumed',
-      rows[0].attach && rows[0].attach.delivered === 1 && rows[0].attach.consumed === 1,
-      JSON.stringify(rows[0].attach));
+const out7 = fresh();
+attempt(out7, 's7', 'a');
+rows = run({ session_id: 's7', cwd: '/p', reason: 'exit', transcript_path: tr7 }, out7);
+check('attachment read within the window emits keyed consumption',
+      observations(out7).some((r) => r.record_type === 'consumption' && r.event_id === 'a'
+        && r.outcome === 'matched_named_path'),
+      JSON.stringify(observations(out7)));
+
+const trProgress = transcript([
+  use('Bash', { command: 'rg "def foo" src/' }, 'progress'),
+  JSON.stringify({ type: 'attachment', attachment: { type: 'async_hook_response', response:
+    { hookSpecificOutput: { additionalContext: 'serena find_symbol("foo")\n  Function foo — src/a.py:10-40\n<!-- oma-serena-event:progress -->' } } } }),
+]);
+const outProgress = fresh();
+attempt(outProgress, 'progress-session', 'progress');
+run({ session_id: 'progress-session', cwd: '/p', reason: 'clear', transcript_path: trProgress }, outProgress);
+fs.appendFileSync(trProgress, use('Read', { file_path: 'src/a.py' }, 'progress-read') + '\n');
+run({ session_id: 'progress-session', cwd: '/p', reason: 'exit', transcript_path: trProgress }, outProgress);
+check('later SessionEnd can supersede an incomplete consumption observation',
+      observations(outProgress).some((r) => r.record_type === 'consumption' && r.event_id === 'progress'
+        && r.outcome === 'window_incomplete')
+      && observations(outProgress).some((r) => r.record_type === 'consumption' && r.event_id === 'progress'
+        && r.outcome === 'matched_named_path'),
+      JSON.stringify(observations(outProgress)));
 
 const tr8 = transcript([
   use('Bash', { command: 'rg "def foo" src/' }, 'a'),
-  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"foo\")\n  Function foo — src/a.py:10-40" } } } }),
+  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"foo\")\n  Function foo — src/a.py:10-40\n<!-- oma-serena-event:a -->" } } } }),
   use('Bash', { command: 'ls -la' }, 'b'),
   use('Read', { file_path: 'docs/other.md' }, 'c'),
   use('Bash', { command: 'git status' }, 'd'),
   use('Read', { file_path: 'src/a.py' }, 'e'),
 ]);
-rows = run({ session_id: 's8', cwd: '/p', reason: 'exit', transcript_path: tr8 }, fresh());
+const out8 = fresh();
+attempt(out8, 's8', 'a');
+rows = run({ session_id: 's8', cwd: '/p', reason: 'exit', transcript_path: tr8 }, out8);
 check('a file touched only after the window is not consumption',
-      rows[0].attach.delivered === 1 && rows[0].attach.consumed === 0,
-      JSON.stringify(rows[0].attach));
+      observations(out8).some((r) => r.record_type === 'consumption' && r.outcome === 'no_match_in_three_calls'),
+      JSON.stringify(observations(out8)));
 
 const tr9 = transcript([
   use('Bash', { command: 'rg "def foo" src/' }, 'a'),
-  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"foo\")\n  Function foo — src/a.py:10-40" } } } }),
+  JSON.stringify({ type: "attachment", attachment: { type: "async_hook_response", hookName: "PostToolUse:Bash", response: { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "serena find_symbol(\"foo\")\n  Function foo — src/a.py:10-40\n<!-- oma-serena-event:a -->" } } } }),
   use('ToolSearch', { query: 'symbol' }, 'b'),
   use('TaskUpdate', { id: 1 }, 'c'),
   use('Edit', { file_path: 'src/a.py', old_string: 'x', new_string: 'y' }, 'd'),
 ]);
-rows = run({ session_id: 's9', cwd: '/p', reason: 'exit', transcript_path: tr9 }, fresh());
+const out9 = fresh();
+attempt(out9, 's9', 'a');
+rows = run({ session_id: 's9', cwd: '/p', reason: 'exit', transcript_path: tr9 }, out9);
 check('bookkeeping calls do not spend the window',
-      rows[0].attach.consumed === 1, JSON.stringify(rows[0].attach));
+      observations(out9).some((r) => r.record_type === 'consumption' && r.outcome === 'matched_named_path'),
+      JSON.stringify(observations(out9)));
 
-check('attach keys present at 0 when nothing was attached',
-      r.attach && r.attach.delivered === 0 && r.attach.consumed === 0, JSON.stringify(r.attach));
-check('serena_attached present at 0 when none delivered', r5.nav.serena_attached === 0, JSON.stringify(r5.nav));
+// --- join integrity: no content or session correlation -----------------------
+const trMissingId = transcript([
+  use('Bash', { command: 'rg "def foo" src/' }, 'a'),
+  JSON.stringify({ type: 'attachment', attachment: { type: 'async_hook_response', response:
+    { hookSpecificOutput: { additionalContext: 'serena find_symbol("foo")\n  Function foo — src/a.py:1-2' } } } }),
+]);
+const outMissingId = fresh();
+attempt(outMissingId, 'missing-id', 'a');
+run({ session_id: 'missing-id', transcript_path: trMissingId }, outMissingId);
+check('missing event id is an invalid join, not a session/content fallback',
+      observations(outMissingId).some((r) => r.record_type === 'invalid_join'
+        && r.outcome === 'missing_or_ambiguous_event_id' && r.event_id === null),
+      JSON.stringify(observations(outMissingId)));
+
+const trDuplicate = transcript([
+  use('Bash', { command: 'rg "def foo" src/' }, 'a'),
+  JSON.stringify({ type: 'attachment', attachment: { type: 'async_hook_response', response:
+    { hookSpecificOutput: { additionalContext: 'serena find_symbol("foo")\n<!-- oma-serena-event:a -->' } } } }),
+  JSON.stringify({ type: 'attachment', attachment: { type: 'async_hook_response', response:
+    { hookSpecificOutput: { additionalContext: 'serena find_symbol("foo")\n<!-- oma-serena-event:a -->' } } } }),
+]);
+const outDuplicate = fresh();
+attempt(outDuplicate, 'duplicate', 'a');
+run({ session_id: 'duplicate', transcript_path: trDuplicate }, outDuplicate);
+check('duplicate event id is recorded separately rather than merged',
+      observations(outDuplicate).some((r) => r.record_type === 'duplicate_join' && r.event_id === 'a'),
+      JSON.stringify(observations(outDuplicate)));
+
+const trOrphan = transcript([
+  use('Bash', { command: 'rg "def foo" src/' }, 'a'),
+  JSON.stringify({ type: 'attachment', attachment: { type: 'async_hook_response', response:
+    { hookSpecificOutput: { additionalContext: 'serena find_symbol("foo")\n<!-- oma-serena-event:orphan -->' } } } }),
+]);
+const outOrphan = fresh();
+run({ session_id: 'orphan', transcript_path: trOrphan }, outOrphan);
+check('delivery with no matching attempt is recorded as orphaned',
+      observations(outOrphan).some((r) => r.record_type === 'orphan_delivery' && r.event_id === 'orphan'),
+      JSON.stringify(observations(outOrphan)));
+
+const trTerminal = transcript([
+  use('Bash', { command: 'rg "def foo" src/' }, 'a'),
+  JSON.stringify({ type: 'attachment', attachment: { type: 'async_hook_response', response:
+    { hookSpecificOutput: { additionalContext: 'serena find_symbol("foo")\n<!-- oma-serena-event:a -->' } } } }),
+]);
+const outTerminal = fresh();
+attempt(outTerminal, 'terminal', 'a', 'empty');
+run({ session_id: 'terminal', transcript_path: trTerminal }, outTerminal);
+check('non-attached terminal outcome cannot be joined as delivery',
+      observations(outTerminal).some((r) => r.record_type === 'invalid_join'
+        && r.outcome === 'invalid_attempt_lifecycle'),
+      JSON.stringify(observations(outTerminal)));
+
+const trSelfReference = transcript([
+  use('Bash', { command: 'rg "def foo" src/' }, 'a'),
+  JSON.stringify({ type: 'attachment', attachment: { type: 'async_hook_response', response:
+    { hookSpecificOutput: { additionalContext: 'serena find_symbol("foo")\n  Function foo — src/a.py:1-2\n<!-- oma-serena-event:a -->' } } } }),
+  use('Read', { file_path: 'src/a.py' }, 'a'),
+]);
+const outSelfReference = fresh();
+attempt(outSelfReference, 'self-reference', 'a');
+run({ session_id: 'self-reference', transcript_path: trSelfReference }, outSelfReference);
+check('the originating tool-use id cannot self-count as consumption',
+      observations(outSelfReference).some((r) => r.record_type === 'consumption'
+        && r.outcome === 'window_incomplete' && r.real_tool_calls === 0),
+      JSON.stringify(observations(outSelfReference)));
+
 // A row from a session that used none of them must still CARRY the keys with
 // 0 — key-absent-vs-zero: absent means "scanner predates the counter", and
 // the consumer renders only rows that carry the key.

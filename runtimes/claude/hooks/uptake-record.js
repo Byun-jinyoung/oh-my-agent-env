@@ -49,6 +49,10 @@ const path = require('path');
 const HOME = os.homedir();
 const OUT_DIR = process.env.OMA_UPTAKE_DIR || path.join(HOME, '.claude', 'uptake');
 const PROJECTS = process.env.OMA_PROJECTS_DIR || path.join(HOME, '.claude', 'projects');
+const ATTEMPTS = path.join(OUT_DIR, 'attach.jsonl');
+const GRAPH_IMPACTS = path.join(OUT_DIR, 'opportunity.jsonl');
+const DELIVERIES = path.join(OUT_DIR, 'delivery.jsonl');
+const SCHEMA_VERSION = 1;
 
 function findTranscript(sessionId) {
   if (!sessionId || sessionId === '-' || !fs.existsSync(PROJECTS)) return null;
@@ -59,7 +63,53 @@ function findTranscript(sessionId) {
   return null;
 }
 
-function scan(file) {
+function attemptIndex(ledger, sessionId, tool) {
+  const indexed = new Map();
+  try {
+    for (const line of fs.readFileSync(ledger, 'utf8').split('\n')) {
+      if (!line) continue;
+      let row;
+      try { row = JSON.parse(line); } catch (e) { continue; }
+      if (row.schema_version !== SCHEMA_VERSION || row.session_id !== sessionId
+          || typeof row.event_id !== 'string' || !row.event_id) continue;
+      if (tool && row.tool !== tool) continue;
+      const key = row.event_id;
+      const state = indexed.get(key) || { opportunity: 0, started: 0, terminal: [] };
+      if (row.record_type === 'opportunity') state.opportunity++;
+      else if (row.record_type === 'attempt_started') state.started++;
+      else if (row.record_type === 'attempt_terminal') state.terminal.push(row.outcome);
+      indexed.set(key, state);
+    }
+  } catch (e) { /* no attempt ledger makes every delivery orphaned */ }
+  return indexed;
+}
+
+function appendObservations(rows) {
+  if (!rows.length) return;
+  const keyFor = (row) => [
+    row.session_id, row.tool || '', row.record_type, row.event_id || '', row.join_index || 0,
+    row.record_type === 'consumption' ? row.outcome || '' : '',
+  ].join('\0');
+  const seen = new Set();
+  try {
+    for (const line of fs.readFileSync(DELIVERIES, 'utf8').split('\n')) {
+      let row;
+      try { row = JSON.parse(line); } catch (e) { continue; }
+      seen.add(keyFor(row));
+    }
+  } catch (e) { /* first write */ }
+  try {
+    fs.mkdirSync(OUT_DIR, { recursive: true });
+    for (const row of rows) {
+      const key = keyFor(row);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      fs.appendFileSync(DELIVERIES, JSON.stringify(row) + '\n');
+    }
+  } catch (e) { /* observational output must not break SessionEnd */ }
+}
+
+function scan(file, sessionId) {
   // ocr / semantica added 2026-08-16 with the tools themselves (sync installs
   // them; see lib/sync/external-tools.sh). The 2026-08-07 survey predicted
   // 0-5% uptake for anything the model must choose to call; these are the
@@ -68,7 +118,7 @@ function scan(file) {
   // the key means "predates the counter" — the consumer renders only rows
   // that carry it.
   const nav = { rg: 0, serena: 0, serena_err: 0, lsp: 0, ast_grep: 0, graphify: 0, toolsearch: 0,
-                ocr: 0, semantica: 0, serena_attached: 0 };
+                ocr: 0, semantica: 0 };
   // Skill loads are not navigation; karpathy-guidelines is a norm the model
   // opts into, and whether it ever does is the whole question about it.
   const skills = { karpathy: 0, ponytail: 0 };
@@ -79,14 +129,6 @@ function scan(file) {
   // tighten or drop the gate needs the outcome, and computing it by hand from
   // transcripts is the remembered measurement this file exists to replace.
   const gate = { denied: 0, escape: 0, to_serena: 0, to_escape: 0, to_rg: 0, to_read: 0, to_other: 0 };
-  // Delivery is not consumption. serena-attach puts an answer in the context;
-  // whether it changes what the model does next has never been measured, and
-  // the reminder channel it replaced looked equally present in the transcript
-  // while moving behaviour 0-5%. `consumed` is the pre-registered outcome:
-  // within the next 3 tool calls, the model touches a file the attachment
-  // named. Below 20% over 20 attachments the attachment is noise; the same
-  // rule that retired the gate applies to its replacement.
-  const attach = { delivered: 0, consumed: 0 };
   const fail = { bash: 0, edit: 0 };
   const reads = { full: 0, ranged: 0, dup: 0 };
   const tools = {};
@@ -99,42 +141,35 @@ function scan(file) {
   // Linear event trace, needed because the outcome of a denial is whatever tool
   // runs NEXT — which is not knowable at the moment the denial is read.
   const trace = [];
+  const attachments = [];
+  const graphAttachments = [];
 
   for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
     if (!line) continue;
-    // serena-attach.js delivers its answer as additionalContext, which lands
-    // in a `user` record, not a tool_result — so it is counted BEFORE the
-    // `"tool_"` prefilter below, which would drop it. This is the numerator of
-    // the pre-registered outcome metric for that hook: attachments delivered,
-    // against nav.rg definition lookups. Matched on the hook's fixed phrase,
-    // not its name, because the name never reaches the transcript.
-    // Matched on the raw JSON line, where the quote is escaped (`\"`), so the
-    // marker stops before it. `serena find_symbol(` is what the hook writes and
-    // nothing else on this machine does.
-    // A DELIVERED attachment, not a mention of one. The runtime records an
-    // async hook's additionalContext as {type:"attachment", attachment:
-    // {type:"async_hook_response", response:{hookSpecificOutput:{...}}}}.
-    // Matching the rendered phrase anywhere on the line - which is what this
-    // did until 2026-08-17 - counts the hook's own source, the commits that
-    // changed it, and every session that discussed it. Measured on the real
-    // ledger that was 81 hits of which the harness sessions contributed 31
-    // while receiving none: the counter was reading this project's talk about
-    // the hook as if it were the hook working.
-    if (line.indexOf('serena find_symbol(') !== -1 && line.indexOf('async_hook_response') !== -1) {
+    // Only a typed async-hook attachment is delivery evidence. The comment is
+    // the PostToolUse tool_use_id, not a content-derived correlation guess.
+    if (line.indexOf('async_hook_response') !== -1) {
       let rec = null;
       try { rec = JSON.parse(line); } catch (e) { rec = null; }
       const att = rec && rec.attachment;
       const ctx = att && att.type === 'async_hook_response' && att.response
         && att.response.hookSpecificOutput && att.response.hookSpecificOutput.additionalContext;
       if (typeof ctx === 'string' && ctx.indexOf('serena find_symbol(') === 0) {
-        nav.serena_attached++;
-        attach.delivered++;
-        // Rendered as `  <kind> <name> - <relative_path>:<start>-<end>`.
         const named = [];
         const P = /([A-Za-z0-9_./-]+\.[A-Za-z0-9_]+):(\d+)-(\d+)/g;
         let mm;
         while ((mm = P.exec(ctx)) !== null) named.push(mm[1]);
-        if (named.length) trace.push({ attach: named });
+        const ids = [];
+        const ID = /<!-- oma-serena-event:([^<>\s]+) -->/g;
+        while ((mm = ID.exec(ctx)) !== null) ids.push(mm[1]);
+        attachments.push({ ids: ids, names: named, at: trace.length });
+      } else if (typeof ctx === 'string'
+          && ctx.indexOf('Graph impact for the third source edit:\n') === 0) {
+        const ids = [];
+        const ID = /<!-- oma-graph-impact-event:([^<>\s]+) -->/g;
+        let mm;
+        while ((mm = ID.exec(ctx)) !== null) ids.push(mm[1]);
+        graphAttachments.push({ ids: ids });
       }
     }
     if (line.indexOf('"tool_') === -1) continue;
@@ -173,7 +208,7 @@ function scan(file) {
           if (cmd.indexOf('graphify') !== -1) nav.graphify++;
           if (cmd.indexOf('텍스트검색:') !== -1) gate.escape++;
         }
-        trace.push({ use: n, cmd: cmd, file: file });
+        trace.push({ use: n, cmd: cmd, file: file, tool_use_id: c.id });
       } else if (c.type === 'tool_result') {
         const n = idName.get(c.tool_use_id) || '';
         const body = typeof c.content === 'string' ? c.content : JSON.stringify(c.content || '');
@@ -209,26 +244,96 @@ function scan(file) {
     if (!done) gate.to_other++;
   }
 
-  // Did the attachment get used? Same bookkeeping skips as the gate outcome, so
-  // both numbers are read by the same clock, but a window of 3 real tool calls
-  // rather than 12: an answer that has not been touched by then was not what
-  // the model went on to do. A file the attachment named appearing in a Read,
-  // an Edit or a command is the whole test - quoting the span in prose is not
-  // counted, because a regex over prose is exactly what scored 100% false
-  // positives when this harness last tried to read intent out of text.
-  for (let i = 0; i < trace.length; i++) {
-    const names = trace[i].attach;
-    if (!names) continue;
-    let seen = 0;
-    for (let j = i + 1; j < trace.length && seen < 3; j++) {
-      const ev = trace[j];
-      if (!ev.use || SKIP[ev.use]) continue;
-      seen++;
-      const hay = (ev.file || '') + ' ' + (ev.cmd || '');
-      if (names.some((n) => n && hay.indexOf(n) !== -1)) { attach.consumed++; break; }
+  const attempts = attemptIndex(ATTEMPTS, sessionId, null);
+  const joins = [];
+  const delivered = new Set();
+  for (let index = 0; index < attachments.length; index++) {
+    const attachment = attachments[index];
+    const base = {
+      schema_version: SCHEMA_VERSION, ts: new Date().toISOString(), session_id: sessionId,
+      event_id: null, initiation: 'model', mode: 'unknown', delivery_eligible: 'unknown',
+      join_index: index + 1, tool: 'serena-attach',
+    };
+    if (attachment.ids.length !== 1) {
+      joins.push(Object.assign({}, base, { record_type: 'invalid_join', outcome: 'missing_or_ambiguous_event_id' }));
+      continue;
     }
+    const eventId = attachment.ids[0];
+    base.event_id = eventId;
+    if (delivered.has(eventId)) {
+      joins.push(Object.assign({}, base, { record_type: 'duplicate_join', outcome: 'duplicate_event_id' }));
+      continue;
+    }
+    delivered.add(eventId);
+    const attempt = attempts.get(eventId);
+    if (!attempt) {
+      joins.push(Object.assign({}, base, { record_type: 'orphan_delivery', outcome: 'no_matching_attempt' }));
+      continue;
+    }
+    if (attempt.opportunity > 1 || attempt.started > 1 || attempt.terminal.length > 1) {
+      joins.push(Object.assign({}, base, { record_type: 'duplicate_join', outcome: 'duplicate_attempt_id' }));
+      continue;
+    }
+    if (attempt.opportunity !== 1 || attempt.started !== 1 || attempt.terminal.length !== 1
+        || attempt.terminal[0] !== 'attached') {
+      joins.push(Object.assign({}, base, { record_type: 'invalid_join', outcome: 'invalid_attempt_lifecycle' }));
+      continue;
+    }
+    joins.push(Object.assign({}, base, { record_type: 'delivery', outcome: 'delivered' }));
+    let calls = 0;
+    let matched = null;
+    for (let i = attachment.at; i < trace.length && calls < 3; i++) {
+      const ev = trace[i];
+      if (!ev.use || SKIP[ev.use] || ev.tool_use_id === eventId) continue;
+      calls++;
+      const hay = (ev.file || '') + ' ' + (ev.cmd || '');
+      const name = attachment.names.find((n) => n && hay.indexOf(n) !== -1);
+      if (name) { matched = name; break; }
+    }
+    joins.push(Object.assign({}, base, {
+      record_type: 'consumption',
+      outcome: matched ? 'matched_named_path' : (calls === 3 ? 'no_match_in_three_calls' : 'window_incomplete'),
+      real_tool_calls: calls,
+      matched_path: matched,
+    }));
   }
-  return { nav, gate, attach, fail, reads, skills, calls: Object.values(tools).reduce((a, b) => a + b, 0) };
+  const graphAttempts = attemptIndex(GRAPH_IMPACTS, sessionId, 'graph-impact');
+  const graphDelivered = new Set();
+  for (let index = 0; index < graphAttachments.length; index++) {
+    const attachment = graphAttachments[index];
+    const base = {
+      schema_version: SCHEMA_VERSION, ts: new Date().toISOString(), session_id: sessionId,
+      event_id: null, initiation: 'model', mode: 'unknown', delivery_eligible: 'unknown',
+      join_index: index + 1, tool: 'graph-impact',
+    };
+    if (attachment.ids.length !== 1) {
+      joins.push(Object.assign({}, base, { record_type: 'invalid_join', outcome: 'missing_or_ambiguous_event_id' }));
+      continue;
+    }
+    const eventId = attachment.ids[0];
+    base.event_id = eventId;
+    if (graphDelivered.has(eventId)) {
+      joins.push(Object.assign({}, base, { record_type: 'duplicate_join', outcome: 'duplicate_event_id' }));
+      continue;
+    }
+    graphDelivered.add(eventId);
+    const attempt = graphAttempts.get(eventId);
+    if (!attempt) {
+      joins.push(Object.assign({}, base, { record_type: 'orphan_delivery', outcome: 'no_matching_attempt' }));
+      continue;
+    }
+    if (attempt.opportunity !== 1 || attempt.started !== 1 || attempt.terminal.length !== 1
+        || attempt.terminal[0] !== 'attached') {
+      const duplicate = attempt.opportunity > 1 || attempt.started > 1 || attempt.terminal.length > 1;
+      joins.push(Object.assign({}, base, {
+        record_type: duplicate ? 'duplicate_join' : 'invalid_join',
+        outcome: duplicate ? 'duplicate_attempt_id' : 'invalid_attempt_lifecycle',
+      }));
+      continue;
+    }
+    joins.push(Object.assign({}, base, { record_type: 'delivery', outcome: 'delivered' }));
+  }
+  return { nav, gate, fail, reads, skills, joins, calls: Object.values(tools).reduce((a, b) => a + b, 0) };
 }
 
 const stdinTimeout = setTimeout(() => process.exit(0), 5000);
@@ -243,7 +348,8 @@ process.stdin.on('end', () => {
       ? p.transcript_path
       : findTranscript(p.session_id);
     if (!file) return process.exit(0);
-    const m = scan(file);
+    const sessionId = typeof p.session_id === 'string' && p.session_id ? p.session_id : '-';
+    const m = scan(file, sessionId);
     // A session that used no tools says nothing about tool choice, and would
     // dilute every rate computed from these rows.
     if (m.calls === 0) return process.exit(0);
@@ -255,6 +361,7 @@ process.stdin.on('end', () => {
         m
       )) + '\n'
     );
+    appendObservations(m.joins);
   } catch (e) {
     /* fail-open */
   }
