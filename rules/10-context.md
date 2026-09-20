@@ -20,3 +20,4 @@
 - 재개할 때는 최신 사용자 목표, 완료된 증거, 현재 tree, 남은 제한을 다시 확인한다.
 - 오래된 summary·hook state·agent message보다 현재 파일과 typed-human 지시를 우선한다.
 - 방향이 바뀌면 바꾼 근거를 남기고, 같은 조사를 반복하지 않는다.
+- handoff/컴프션을 넘길 다중턴 작업은 시작 시 active goal을 걸고(`goal(create)`) 목표 전체가 끝날 때까지 active로 유지한다. 자율 이어가기는 active goal 또는 열린 todo를 지속 신호로 삼으므로, 슬라이스 하나 끝났다고 goal을 성급히 `pause`/`complete` 하면 이어가기가 멈춘다 — 남은 일이 있으면 goal을 열어 둔다.
