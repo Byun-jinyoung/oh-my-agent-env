@@ -611,51 +611,48 @@ Rules:
 - For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph'\''s EXTRACTED + INFERRED edges instead of scanning files
 - After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)'
 
+  # graft runs alongside graphify: same "prefer the graph over raw grep/read"
+  # contract, but the structural graph self-refreshes (~3ms, $0, no key) before
+  # every query, so it never goes stale the way graphify-out/graph.json does when
+  # an in-place `graphify update` is refused. Header-keyed so it is idempotent
+  # next to the graphify section above.
+  local graft_section='## graft
+
+Prefer graft over raw grep/rg/full-file read for code exploration — ~1/10 the tokens, and it refreshes the structural graph (~3ms, $0, no key) before every query so answers reflect uncommitted edits.
+
+- `graft ask "<task>"` — ranked nodes with file:line and source inlined; usually the whole answer, no follow-up read.
+- `graft grep "<regex>"` — exhaustive search grouped by enclosing symbol (use instead of rg for code).
+- `graft skeleton <file>` — every signature, no bodies: the API surface for ~1/10 the tokens.
+- `graft callers <symbol>` — references; `-d N` walks the transitive blast radius, `--direction out` lists callees.
+- `graft map` — token-budgeted repo orientation for an unfamiliar tree.
+- The graph lives in graft/ (git-ignored, regenerable); `graft build` rebuilds it. `graft build --deep` adds LLM summaries (needs a provider key).
+- Uptake is reinforced by graft hooks (Claude/Codex/GJC); there is no graft MCP — use the `graft` CLI above.'
+
   echo "[6] Graphify project integration"
   append_section_if_missing "$project_path/AGENTS.md" "## graphify" "$graphify_section"
   append_section_if_missing "$project_path/CLAUDE.md" "## graphify" "$graphify_section"
+  append_section_if_missing "$project_path/AGENTS.md" "## graft" "$graft_section"
+  append_section_if_missing "$project_path/CLAUDE.md" "## graft" "$graft_section"
 
-  python3 - "$project_path" << 'PYEOF' | sed 's/^/    /'
-import json, sys
-from pathlib import Path
+  echo "[6a] graft structural graph"
+  if command -v graft >/dev/null 2>&1; then
+    if ( cd "$project_path" && graft build >/dev/null 2>&1 ); then
+      echo "    [OK] graft build (structural, \$0) — graft/ is git-ignored, self-refreshing"
+    else
+      echo "    [WARN] graft build failed in $project_path (not a git repo, or graft error)"
+    fi
+  else
+    echo "    [SKIP] graft not installed — run setup.sh sync to install it"
+  fi
 
-project = Path(sys.argv[1])
-
-codex_hook = {
-    "matcher": "Bash",
-    "hooks": [{
-        "type": "command",
-        "command": "[ -f graphify-out/graph.json ] && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files.\"}}' || true",
-    }],
-}
-claude_hook = {
-    "matcher": "Bash",
-    "hooks": [{
-        "type": "command",
-        "command": "CMD=$(python3 -c \"import json,sys; d=json.load(sys.stdin); print(d.get('tool_input',d).get('command',''))\" 2>/dev/null || true); case \"$CMD\" in *grep*|*rg\\ *|*ripgrep*|*find\\ *|*fd\\ *|*ack\\ *|*ag\\ *)   [ -f graphify-out/graph.json ] &&   echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files.\"}}'   || true ;; esac",
-    }],
-}
-
-def load_json(path):
-    if path.exists():
-        try:
-            return json.loads(path.read_text())
-        except json.JSONDecodeError:
-            return {}
-    return {}
-
-def install_hook(path, hook):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = load_json(path)
-    pre_tool = data.setdefault("hooks", {}).setdefault("PreToolUse", [])
-    data["hooks"]["PreToolUse"] = [h for h in pre_tool if "graphify" not in str(h)]
-    data["hooks"]["PreToolUse"].append(hook)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    print(f"[OK] {path.relative_to(project)} graphify hook installed")
-
-install_hook(project / ".codex" / "hooks.json", codex_hook)
-install_hook(project / ".claude" / "settings.json", claude_hook)
-PYEOF
+  # NOTE: the per-project graphify uptake hooks that used to be written here
+  # (project/.codex/hooks.json + project/.claude/settings.json, PreToolUse) were
+  # removed. They only printed "Read GRAPH_REPORT.md" and had NO update trigger, so
+  # the graph they pointed at went stale the moment code changed (stale-blind). The
+  # replacement is global and freshness-aware: sync_graphify_hooks (lib/sync/
+  # agent-clis.sh) installs a PostToolUse hook into ~/.claude + ~/.codex that nudges
+  # `graphify update .` after edits, and GJC's pre/search.ts graphify-nudge does the
+  # same on its search surface. Both fire in every repo, not just projects set up here.
 
   echo "[7] Graphify ignore rules"
   for line in ".git/" ".obsidian/" ".claude/" ".codex/" ".serena/" ".code-review-graph/" "graphify-out/" "node_modules/" ".DS_Store" "*.tmp" "*.log"; do
@@ -857,8 +854,11 @@ report_stale_sessions() {
     # The claude CLI itself, not its MCP/plugin children (node ..., uvx ...).
     case "$args" in claude|claude\ *|*/claude|*/claude\ *) ;; *) continue ;; esac
     live=$((live+1))
-    start="$(ps -o lstart= -p "$pid" 2>/dev/null)"
-    start_e="$(date -d "$start" +%s 2>/dev/null || echo 0)"
+    # Keep producer and parser on the same locale. Korean `ps lstart` output
+    # (for example "금 9월 ...") is not accepted by GNU date and previously
+    # made every live session look current.
+    start="$(LC_ALL=C ps -o lstart= -p "$pid" 2>/dev/null)"
+    start_e="$(LC_ALL=C date -d "$start" +%s 2>/dev/null || echo 0)"
     if [ "$start_e" -gt 0 ] && [ "$start_e" -lt "$reg" ]; then
       cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || echo '?')"
       echo "  [STALE] pid $pid started $(date -d "@$start_e" +%H:%M 2>/dev/null) < settings.json $(date -d "@$reg" +%H:%M 2>/dev/null) — ${cwd/#$HOME/~}"

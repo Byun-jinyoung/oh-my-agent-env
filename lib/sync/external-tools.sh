@@ -21,6 +21,30 @@ sync_external_tools() {
       log_and_print "           Run: echo 'export PATH=\"\$(npm config get prefix)/bin:\$PATH\"' >> ~/.bashrc"
     fi
   fi
+  # graft (@nanonets/graft) — code graph that replaces grep/read in the
+  # exploration phase: `graft ask/grep/skeleton/callers/map` cost ~1/10 the
+  # tokens of raw search and self-refresh the structural graph (~3ms, $0, no key)
+  # before every query, so answers reflect uncommitted edits. Uptake is wired
+  # through hooks, not MCP: global graft hooks for Claude/Codex (sync_graft_hooks
+  # in agent-clis.sh) and the GJC graft-nudge pre-hook (sync_gjc_hooks). The
+  # tree-sitter grammars carry
+  # native bindings whose npm install scripts are gated on npm 11, so allow them
+  # explicitly (prebuilds cover any grammar not on the list — the script is
+  # skipped, not fatal).
+  if command -v graft &>/dev/null; then
+    log_and_print "    [OK] graft installed -> $(command -v graft)"
+  else
+    log_and_print "    Installing graft (npm global → $USER_NPM_PREFIX)..."
+    run_with_timeout "graft install" \
+      "$NPM_USER_ENV npm install -g --allow-scripts=@nanonets/graft,tree-sitter,tree-sitter-go,tree-sitter-java,tree-sitter-kotlin,tree-sitter-php,tree-sitter-python,@davisvaughan/tree-sitter-r,tree-sitter-swift,tree-sitter-typescript,tree-sitter-cli,tree-sitter-javascript @nanonets/graft < /dev/null" \
+      | tail -3 || true
+    if command -v graft &>/dev/null; then
+      log_and_print "    [OK] graft installed -> $(command -v graft)"
+    else
+      log_and_print "    [WARN] graft still not on PATH after install — graft hooks + CLI exploration will be unavailable."
+      log_and_print "           Run: echo 'export PATH=\"\$(npm config get prefix)/bin:\$PATH\"' >> ~/.bashrc"
+    fi
+  fi
   # cc-alchemy-statusline — usage tracker that powers the 5h/wk bars + reset
   # countdown in ui/statusline/my-statusline.mjs. my-statusline shells out to
   # `cc-alchemy-statusline --fetch-only` to keep the rate-limit cache fresh;

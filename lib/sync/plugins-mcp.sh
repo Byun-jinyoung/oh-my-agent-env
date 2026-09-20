@@ -128,9 +128,9 @@ sync_plugins_mcp() {
     # stdlib first. Unlike karpathy-skills it is NOT prose-only: plugin.json
     # declares hooks/claude-codex-hooks.json — SessionStart, SubagentStart and
     # UserPromptSubmit, all additionalContext injectors, none blocking. Our own
-    # manifest has no SessionStart/SubagentStart hook and one UserPromptSubmit
-    # (inject-core-rules.js), so the two coexist on that event. Requires `node`
-    # on the non-interactive PATH or the hooks stay silent (README:112).
+    # manifest no longer has a UserPromptSubmit hook: stable rules live in the
+    # global managed contract instead of being duplicated every turn. Requires
+    # `node` on the non-interactive PATH or the plugin hooks stay silent.
     install_plugin "ponytail" "ponytail@ponytail" "DietrichGebert/ponytail" "ponytail@ponytail"
   else
     log_and_print "    [SKIP] Claude Code not found"
@@ -456,5 +456,9 @@ PYEOF
     add_mcp "semantica" \
       "claude mcp add -s user semantica -e PATH=${CODEX_PATH} -- semantica-mcp" \
       "semantica-mcp"
+    # graft is intentionally NOT registered as a Claude MCP: uptake is driven by the
+    # global graft hooks (sync_graft_hooks in agent-clis.sh), and that step actively
+    # strips any residual ~/.claude.json mcpServers.graft. Registering it here would
+    # just be re-added then stripped every sync.
   fi
 }

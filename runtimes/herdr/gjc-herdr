@@ -33,4 +33,8 @@ herdr_label() {
 
 ( herdr_label ) >/dev/null 2>&1 &
 disown 2>/dev/null || true
-exec -a pi "$BUN" "$GJC_REAL" "$@"
+case "$GJC_REAL" in
+  *.js|*.ts|*.mjs) exec -a pi "$BUN" "$GJC_REAL" "$@" ;;
+  # gjc self-update installs a compiled ELF; bun must not parse it as a script.
+  *) exec -a pi "$GJC_REAL" "$@" ;;
+esac

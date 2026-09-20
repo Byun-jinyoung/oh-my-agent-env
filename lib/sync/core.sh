@@ -43,10 +43,12 @@ sync_claude() {
     done < <(hook_manifest_retired)
   fi
 
-  # [2b] Rules-enforcement: compressed-rule file + settings.json hook wiring.
-  # rules-core.md is read by inject-core-rules.js at $CONFIG_DIR/rules-core.md.
-  if [ -f "$SCRIPT_DIR/runtimes/claude/rules-core.md" ]; then
-    make_link "$SCRIPT_DIR/runtimes/claude/rules-core.md" "$CONFIG_DIR/rules-core.md"
+  # [2b] Rules-enforcement hook wiring. The global managed contract is the one
+  # always-on prose source; the former rules-core symlink injected the same
+  # rules again on every prompt and is retired with its hook.
+  if [ -L "$CONFIG_DIR/rules-core.md" ] &&
+     [ "$(readlink "$CONFIG_DIR/rules-core.md")" = "$SCRIPT_DIR/runtimes/claude/rules-core.md" ]; then
+    rm -f "$CONFIG_DIR/rules-core.md"
   fi
   echo "[2b] Rules-enforcement hooks (settings.json)"
   ensure_rules_enforcement_hooks

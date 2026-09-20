@@ -252,6 +252,26 @@ cmd_oma() {
   echo "=== oh-my-agent-env oma: $(basename "$project_path") ==="
   echo "  Path: $project_path  (oma@$oma_version)"
 
+  # OMA rewrites project CLAUDE.md and .claude/settings.json. A tracked copy is
+  # product configuration, not generated state; touching it implicitly caused
+  # this repository to acquire auto-approvals, third-party attribution and
+  # workflow hooks. Refuse before bunx runs. The operator can make the authority
+  # change explicit for a deliberate migration.
+  if command -v git &>/dev/null &&
+     git -C "$project_path" rev-parse --is-inside-work-tree &>/dev/null; then
+    local tracked_oma_surface=""
+    for _oma_rel in CLAUDE.md .claude/settings.json; do
+      if git -C "$project_path" ls-files --error-unmatch "$_oma_rel" &>/dev/null; then
+        tracked_oma_surface="${tracked_oma_surface}${tracked_oma_surface:+, }$_oma_rel"
+      fi
+    done
+    if [ -n "$tracked_oma_surface" ] && [ "${OMA_ALLOW_TRACKED_PROJECT_FILES:-0}" != "1" ]; then
+      echo "  [FAIL] refusing to let OMA rewrite tracked project files: $tracked_oma_surface"
+      echo "         migrate them explicitly or rerun with OMA_ALLOW_TRACKED_PROJECT_FILES=1"
+      return 1
+    fi
+  fi
+
   if ! command -v bunx &>/dev/null; then
     echo "  [SKIP] bunx not found — install bun first: https://bun.sh"
     return 0
@@ -302,11 +322,262 @@ cmd_oma() {
     echo "  [WARN] oma install reported a failure — review output above"
   fi
 
+  # OMA's UserPromptSubmit hook routes ordinary prompts by keyword. Remove only
+  # that command after each install; PreToolUse and Stop remain so workflows
+  # explicitly invoked by name can retain their state. This intentionally edits
+  # source text instead of reserializing JSON, preserving every unrelated value
+  # and its original bytes.
+  echo "[2] Disable OMA generic prompt routing in .claude/settings.json"
+  python3 - "$project_path/.claude/settings.json" << 'PYEOF'
+import json
+import os
+import stat
+import sys
+import tempfile
+
+path = sys.argv[1]
+needle = "oma-hook-UserPromptSubmit"
+
+if not os.path.isfile(path) or os.path.islink(path):
+    print("    [SKIP] project settings.json missing or not a regular file")
+    raise SystemExit(0)
+
+try:
+    raw = open(path, "rb").read()
+    text = raw.decode("utf-8")
+    decoder = json.JSONDecoder()
+    root, root_end = decoder.raw_decode(text, len(text) - len(text.lstrip(" \t\r\n")))
+    if text[root_end:].strip() or not isinstance(root, dict):
+        raise ValueError("root must be one JSON object")
+except Exception as exc:
+    print(f"    [WARN] settings.json is not strict UTF-8 JSON ({exc}); left unchanged")
+    raise SystemExit(0)
+
+def skip_ws(pos):
+    while pos < len(text) and text[pos] in " \t\r\n":
+        pos += 1
+    return pos
+
+def object_members(pos):
+    if text[pos] != "{":
+        raise ValueError("expected object")
+    members = []
+    pos = skip_ws(pos + 1)
+    if text[pos] == "}":
+        return members
+    while True:
+        key, key_end = decoder.raw_decode(text, pos)
+        if not isinstance(key, str):
+            raise ValueError("object key is not a string")
+        colon = skip_ws(key_end)
+        if text[colon] != ":":
+            raise ValueError("object key has no colon")
+        value_start = skip_ws(colon + 1)
+        value, value_end = decoder.raw_decode(text, value_start)
+        members.append((key, value, value_start, value_end))
+        pos = skip_ws(value_end)
+        if text[pos] == "}":
+            return members
+        if text[pos] != ",":
+            raise ValueError("object member has no comma")
+        pos = skip_ws(pos + 1)
+
+def array_items(pos):
+    if text[pos] != "[":
+        raise ValueError("expected array")
+    items = []
+    pos = skip_ws(pos + 1)
+    if text[pos] == "]":
+        return items
+    while True:
+        value_start = pos
+        value, value_end = decoder.raw_decode(text, value_start)
+        items.append((value, value_start, value_end))
+        pos = skip_ws(value_end)
+        if text[pos] == "]":
+            return items
+        if text[pos] != ",":
+            raise ValueError("array item has no comma")
+        pos = skip_ws(pos + 1)
+
+def deletion_spans(items, remove_indexes):
+    spans = []
+    indexes = sorted(set(remove_indexes))
+    cursor = 0
+    while cursor < len(indexes):
+        first = indexes[cursor]
+        last = first
+        cursor += 1
+        while cursor < len(indexes) and indexes[cursor] == last + 1:
+            last = indexes[cursor]
+            cursor += 1
+        if last + 1 < len(items):
+            spans.append((items[first][1], items[last + 1][1]))
+        elif first > 0:
+            spans.append((items[first - 1][2], items[last][2]))
+        else:
+            spans.append((items[first][1], items[last][2]))
+    return spans
+
+try:
+    top = object_members(skip_ws(0))
+    hooks_members = [member for member in top if member[0] == "hooks"]
+    if len(hooks_members) != 1 or not isinstance(hooks_members[0][1], dict):
+        print("    [SKIP] no unambiguous hooks object in settings.json")
+        raise SystemExit(0)
+    hooks = object_members(hooks_members[0][2])
+    event_members = [member for member in hooks if member[0] == "UserPromptSubmit"]
+    if len(event_members) != 1 or not isinstance(event_members[0][1], list):
+        print("    [OK] no OMA UserPromptSubmit hooks found")
+        raise SystemExit(0)
+
+    groups = array_items(event_members[0][2])
+    removals = []
+    remove_groups = []
+    for group_index, (group, group_start, _) in enumerate(groups):
+        if not isinstance(group, dict):
+            continue
+        members = object_members(group_start)
+        hook_members = [member for member in members if member[0] == "hooks"]
+        if len(hook_members) != 1 or not isinstance(hook_members[0][1], list):
+            continue
+        commands = array_items(hook_members[0][2])
+        target_indexes = []
+        for command_index, (command, command_start, _) in enumerate(commands):
+            if not isinstance(command, dict):
+                continue
+            fields = object_members(command_start)
+            name_fields = [member for member in fields if member[0] == "name"]
+            command_fields = [member for member in fields if member[0] == "command"]
+            name_match = (len(name_fields) == 1 and name_fields[0][1] == needle)
+            command_match = (
+                len(command_fields) == 1
+                and isinstance(command_fields[0][1], str)
+                and "oma-hook.sh" in command_fields[0][1]
+                and "--event 'UserPromptSubmit'" in command_fields[0][1]
+            )
+            if name_match or command_match:
+                target_indexes.append(command_index)
+        if not target_indexes:
+            continue
+        # A group containing only standard OMA fields and target commands is
+        # wholly OMA-owned; removing it avoids leaving an inert empty group.
+        if (len(target_indexes) == len(commands)
+                and {member[0] for member in members} <= {"matcher", "hooks"}):
+            remove_groups.append(group_index)
+        else:
+            removals.extend(deletion_spans(commands, target_indexes))
+    removals.extend(deletion_spans(groups, remove_groups))
+    removals.sort()
+    if any(end > next_start for (_, end), (next_start, _) in zip(removals, removals[1:])):
+        raise ValueError("overlapping removal spans")
+except SystemExit:
+    raise
+except Exception as exc:
+    print(f"    [WARN] could not safely identify OMA hook entries ({exc}); left unchanged")
+    raise SystemExit(0)
+
+if not removals:
+    print("    [OK] no OMA UserPromptSubmit hooks found")
+    raise SystemExit(0)
+
+for start, end in reversed(removals):
+    text = text[:start] + text[end:]
+mode = stat.S_IMODE(os.stat(path).st_mode)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+try:
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(text.encode("utf-8"))
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+except Exception:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+print(f"    [OK] removed {len(removals)} OMA UserPromptSubmit hook entry group(s)")
+PYEOF
+
+  # CLAUDE.md's OMA block is owned only when the installer markers are intact.
+  # Do not guess at unmarked or changed content: it may be project-authored.
+  echo "[3] Make OMA workflow activation explicit-only in CLAUDE.md"
+  python3 - "$project_path/CLAUDE.md" << 'PYEOF'
+import os
+import stat
+import sys
+import tempfile
+
+path = sys.argv[1]
+start_marker = "<!-- OMA:START — managed by oh-my-agent. Do not edit this block manually. -->"
+end_marker = "<!-- OMA:END -->"
+old_workflows = "Execute by naming the workflow in your prompt. Keywords are auto-detected via hooks."
+new_workflows = "Execute workflows only through explicit slash invocation or by explicitly naming the workflow in your prompt."
+old_rules = "2. Workflows execute via keyword detection or explicit naming, never self-initiated."
+new_rules = "2. Workflows execute only through explicit slash invocation or explicit naming, never self-initiated."
+new_activation = """## Workflow Activation
+
+`UserPromptSubmit` keyword detection is disabled. `PreToolUse` and `Stop` hooks
+maintain state only for explicitly invoked workflows.
+
+"""
+
+if not os.path.isfile(path) or os.path.islink(path):
+    print("    [SKIP] no regular project CLAUDE.md")
+    raise SystemExit(0)
+try:
+    raw = open(path, "rb").read()
+    text = raw.decode("utf-8")
+except Exception as exc:
+    print(f"    [WARN] CLAUDE.md is not UTF-8 ({exc}); left unchanged")
+    raise SystemExit(0)
+
+if text.count(start_marker) != 1 or text.count(end_marker) != 1:
+    print("    [SKIP] OMA managed-block ownership cannot be proven; CLAUDE.md left unchanged")
+    raise SystemExit(0)
+start = text.index(start_marker) + len(start_marker)
+try:
+    end = text.index(end_marker, start)
+except ValueError:
+    print("    [SKIP] OMA managed-block ownership cannot be proven; CLAUDE.md left unchanged")
+    raise SystemExit(0)
+block = text[start:end]
+if "## Workflow Activation" in block and new_workflows in block and new_rules in block:
+    print("    [OK] workflow activation already explicit-only")
+    raise SystemExit(0)
+section_start = block.find("## Auto-Detection\n")
+if section_start < 0 or old_workflows not in block or old_rules not in block:
+    print("    [SKIP] OMA managed block has an unrecognized layout; CLAUDE.md left unchanged")
+    raise SystemExit(0)
+section_end = block.find("\n## ", section_start + len("## Auto-Detection\n"))
+if section_end < 0:
+    print("    [SKIP] OMA Auto-Detection section has no safe boundary; CLAUDE.md left unchanged")
+    raise SystemExit(0)
+block = block[:section_start] + new_activation + block[section_end + 1:]
+block = block.replace(old_workflows, new_workflows, 1)
+block = block.replace(old_rules, new_rules, 1)
+updated = text[:start] + block + text[end:]
+mode = stat.S_IMODE(os.stat(path).st_mode)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+try:
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(updated.encode("utf-8"))
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+except Exception:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+print("    [OK] OMA managed block now requires explicit workflow invocation")
+PYEOF
+
   # POLICY: .agents/oma-config.yaml is a MANAGED file — overwritten from the
   # repo template on every run. Single source of truth = cross-machine
   # reproducibility + no drift. To change config, edit templates/oma/oma-config.yaml
   # (tracked), NOT the generated copy (local edits there are intentionally lost).
-  echo "[2] Overlay canonical oma-config.yaml (managed — edit templates/oma/ to change)"
+  echo "[4] Overlay canonical oma-config.yaml (managed — edit templates/oma/ to change)"
   local tmpl="$SCRIPT_DIR/templates/oma/oma-config.yaml"
   if [ -f "$tmpl" ] && [ -d "$project_path/.agents" ]; then
     cp "$tmpl" "$project_path/.agents/oma-config.yaml"
@@ -321,7 +592,7 @@ cmd_oma() {
   # (local > project > user), so we pin our unified statusline there: it beats
   # oma's hud.ts and survives every oma re-link without touching a tracked file.
   # Merge (preserve permissions/env that init-project writes) + idempotent.
-  echo "[3] Pin statusLine in .claude/settings.local.json (beats oma hud.ts)"
+  echo "[5] Pin statusLine in .claude/settings.local.json (beats oma hud.ts)"
   python3 - "$project_path/.claude" << 'PYEOF'
 import json, os, sys, tempfile
 claude_dir = sys.argv[1]

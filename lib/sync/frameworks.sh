@@ -39,6 +39,10 @@ WANTED = {
     "context-mode": {
         "command": "context-mode",
     },
+    # graft is intentionally absent from WANTED: its code-graph reaches
+    # claude/codex/gjc through hooks (agent-clis.sh sync_graft_hooks +
+    # graft-nudge), not an MCP server. The Codex [mcp_servers.graft] retract
+    # below strips any entry a previous sync wrote. agy stays out of scope.
 }
 
 # --- Codex (TOML, ~/.codex/config.toml) ---
@@ -87,11 +91,30 @@ if "git+https://github.com/oraios/serena" in content:
     if healed:
         content = "\n".join(out) + ("\n" if content.endswith("\n") else "")
 
-if added_codex or healed:
+# Retract the graft MCP from Codex: uptake now comes from the global graft hooks
+# (~/.codex/hooks.json via agent-clis.sh sync_graft_hooks), not an MCP server.
+# Strip any [mcp_servers.graft] section a previous sync wrote so every already-
+# provisioned machine converges, not just fresh ones.
+removed_codex = []
+if "[mcp_servers.graft]" in content:
+    kept, in_graft = [], False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_graft = stripped == "[mcp_servers.graft]"
+        if in_graft:
+            continue
+        kept.append(line)
+    content = "\n".join(kept) + ("\n" if content.endswith("\n") else "")
+    removed_codex.append("graft")
+
+if added_codex or healed or removed_codex:
     codex_cfg.write_text(content)
     what = []
     if added_codex:
         what.append("added " + ", ".join(added_codex))
+    if removed_codex:
+        what.append("retracted graft MCP (superseded by graft hooks)")
     if healed:
         what.append("repointed serena from git HEAD to the pinned release (" + ", ".join(healed) + ")")
     print(f"[OK] Codex: {'; '.join(what)} in {codex_cfg.name}")
