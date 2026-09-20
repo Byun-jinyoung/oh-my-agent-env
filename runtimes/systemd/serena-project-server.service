@@ -19,9 +19,12 @@ Type=simple
 # %h rather than a baked path: uv installs the launcher at ~/.local/bin/serena
 # on every machine this repo is synced to, and the unit is copied verbatim.
 ExecStart=%h/.local/bin/serena start-project-server --port 24225 --log-level ERROR
-# The hook's scoped query budget is 1500ms and it does not retry. A restart
-# delay longer than a working session's patience is indistinguishable from a
-# dead server, so come back fast and keep coming back.
+# Language servers launched by serena resolve uv/uvx from PATH. systemd user
+# units do not inherit the interactive shell PATH, so the launcher directory
+# must be explicit or the TCP port stays healthy while every symbol query fails.
+Environment="PATH=%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin"
+# The hook's scoped query budget is 8 seconds and it does not retry. Come back
+# quickly after a failure so the next lookup can use the warm server.
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
