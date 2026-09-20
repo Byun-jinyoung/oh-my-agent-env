@@ -1,7 +1,7 @@
 # Layer A section headings — checked-in baseline for smoke step [11].
 #
 # Regenerate deliberately when a section is genuinely renamed or retired:
-#   grep -h '^## ' rules/*.md | LC_ALL=C sort -u
+#   python3 -c 'from pathlib import Path; print("\n".join(sorted({line for p in Path("rules").glob("*.md") for line in p.read_text().splitlines() if line.startswith("## ")})))'
 #
 # LC_ALL=C is not optional. Under en_US.UTF-8 collation `sort -u` considers
 # several of these Korean headings equal and drops them: the first version of
@@ -9,7 +9,7 @@
 # supposed to catch it used the same pipeline, so both were wrong the same way.
 ## Spec Gate — 코드보다 명세 먼저
 ## Subagent 규칙
-## 기록
+## 권한 경계
 ## 도구
 ## 리뷰 규칙
 ## 명령 및 도구 사용
@@ -18,6 +18,7 @@
 ## 의사결정 지원
 ## 최종 응답 규칙
 ## 측정 우선
+## 지속 기록
 ## 컨텍스트 명확화
 ## 컨텍스트 연속성
 ## 코드 변경 전 분석

@@ -69,14 +69,98 @@ grep -q '=== oh-my-agent-env validate ===' "$TMP/validate.out"
 echo "[6] oma subcommand isolated smoke (stubbed bunx, no network)"
 oma_tmp="$TMP/oma"
 stub_bin="$oma_tmp/bin"; mkdir -p "$stub_bin" "$oma_tmp/home"
-# offline stub: oma install just materializes .agents/ in the project cwd
+# offline stub: oma install materializes the explicit workflow skill surface.
 cat > "$stub_bin/bunx" <<'STUB'
 #!/usr/bin/env bash
-mkdir -p "$PWD/.agents"
+mkdir -p "$PWD/.agents/skills/ultrawork"
+printf '%s\n' '# explicit workflow fixture' > "$PWD/.agents/skills/ultrawork/SKILL.md"
+# Re-inject the prompt hook on every install so the second cmd_oma invocation
+# proves cleanup converges after an installer refresh, not merely on a no-op.
+python3 - "$PWD/.claude/settings.json" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+if path.exists():
+    text = path.read_text()
+    marker = '    ],\n    "PreToolUse"'
+    injected = """,
+      {
+        "hooks": [
+          {
+            "name": "oma-hook-UserPromptSubmit",
+            "type": "command",
+            "command": "\\\"$CLAUDE_PROJECT_DIR/.claude/hooks/oma-hook.sh\\\" --vendor 'claude' --event 'UserPromptSubmit'"
+          }
+        ]
+      }"""
+    if marker not in text:
+        raise SystemExit("fixture UserPromptSubmit insertion point missing")
+    path.write_text(text.replace(marker, injected + marker, 1))
+PY
 echo "stub: oma installed"
 STUB
 chmod +x "$stub_bin/bunx"
-oma_proj="$oma_tmp/proj"; mkdir -p "$oma_proj"
+oma_proj="$oma_tmp/proj"; mkdir -p "$oma_proj/.claude"
+cat > "$oma_proj/.claude/settings.json" <<'JSON'
+{
+  "unknown": { "keep": [1, {"two": true}] },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "user-prompt-audit --keep"}
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "name": "oma-hook-UserPromptSubmit",
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/oma-hook.sh\" --vendor 'claude' --event 'UserPromptSubmit'"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "oma-hook-UserPromptSubmit",
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/oma-hook.sh\" --vendor 'claude' --event 'UserPromptSubmit'"
+          },
+          {"type": "command", "command": "user-prompt-audit --also-keep"}
+        ]
+      }
+    ],
+    "PreToolUse": [{"hooks": [{"type": "command", "command": "oma-hook-PreToolUse"}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "oma-hook-Stop"}]}]
+  }
+}
+JSON
+cat > "$oma_proj/CLAUDE.md" <<'MD'
+# Project notes
+
+<!-- OMA:START — managed by oh-my-agent. Do not edit this block manually. -->
+
+## Workflows
+
+Execute by naming the workflow in your prompt. Keywords are auto-detected via hooks.
+
+## Auto-Detection
+
+Hooks: `UserPromptSubmit` (keyword detection), `PreToolUse`, `Stop` (persistent mode)
+Keywords defined in `.agents/hooks/core/triggers.json` (multi-language).
+Persistent workflows (orchestrate, ultrawork, work, ralph) block termination until complete.
+Deactivate: say "workflow done".
+
+## Rules
+
+2. Workflows execute via keyword detection or explicit naming, never self-initiated.
+<!-- OMA:END -->
+MD
 # OMA_SKIP_DEPS=1 keeps this hermetic/offline: skip the [0] oma-CLI/serena
 # global install step (bun add -g / uv tool install would hit the network).
 run_oma() { OMA_SKIP_DEPS=1 PATH="$stub_bin:$PATH" HOME="$oma_tmp/home" bash "$ROOT/setup.sh" oma "$oma_proj" >/dev/null 2>&1; }
@@ -85,11 +169,65 @@ run_oma
 cmp -s "$oma_proj/.agents/oma-config.yaml" "$ROOT/templates/oma/oma-config.yaml"
 # b) statusLine pinned in settings.local.json -> our unified script
 python3 -c "import json,sys; d=json.load(open('$oma_proj/.claude/settings.local.json')); sys.exit(0 if d.get('statusLine',{}).get('command','').endswith('my-statusline.mjs') else 1)"
-# c) idempotent: a second run leaves both outputs byte-stable
+# c) generic prompts cannot route through OMA, while user hooks, OMA state
+# hooks, and explicit skill surfaces remain available.
+grep -Fq '"unknown": { "keep": [1, {"two": true}] },' "$oma_proj/.claude/settings.json"
+test -f "$oma_proj/.agents/skills/ultrawork/SKILL.md"
+python3 - "$oma_proj/.claude/settings.json" <<'PY'
+import json, sys
+
+settings = json.load(open(sys.argv[1]))
+hooks = settings["hooks"]
+commands = {
+    event: [
+        hook.get("command", "")
+        for group in groups
+        for hook in group.get("hooks", [])
+    ]
+    for event, groups in hooks.items()
+}
+if any("oma-hook-UserPromptSubmit" in command for command in commands.get("UserPromptSubmit", [])):
+    raise SystemExit("generic prompts can still route through OMA")
+if commands.get("UserPromptSubmit") != ["user-prompt-audit --keep", "user-prompt-audit --also-keep"]:
+    raise SystemExit("unrelated UserPromptSubmit hooks changed")
+if commands.get("PreToolUse") != ["oma-hook-PreToolUse"] or commands.get("Stop") != ["oma-hook-Stop"]:
+    raise SystemExit("explicit workflow state hooks changed")
+if settings.get("unknown") != {"keep": [1, {"two": True}]}:
+    raise SystemExit("unknown settings changed")
+PY
+grep -Fq 'Execute workflows only through explicit slash invocation or by explicitly naming the workflow in your prompt.' "$oma_proj/CLAUDE.md"
+grep -Fq '## Auto-Detection' "$oma_proj/CLAUDE.md" \
+  && fail "OMA Auto-Detection section survived explicit-only rewrite"
+# d) idempotent: a second run leaves all managed outputs byte-stable
 cp "$oma_proj/.claude/settings.local.json" "$oma_tmp/sl1"
+cp "$oma_proj/.claude/settings.json" "$oma_tmp/settings1"
+cp "$oma_proj/CLAUDE.md" "$oma_tmp/claude1"
 run_oma
 cmp -s "$oma_proj/.claude/settings.local.json" "$oma_tmp/sl1"
+cmp -s "$oma_proj/.claude/settings.json" "$oma_tmp/settings1"
+cmp -s "$oma_proj/CLAUDE.md" "$oma_tmp/claude1"
 cmp -s "$oma_proj/.agents/oma-config.yaml" "$ROOT/templates/oma/oma-config.yaml"
+
+# e) tracked product instructions are never rewritten implicitly
+tracked_oma="$oma_tmp/tracked"; mkdir -p "$tracked_oma/.claude"
+printf '# user project contract\n' > "$tracked_oma/CLAUDE.md"
+printf '{"hooks":{"UserPromptSubmit":[{"hooks":[{"command":"user-owned"}]}]}}\n' \
+  > "$tracked_oma/.claude/settings.json"
+git -C "$tracked_oma" init -q
+git -C "$tracked_oma" config user.email smoke@example.invalid
+git -C "$tracked_oma" config user.name smoke
+git -C "$tracked_oma" add CLAUDE.md .claude/settings.json
+git -C "$tracked_oma" commit -qm baseline
+cp "$tracked_oma/CLAUDE.md" "$oma_tmp/tracked-claude"
+cp "$tracked_oma/.claude/settings.json" "$oma_tmp/tracked-settings"
+rc=0
+OMA_SKIP_DEPS=1 PATH="$stub_bin:$PATH" HOME="$oma_tmp/home" \
+  bash "$ROOT/setup.sh" oma "$tracked_oma" >/dev/null 2>&1 || rc=$?
+[ "$rc" -ne 0 ] || fail "oma rewrote tracked project instructions without explicit admission"
+cmp -s "$tracked_oma/CLAUDE.md" "$oma_tmp/tracked-claude" \
+  || fail "oma changed tracked CLAUDE.md before refusing"
+cmp -s "$tracked_oma/.claude/settings.json" "$oma_tmp/tracked-settings" \
+  || fail "oma changed tracked settings.json before refusing"
 
 echo "[7] Claude hook manifest contract"
 # The defect this step exists to catch: runtimes/claude/hooks/ once held six
@@ -503,7 +641,7 @@ echo "[16] every installed hook actually runs"
 # `node --check` and `bash -n` prove a hook PARSES. They say nothing about
 # whether it runs: a bad require, a missing helper, a wrong path all pass every
 # gate we had and then the hook dies on first invocation. Reproduced with a
-# `require('module-that-does-not-exist')` in stop-todo-gate.js — node --check
+# `require('module-that-does-not-exist')` in a Stop hook — node --check
 # OK, doctor OK (file exists, registered), check.sh PASS, hook exit 1 and the
 # gate silently stops enforcing.
 #
