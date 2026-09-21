@@ -7,10 +7,10 @@
 # every turn. Fix = absolute cap via thresholdTokens (overrides percentage).
 compaction: 
   enabled: true
-  strategy: handoff
+  strategy: context-full
   thresholdTokens: 150000
   keepRecentTokens: 40000
-  autoContinue: true
+  autoContinue: false
   handoffSaveToDisk: true
   idleEnabled: true
   idleThresholdTokens: 100000
