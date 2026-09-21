@@ -2,7 +2,12 @@
 
 컨텍스트 없는 새 GJC 세션이 이 저장소의 **사용량(토큰/컨텍스트) 제어** 기능을 즉시 이해하고
 안전하게 이어가기 위한 요약. 정본은 `runtimes/gjc/settings.conf`(추적) → `setup.sh sync`가
-`gjc config set`으로 `~/.gjc/agent/config.yml`(GJC 전역 config)에 반영한다. 프로젝트 override 없음.
+`gjc config set`으로 `~/.gjc/agent/config.yml`(GJC 전역 config)에 반영한다.
+
+> **경고(2026-09-21):** 이 저장소엔 git 추적되는 **프로젝트 override `.gjc/config.yml`이 존재**하며
+> merge order `[global, project, overrides]`상 **전역을 덮는다**. 전역/정본만 고치면 무효다.
+> 반드시 세 면(프로젝트 `.gjc/config.yml` · 전역 `~/.gjc/agent/config.yml` · 정본 `settings.conf`)을 함께 맞춰라.
+> (이 문서의 옛 "프로젝트 override 없음"은 오기였고, 그 탓에 재시작해도 handoff가 지속됐다.)
 
 측정 근거 원문: `docs/runtime-context-control.md`, `docs/session-ledger.md`.
 
@@ -12,8 +17,14 @@
 
 ### Scope
 모델 창(window)이 거대할 때(claude-opus/sonnet = 1,000,000; codex = 372,000) `thresholdPercent`는
-창 대비 퍼센트라 800K/297K까지 압축이 안 터진다. 컨텍스트가 수백K로 부풀고 매 턴 전체를
-재전송 → 실측 341x 증폭(한 세션 46.5M 토큰 / 136K 출력). provider 무관.
+창 대비 퍼센트라 800K/297K까지 압축이 안 터진다. 컨텍스트가 수백K로 부풀고, idle이 provider
+캐시 TTL(~5분)을 넘겨 콜드리줌하면 **전체 컨텍스트를 재캐싱(cacheWrite×1.25)**한다.
+
+> **실측 정정(2026-09-21, 실 세션 3104 토큰레코드 직접 파싱):** 옛 "341x 증폭"은 **재현 안 됨**.
+> 실제 동인 = **콜드리줌 전체 재캐싱** — `cacheRead=0` 이벤트 247건이 **총비용의 40.6%**,
+> 전체 cacheWrite의 **92%**를 차지. warm 턴 cache-hit **98.1%**(전체 96.7%)로 캐시는 건강.
+> 콜드 1건 최대 재캐싱은 thresholdTokens 캡으로 739K(09-18)→149K(09-21)로 감소 확인.
+> 지배 레버 = strategy 아님, **콜드리줌 시 재캐싱되는 컨텍스트 크기(thresholdTokens)**.
 
 ### Spec (config API)
 | 키 | 값 | 의미 |
@@ -59,8 +70,8 @@ handoff 산문 문서는 신호가 아니라서 자식 세션이 조용히 멈�
 
 | 키/파일 | 값 | 의미 |
 |---|---|---|
-| `compaction.strategy` | `handoff` | 컨텍스트 무증폭 이어가기(context-full/off 회귀 금지 — 341x 재발) |
-| `compaction.autoContinue` | `true` | handoff 후 새 세션 자동 생성·이어감 |
+| `compaction.strategy` | `context-full` | 제자리 압축. **handoff는 끔(사용자 지시).** `off` 회귀 금지=무한증가 |
+| `compaction.autoContinue` | `false` | 자동 이어감 **끔**(사용자 지시). handoff 안 나므로 무의미 |
 | `compaction.handoffSaveToDisk` | `true` | handoff 문서 디스크 저장 |
 | `attitude-gate.json.gates.todoActive` | `true` | mutation 전 goal/todo 강제 |
 

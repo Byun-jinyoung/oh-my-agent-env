@@ -110,7 +110,12 @@ GJC 설정 스키마에 `allowedTools` / `deniedTools` / `autoApprove`에 해당
 
 ## 적용한 전역 설정 (2026-09-16, 실측 완료)
 
-아래는 `~/.gjc/agent/config.yml`(GJC **전역** 사용자 config)에 적용했고, `runtimes/gjc/settings.conf`로 추적되어 `setup.sh sync`가 재적용한다. `gjc config set`은 프로젝트 `.gjc/config.yml`을 만들지 않고 전역 파일에 기록함을 확인했다(프로젝트 override 없음 = 모든 프로젝트/세션에 적용).
+아래는 `~/.gjc/agent/config.yml`(GJC **전역** 사용자 config)에 적용했고, `runtimes/gjc/settings.conf`로 추적되어 `setup.sh sync`가 재적용한다. `gjc config set`은 전역 파일에 기록한다.
+
+> **정정(2026-09-21):** 이 저장소엔 **git 추적되는 프로젝트 override `.gjc/config.yml`이 존재**하며
+> merge order `[global, project, overrides]`상 **전역을 덮는다**. "프로젝트 override 없음"은 오기였다.
+> 전역만 고치면 이 파일에 덮여 무효 — 세 면(프로젝트/전역/정본)을 함께 맞출 것.
+> 또한 아래 "cache hit 52.9%"는 2026-09-21 실 세션 재실측(warm 98.1%, 전체 96.7%)으로 갱신됨.
 
 | 요구 | 키 | 값 | 실측 |
 |---|---|---|---|
