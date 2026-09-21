@@ -123,6 +123,12 @@ export function graftPointers(cwd: string, query: string, cfg: NudgeConfig): str
 			cwd,
 			encoding: "utf-8",
 			timeout: cfg.askTimeoutMs,
+			// Bun's execFileSync `timeout` only sends SIGTERM and does NOT escalate to
+			// SIGKILL, so a `graft ask` child that is slow (graph refresh, cross-session
+			// lock contention) or ignores SIGTERM blocks past askTimeoutMs until GJC's
+			// 30s extension-handler timeout fires (`handler timed out after 30000ms`).
+			// killSignal:SIGKILL makes askTimeoutMs a hard bound (verified under Bun 1.4).
+			killSignal: "SIGKILL",
 			stdio: ["ignore", "pipe", "ignore"],
 		});
 		// `graft ask` may print a "[graft] refreshed the graph …" preamble before the JSON.
