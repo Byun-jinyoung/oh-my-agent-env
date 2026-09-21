@@ -27,9 +27,12 @@
 
 `thresholdPercent`(라이브 80)는 `thresholdTokens`가 설정되면 무효.
 
-### 실측 상태
-샌드박스 A/B에서 호출당 비캐시 input 11,044→2,549 감소 확인(strategy만 교체).
-**주의: 현행 150K 값에서의 실세션 사용량 감소는 재측정 안 됨(육안 확인 대상).**
+### strategy 결정 (2026-09-21 직접 재실측, gjc/0.17.2)
+`compaction.strategy = context-full`(제자리 요약 압축). **handoff는 끔 — 사용자 지시.**
+격리 클론(`GJC_CODING_AGENT_DIR`)에서 4개 대형파일 read를 -p -c 멀티턴으로 돌려 측정:
+- **context-full**: 10콜, 비캐시 input 최대 **13토큰**, total이 **~27K에서 평탄**(압축 정상 동작), uncached 대량재전송 **0**. → **341x 재현 안 됨.**
+- 옛 "context-full = 341x" 결론은 구버전/압축 커밋 실패(cacheRead=0 전체 재전송) 상황의 것이며 현재 버전 정상 캐시에선 성립하지 않는다.
+핵심: 정상 prompt caching이 돌면 비캐시 input은 컨텍스트 크기와 무관하게 작다. 사용량 폭증의 지배 레버는 strategy가 아니라 **캐시 건강도(cacheRead=0 반복 여부)**다.
 
 ### 검증
 `grep -E 'thresholdTokens|keepRecentTokens|idleThresholdTokens' ~/.gjc/agent/config.yml`
@@ -40,8 +43,8 @@
 ## #3 handoff auto-continue — handoff 후 자동 이어짐
 
 ### Scope
-GJC 압축은 `strategy=handoff`(작업 경계에서 세션 종료 후 새 세션으로 이어감)로 컨텍스트
-무증폭. 그러나 auto-continue 판정 `#ru()`는 **active goal 또는 열린 todo가 있을 때만** 발동한다.
+(참고: handoff는 현재 끔. 아래는 handoff strategy를 쓸 때의 auto-continue 동작 기록.)
+GJC handoff 압축은 작업 경계에서 세션 종료 후 새 세션으로 이어간다. auto-continue 판정 `#ru()`는 **active goal 또는 열린 todo가 있을 때만** 발동한다.
 handoff 산문 문서는 신호가 아니라서 자식 세션이 조용히 멈춘다
 (`Auto-continue skipped: no unfinished work detected`). `goal pause`는 즉시 중단 트리거.
 
@@ -86,6 +89,7 @@ runtimes/gjc/settings.conf   (정본, git 추적)
 훅: `runtimes/gjc/hooks/pre/*.ts` → `sync_gjc_hooks` → `~/.gjc/agent/hooks/pre/*.ts`(hot-reload).
 
 ## 하지 말 것
-- `strategy`를 `context-full`/`off`로 회귀(341x 재발). 임계값은 "올리는" 조정만.
+- `strategy`를 `off`로 두기(압축 없음 → 컨텍스트 무한증가). 현재는 `context-full`(제자리 압축, 341x 안 남을 실측). 임계값은 "올리는" 조정만.
+- 쏘 문서의 "context-full=341x"를 근거로 재교체 거부하기(2026-09-21 재실측으로 반증됨).
 - `handoffPromptExtension`의 goal-arming 절 제거.
 - config 반영을 `gjc config get` stdout으로 판단(온디스크로 검증).
