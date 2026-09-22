@@ -157,6 +157,34 @@ print(f"[OK] installed Herdr aliases in {target}")
 PY
 }
 
+sync_herdr_skill() {
+  # Herdr ships its agent instructions via `herdr --skill`. The installed binary
+  # is the source of truth (its version differs per machine, like graphify), so
+  # generate SKILL.md per-machine instead of vendoring a copy that goes stale.
+  # Writing it into each runtime's user skill scan root lets every new session
+  # discover how to drive herdr without the user re-explaining it each time.
+  command -v herdr >/dev/null 2>&1 || { log_and_print "    [SKIP] herdr skill — herdr not installed"; return 0; }
+  local skill_md
+  if ! skill_md="$(herdr --skill 2>/dev/null)" || [ -z "$skill_md" ]; then
+    log_and_print "    [WARN] herdr --skill unavailable; skill not generated"
+    WARNINGS=$((WARNINGS+1))
+    return 0
+  fi
+  local gjc_dir="${GJC_CODING_AGENT_DIR:-$HOME/.gjc/agent}"
+  # One real SKILL.md per runtime scan root (GJC refuses symlinked skills outside
+  # its scan root, unlike the registry.yaml symlink flow, so never symlink here):
+  #   GJC     -> ~/.gjc/agent/skills   (verified: gjc skills discover)
+  #   Claude  -> ~/.claude/skills      ($CONFIG_DIR; Claude Code convention)
+  #   Codex   -> ~/.codex/skills       (Codex's own skill dir; it does NOT read ~/.agents/skills)
+  #   OMO/pi  -> ~/.agents/skills      (pi/omo global skill dir; OMO also reads ~/.claude/skills)
+  local d n=0
+  for d in "$gjc_dir/skills/herdr" "$CONFIG_DIR/skills/herdr" "$HOME/.codex/skills/herdr" "$HOME/.agents/skills/herdr"; do
+    mkdir -p "$d" || { log_and_print "    [WARN] cannot create $d"; WARNINGS=$((WARNINGS+1)); continue; }
+    printf '%s\n' "$skill_md" > "$d/SKILL.md" && n=$((n+1))
+  done
+  [ "$n" -gt 0 ] && log_and_print "    [OK] herdr skill generated from binary ($n scan roots: gjc/claude/codex/agents)"
+}
+
 sync_gjc_settings() {
   local file="$SCRIPT_DIR/runtimes/gjc/settings.conf" key value applied=0 failed=0
   [ -f "$file" ] || return 0
@@ -447,6 +475,7 @@ sync_agent_cli_configs() {
   sync_gjc_settings
   sync_gjc_hooks
   sync_omo_settings
+  sync_herdr_skill
   retract_gjc_graft_mcp
   sync_graft_hooks
   sync_graphify_hooks
@@ -511,6 +540,7 @@ sync_agent_cli_install() {
   sync_gjc_settings
   sync_gjc_hooks
   sync_omo_settings
+  sync_herdr_skill
   retract_gjc_graft_mcp
   sync_graft_hooks
   sync_graphify_hooks
