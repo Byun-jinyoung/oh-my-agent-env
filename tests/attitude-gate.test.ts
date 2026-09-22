@@ -48,6 +48,21 @@ test("mutating bash: real command at a command position is still caught", () => 
 	expect(isMutatingBash("cat tpl | tee out.conf")).toBe(true);
 	expect(isMutatingBash("DEST=/tmp rsync -a a b")).toBe(true);
 });
+test("non-mutating bash: literal '>' inside quotes/heredocs is not a redirect", () => {
+	// arrows and comparisons in quoted strings
+	expect(isMutatingBash('echo "settings.conf -> config.yml"')).toBe(false);
+	expect(isMutatingBash('echo "a >= b comparison"')).toBe(false);
+	expect(isMutatingBash("git commit -m 'fix: handle a -> b and x > y'")).toBe(false);
+	// python heredoc with comparison operators (the real false positive)
+	expect(isMutatingBash("python3 - <<'PY'\nif cr==0 and i>BIG:\n    pass\nPY")).toBe(false);
+	expect(isMutatingBash("python3 - <<'PY'\nif m>=restart-3600:\n    ok=1\nPY")).toBe(false);
+});
+test("mutating bash: a real redirect outside quotes is still caught", () => {
+	expect(isMutatingBash('echo "literal -> arrow" > realfile.txt')).toBe(true);
+	expect(isMutatingBash("cat > out.conf <<'EOF'\nbody with i>BIG inside\nEOF")).toBe(true);
+	// interpreter inline-write is caught even though it lives inside a heredoc
+	expect(isMutatingBash("python3 - <<'PY'\nopen('x.txt','w').write('hi')\nPY")).toBe(true);
+});
 
 // ---- scanEntries --------------------------------------------------------------
 const asst = (content: any[]) => ({ type: "message", message: { role: "assistant", content } });

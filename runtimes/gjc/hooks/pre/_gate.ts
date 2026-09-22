@@ -91,16 +91,40 @@ const INTENT_RE = /(?:^|\n)\s*(?:INTENT|의도)\s*[:：]/i;
 // `grep ... ~/.bun/install/cache/...`) from being misread as the `install` command.
 const CMD_POS = String.raw`(?:^|[\n;&|({]|&&|\|\|)\s*(?:(?:sudo|command|nohup)\s+|\w+=\S+\s+)*`;
 const MUTATORS: RegExp[] = [
-	/(^|[^0-9&])>>?\s*(?!\/dev\/(null|stdout|stderr)\b)(?!&\d)[^\s&|;<>]/, // redirect to a real file
+	// redirect to a real file. Exclude a digit/`&` (fd dup like `2>&1`) or `-`/`=`
+	// (arrow `->`, comparison `=>`) before `>`, and `=` after (comparison `>=`), so
+	// literal operators are not misread as redirects.
+	/(^|[^0-9&=-])>>?\s*(?!\/dev\/(null|stdout|stderr)\b)(?!&\d)[^\s&|;<>=]/,
 	new RegExp(CMD_POS + String.raw`tee\b`), // tee is a real command at a command position
 	/\bsed\b[^|]*\s-i\b/,
 	/\bperl\b[^|]*\s-i\b/,
 	new RegExp(CMD_POS + String.raw`(?:cp|mv|install|dd|touch|mkdir|ln|rsync|truncate)\b`),
-	/\b(python3?|node|bun)\b[^|]*(open\([^)]*['"][wa]|writeFileSync|fs\.write)/,
 ];
 
+// Interpreter inline-writes (python/node open('x','w'), writeFileSync, ...). These
+// live INSIDE quotes/heredocs by nature, so they are matched against the raw
+// command, before stripLiterals removes literal bodies.
+const INTERP_WRITE = /\b(python3?|node|bun)\b[^|]*(open\([^)]*['"][wa]|writeFileSync|fs\.write)/;
+
+/**
+ * Remove heredoc bodies and single/double-quoted string literals from a bash
+ * command so a literal `>` inside text (an arrow `->`, a comparison `i>BIG`, an
+ * echoed/committed string) is never misread as a shell redirect. A REAL redirect
+ * (`cmd > file`, `cat > f <<EOF`) sits OUTSIDE quotes and before the heredoc
+ * body, so it survives stripping and is still caught. Heredocs are stripped first
+ * because their intro (`<<'PY'`) itself contains quotes.
+ */
+export function stripLiterals(cmd: string): string {
+	return cmd
+		.replace(/<<[-~]?\s*(['"]?)([A-Za-z_]\w*)\1[\s\S]*?\n[ \t]*\2\b/g, "<<HEREDOC")
+		.replace(/'[^']*'/g, "''")
+		.replace(/"(?:\\.|[^"\\])*"/g, '""');
+}
+
 export function isMutatingBash(cmd: string): boolean {
-	return MUTATORS.some(re => re.test(cmd));
+	if (INTERP_WRITE.test(cmd)) return true;
+	const bare = stripLiterals(cmd);
+	return MUTATORS.some(re => re.test(bare));
 }
 
 export interface SessionState {
