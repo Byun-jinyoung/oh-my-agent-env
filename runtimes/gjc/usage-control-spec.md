@@ -99,8 +99,24 @@ runtimes/gjc/settings.conf   (정본, git 추적)
 ```
 훅: `runtimes/gjc/hooks/pre/*.ts` → `sync_gjc_hooks` → `~/.gjc/agent/hooks/pre/*.ts`(hot-reload).
 
+## 재시작 절차 — config는 hot-reload 안 됨 (2026-09-21 실측 확정)
+**증상:** config를 여러 번 handoff→off로 고쳤는데도 handoff 자식 세션이 계속 생성됨.
+**근본원인 2겹(실측):**
+1. **디스크 override 미정렬** — 이 저장소를 실제 지배하는 건 프로젝트 `.gjc/config.yml`(merge order `[global, project, overrides]`에서 전역을 덮음). 전역만 고치면 무효. (git: `settings.conf`는 2026-09-21 14:04(5a4950b)까지 `strategy=handoff`, `.gjc/config.yml`은 bb0641f 전까지 handoff 강제)
+2. **stale in-memory config** — 실행 중 `gjc sdk broker-internal`(영속 프로세스)와 TUI 세션은 시작 시 `compaction.strategy`를 메모리에 캐시하고 **hot-reload 하지 않음**. transcript 실측: 전역 fix(14:02) 이후에도 05:59~07:27 UTC까지 handoff 자식 세션 계속 생성. broker가 16:24:51 KST 재시작된 뒤 handoff 생성 0건으로 종결.
+
+**확정 절차(compaction config 변경 후):**
+```
+setup.sh sync                     # 정본 → 전역/프로젝트 반영
+pkill -f 'gjc sdk broker-internal' # 영속 broker kill (TUI만 재시작으론 부족)
+# TUI 완전 종료 후 재실행
+grep -E 'strategy|autoContinue' .gjc/config.yml ~/.gjc/agent/config.yml  # 온디스크 검증
+ps -eo pid,lstart,cmd | grep 'gjc sdk broker-internal'  # broker 시작시각 > config mtime 확인
+```
+검증: 새 세션 transcript 첫 줄이 `custom_message handoff`가 아니어야 함(handoff 자식이 아님).
+
 ## 하지 말 것
-- `strategy`를 `off`로 두기(압축 없음 → 컨텍스트 무한증가). 현재는 `context-full`(제자리 압축, 341x 안 남을 실측). 임계값은 "올리는" 조정만.
-- 쏘 문서의 "context-full=341x"를 근거로 재교체 거부하기(2026-09-21 재실측으로 반증됨).
+- `strategy`를 `off`로 두기(압축 없음 → 컨텍스트 무한증가). 현재는 `context-full`(제자리 압축). 임계값은 "올리는" 조정만.
+- 원시 증폭 수치(total/output)를 비용 신호로 오해하기. 2026-09-21 전 세션 3329레코드 직접 파싱: raw 173x(세션별 최대 378x)이나 87.8%가 싼 cacheRead → 과금가중 실효 증폭 39x, 순수 uncached 재전송 5.3x, 전체 cache-hit **96.7%**(지목 세션 98.3%). 옛 "cache-hit 52.9% 낮음"·"341x 폭증"은 반증됨. 지배 레버는 strategy 아님 = 캐시 건강도 + 콜드리줌 재캐싱 크기(thresholdTokens).
 - `handoffPromptExtension`의 goal-arming 절 제거.
 - config 반영을 `gjc config get` stdout으로 판단(온디스크로 검증).
