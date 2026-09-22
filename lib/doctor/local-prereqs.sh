@@ -125,6 +125,16 @@ PY
       WARNINGS=$((WARNINGS+1))
     fi
   done
+  # herdr agent skill is generated from `herdr --skill` into each runtime's scan
+  # root by sync_herdr_skill; check the GJC scan root (real file, not symlink).
+  if command -v herdr >/dev/null 2>&1; then
+    if [ -f "${GJC_CODING_AGENT_DIR:-$HOME/.gjc/agent}/skills/herdr/SKILL.md" ]; then
+      echo "  [OK]   herdr skill (GJC scan root)"
+    else
+      echo "  [MISS] herdr skill (run setup.sh sync)"
+      WARNINGS=$((WARNINGS+1))
+    fi
+  fi
   if command -v gjc >/dev/null 2>&1; then
     local _profile _expected_profile
     _expected_profile="$(tr -d '[:space:]' < "$SCRIPT_DIR/runtimes/gjc/default-profile")"
