@@ -35,6 +35,25 @@ Run the council when:
 
 For a reasoning-heavy task, the orchestration session may propose this workflow. A proposal is not authorization to create or prompt sessions. Wait for acceptance unless the user already explicitly requested Herdr council work.
 
+## Workflow isolation
+
+- Do not invoke or depend on another workflow skill unless the user explicitly requests that workflow.
+- Reuse relevant reasoning principles inside `herdr-council` instead of chaining to the original workflow.
+- Do not treat a useful pattern from another skill as authorization to execute that skill.
+- Apply this isolation rule to the orchestration session and every council participant.
+- Include the workflow boundary in the shared context pack sent to every participant.
+- Council participants must not invoke additional workflow skills or delegate to agents outside the user-approved roster.
+- Return any proposed workflow or roster expansion to the orchestration session.
+
+If the user explicitly requests `herdr-council` together with another workflow, follow an explicit execution order and handoff. Ask before controlling sessions when the order or handoff is material and unclear.
+
+## Language policy
+
+- All inter-session communication is English to reduce token usage. This covers context packs, prompts, independent conclusions, direct questions and rebuttals, reconciliation messages, and implementation handoffs.
+- Council participants communicate only with the orchestration session or their explicitly approved peers, and do so in English.
+- Only the orchestration session communicates directly with the user. Those user-facing messages and the final report to the user must be in Korean.
+- Include this language boundary in the shared context pack sent to every participant.
+
 ## Preflight before controlling sessions
 
 A short read-only investigation may establish repository and environment facts. Stop at the first point that needs user interpretation. Before creating or prompting council sessions, report:
@@ -98,7 +117,13 @@ Excluded scope
 Relevant files and evidence
 Requested deliverable
 Council roster
+Workflow boundary
+Language boundary
 ```
+
+The workflow boundary must tell every participant to use only the approved `herdr-council` protocol, avoid invoking another workflow skill, avoid creating or delegating to agents outside the approved roster, and return proposed scope expansion to the orchestration session.
+
+The language boundary must tell every participant to use English for all inter-session communication and to address only the orchestration session or approved peers. It must also state that only the orchestration session communicates directly with the user, and that user-facing communication is Korean.
 
 Do not ask each participant to remap the repository or rediscover common facts already present in the pack. They must still evaluate the whole problem independently.
 
@@ -181,7 +206,7 @@ Existing council sessions may be reused for implementation when the user-selecte
 
 ## Final report
 
-Only the orchestration session reports the integrated result to the user. Participant sessions do not issue competing final reports.
+Only the orchestration session reports the integrated result to the user. Participant sessions do not issue competing final reports. Per the language policy, this user-facing report is in Korean even though the reasoning and reconciliation that produced it happened in English.
 
 Use this shape when applicable:
 
