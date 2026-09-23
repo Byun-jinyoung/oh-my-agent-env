@@ -2,6 +2,34 @@
 # Sourced by lib/doctor.sh; not standalone.
 # shellcheck shell=bash   # sourced fragment: no shebang by design
 
+check_herdr_skill_roots() {
+  local _herdr_entry _herdr_label _herdr_root _herdr_installed
+  local _herdr_council_src="$SCRIPT_DIR/skills/herdr-council/SKILL.md"
+  for _herdr_entry in \
+    "GJC|${GJC_CODING_AGENT_DIR:-$HOME/.gjc/agent}/skills" \
+    "Claude|${CONFIG_DIR:-$HOME/.claude}/skills" \
+    "Codex|${CODEX_DIR:-$HOME/.codex}/skills" \
+    "OMO|${AGENTS_DIR:-$HOME/.agents}/skills"; do
+    _herdr_label="${_herdr_entry%%|*}"
+    _herdr_root="${_herdr_entry#*|}"
+    _herdr_installed="$_herdr_root/herdr-council/SKILL.md"
+    if [ -f "$_herdr_installed" ] && cmp -s "$_herdr_council_src" "$_herdr_installed"; then
+      echo "  [OK]   herdr-council skill ($_herdr_label scan root)"
+    else
+      echo "  [MISS] herdr-council skill ($_herdr_label scan root; run setup.sh sync)"
+      WARNINGS=$((WARNINGS+1))
+    fi
+    if command -v herdr >/dev/null 2>&1; then
+      if [ -f "$_herdr_root/herdr/SKILL.md" ]; then
+        echo "  [OK]   herdr skill ($_herdr_label scan root)"
+      else
+        echo "  [MISS] herdr skill ($_herdr_label scan root; run setup.sh sync)"
+        WARNINGS=$((WARNINGS+1))
+      fi
+    fi
+  done
+}
+
 doctor_local_prereqs() {
   echo "[ npm prefix policy ]  (goal: keep MY tools out of world-readable system paths)"
   local _cur_prefix _cur_root _mode
@@ -125,16 +153,9 @@ PY
       WARNINGS=$((WARNINGS+1))
     fi
   done
-  # herdr agent skill is generated from `herdr --skill` into each runtime's scan
-  # root by sync_herdr_skill; check the GJC scan root (real file, not symlink).
-  if command -v herdr >/dev/null 2>&1; then
-    if [ -f "${GJC_CODING_AGENT_DIR:-$HOME/.gjc/agent}/skills/herdr/SKILL.md" ]; then
-      echo "  [OK]   herdr skill (GJC scan root)"
-    else
-      echo "  [MISS] herdr skill (run setup.sh sync)"
-      WARNINGS=$((WARNINGS+1))
-    fi
-  fi
+  # Herdr skills are real files in every runtime scan root. Check each target
+  # independently so a partial sync cannot look healthy through GJC alone.
+  check_herdr_skill_roots
   if command -v gjc >/dev/null 2>&1; then
     local _profile _expected_profile
     _expected_profile="$(tr -d '[:space:]' < "$SCRIPT_DIR/runtimes/gjc/default-profile")"

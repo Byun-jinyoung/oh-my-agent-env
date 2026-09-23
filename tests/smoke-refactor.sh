@@ -2086,8 +2086,31 @@ grep -q 'report_stale_sessions "\$CONFIG_DIR/settings.json"' "$ROOT/lib/sync.sh"
   || fail "[33] sync closing line does not call report_stale_sessions"
 
 echo "[34] GJC / OMO / Herdr configuration is portable, merged, and idempotent"
-t34="$TMP/agent-clis"; h34="$t34/home"
-mkdir -p "$h34/.gjc/agent" "$h34/.omo/agent" "$h34/.config/herdr"
+t34="$TMP/agent-clis"; h34="$t34/home"; b34="$t34/bin"; b34_bad="$t34/bin-no-base"
+mkdir -p "$h34/.gjc/agent" "$h34/.omo/agent" "$h34/.config/herdr" "$b34" "$b34_bad"
+cat > "$b34/herdr" <<'SH'
+#!/bin/sh
+case "${1:-}" in
+  --skill)
+    printf '%s\n' '---' 'name: herdr' 'description: generated test skill' '---'
+    ;;
+  config)
+    exit 0
+    ;;
+  server)
+    exit 0
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+SH
+chmod +x "$b34/herdr"
+cat > "$b34_bad/herdr" <<'SH'
+#!/bin/sh
+exit 1
+SH
+chmod +x "$b34_bad/herdr"
 cat > "$h34/.gjc/agent/keybindings.json" <<'JSON'
 {"foreign.gjc.action":"keep"}
 JSON
@@ -2111,7 +2134,7 @@ run34() {
   GJC_CODING_AGENT_DIR="$h34/.gjc/agent" \
   OMO_CODING_AGENT_DIR="$h34/.omo/agent" \
   HERDR_CONFIG_DIR="$h34/.config/herdr" \
-  PATH="/usr/bin:/bin" \
+  PATH="$b34:/usr/bin:/bin" \
   bash -c "
     SCRIPT_DIR='$ROOT'
     LOG_FILE='$t34/sync.log'
@@ -2142,6 +2165,130 @@ assert bashrc.count("oh-my-agent-env:herdr-agents >>>") == 1
 PY
 test -L "$h34/.local/bin/gjc-herdr" || fail "[34] gjc-herdr wrapper was not linked"
 test -L "$h34/.local/bin/omo-herdr" || fail "[34] omo-herdr wrapper was not linked"
+for skill_root in \
+  "$h34/.gjc/agent/skills" \
+  "$h34/.claude/skills" \
+  "$h34/.codex/skills" \
+  "$h34/.agents/skills"; do
+  test -f "$skill_root/herdr/SKILL.md" \
+    || fail "[34] generated herdr skill missing from $skill_root"
+  test -f "$skill_root/herdr-council/SKILL.md" \
+    || fail "[34] herdr-council skill missing from $skill_root"
+  cmp -s "$ROOT/skills/herdr-council/SKILL.md" "$skill_root/herdr-council/SKILL.md" \
+    || fail "[34] herdr-council skill differs in $skill_root"
+done
+h34_no_base="$t34/home-no-base"
+mkdir -p "$h34_no_base"
+HOME="$h34_no_base" \
+CONFIG_DIR="$h34_no_base/.claude" \
+CODEX_DIR="$h34_no_base/.codex" \
+AGENTS_DIR="$h34_no_base/.agents" \
+GJC_CODING_AGENT_DIR="$h34_no_base/.gjc/agent" \
+PATH="$b34_bad:/usr/bin:/bin" \
+bash -c "
+  SCRIPT_DIR='$ROOT'
+  LOG_FILE='$t34/no-base.log'
+  WARNINGS=0
+  ERRORS=0
+  source '$ROOT/lib/common.sh'
+  source '$ROOT/lib/sync/agent-clis.sh'
+  sync_herdr_skill
+  test \"\$WARNINGS\" -eq 1
+" >/dev/null
+for skill_root in \
+  "$h34_no_base/.gjc/agent/skills" \
+  "$h34_no_base/.claude/skills" \
+  "$h34_no_base/.codex/skills" \
+  "$h34_no_base/.agents/skills"; do
+  test -f "$skill_root/herdr-council/SKILL.md" \
+    || fail "[34] herdr-council depends on unavailable base skill in $skill_root"
+  test ! -e "$skill_root/herdr/SKILL.md" \
+    || fail "[34] invalid generated herdr skill was installed in $skill_root"
+done
+h34_partial="$t34/home-partial"
+mkdir -p "$h34_partial"
+touch "$h34_partial/.codex-block"
+HOME="$h34_partial" \
+CONFIG_DIR="$h34_partial/.claude" \
+CODEX_DIR="$h34_partial/.codex-block" \
+AGENTS_DIR="$h34_partial/.agents" \
+GJC_CODING_AGENT_DIR="$h34_partial/.gjc/agent" \
+PATH="$b34:/usr/bin:/bin" \
+bash -c "
+  SCRIPT_DIR='$ROOT'
+  LOG_FILE='$t34/partial.log'
+  WARNINGS=0
+  ERRORS=0
+  source '$ROOT/lib/common.sh'
+  source '$ROOT/lib/sync/agent-clis.sh'
+  sync_herdr_skill
+  test \"\$WARNINGS\" -eq 2
+" > "$t34/partial.out"
+grep -q '\[WARN\] herdr-council skill partially installed (3/4 scan roots)' "$t34/partial.out" \
+  || fail "[34] partial herdr-council deployment was not summarized"
+grep -q '\[WARN\] herdr skill partially generated (3/4 scan roots)' "$t34/partial.out" \
+  || fail "[34] partial herdr base deployment was not summarized"
+if grep -q '\[OK\] herdr-council skill installed' "$t34/partial.out"; then
+  fail "[34] partial herdr-council deployment was reported as OK"
+fi
+h34_copy_fail="$t34/home-copy-fail"
+mkdir -p "$h34_copy_fail/.codex/skills/herdr-council/SKILL.md"
+HOME="$h34_copy_fail" \
+CONFIG_DIR="$h34_copy_fail/.claude" \
+CODEX_DIR="$h34_copy_fail/.codex" \
+AGENTS_DIR="$h34_copy_fail/.agents" \
+GJC_CODING_AGENT_DIR="$h34_copy_fail/.gjc/agent" \
+PATH="$b34:/usr/bin:/bin" \
+bash -c "
+  SCRIPT_DIR='$ROOT'
+  LOG_FILE='$t34/copy-fail.log'
+  WARNINGS=0
+  ERRORS=0
+  source '$ROOT/lib/common.sh'
+  source '$ROOT/lib/sync/agent-clis.sh'
+  sync_herdr_skill
+  test \"\$WARNINGS\" -eq 1
+" > "$t34/copy-fail.out"
+grep -q '\[WARN\] herdr-council target is a directory' "$t34/copy-fail.out" \
+  || fail "[34] directory-shaped council target was not rejected"
+grep -q '\[WARN\] herdr-council skill partially installed (3/4 scan roots)' "$t34/copy-fail.out" \
+  || fail "[34] council copy failure was not summarized"
+if grep -q '\[OK\] herdr-council skill installed' "$t34/copy-fail.out"; then
+  fail "[34] failed herdr-council copy was reported as OK"
+fi
+h34_doctor="$t34/home-doctor"
+cp -a "$h34" "$h34_doctor"
+HOME="$h34_doctor" \
+CONFIG_DIR="$h34_doctor/.claude" \
+CODEX_DIR="$h34_doctor/.codex" \
+AGENTS_DIR="$h34_doctor/.agents" \
+GJC_CODING_AGENT_DIR="$h34_doctor/.gjc/agent" \
+PATH="$b34:/usr/bin:/bin" \
+bash -c "
+  SCRIPT_DIR='$ROOT'
+  WARNINGS=0
+  source '$ROOT/lib/doctor/local-prereqs.sh'
+  check_herdr_skill_roots
+  test \"\$WARNINGS\" -eq 0
+" > "$t34/doctor-ok.out"
+test "$(grep -c '\[OK\]   herdr-council skill' "$t34/doctor-ok.out")" -eq 4 \
+  || fail "[34] doctor did not validate every herdr-council root"
+printf '%s\n' 'drift' > "$h34_doctor/.codex/skills/herdr-council/SKILL.md"
+HOME="$h34_doctor" \
+CONFIG_DIR="$h34_doctor/.claude" \
+CODEX_DIR="$h34_doctor/.codex" \
+AGENTS_DIR="$h34_doctor/.agents" \
+GJC_CODING_AGENT_DIR="$h34_doctor/.gjc/agent" \
+PATH="$b34:/usr/bin:/bin" \
+bash -c "
+  SCRIPT_DIR='$ROOT'
+  WARNINGS=0
+  source '$ROOT/lib/doctor/local-prereqs.sh'
+  check_herdr_skill_roots
+  test \"\$WARNINGS\" -eq 1
+" > "$t34/doctor-drift.out"
+grep -q '\[MISS\] herdr-council skill (Codex scan root' "$t34/doctor-drift.out" \
+  || fail "[34] doctor did not detect Codex council drift"
 cp -a "$h34" "$t34/snapshot"
 run34
 diff -ru "$t34/snapshot" "$h34" >/dev/null \

@@ -161,28 +161,97 @@ sync_herdr_skill() {
   # Herdr ships its agent instructions via `herdr --skill`. The installed binary
   # is the source of truth (its version differs per machine, like graphify), so
   # generate SKILL.md per-machine instead of vendoring a copy that goes stale.
-  # Writing it into each runtime's user skill scan root lets every new session
-  # discover how to drive herdr without the user re-explaining it each time.
-  command -v herdr >/dev/null 2>&1 || { log_and_print "    [SKIP] herdr skill — herdr not installed"; return 0; }
+  # herdr-council is a repository-managed companion workflow. Install both as
+  # real files so every runtime can discover them without the user re-explaining
+  # Herdr, while keeping the binary authoritative for the base skill.
+  local gjc_dir="${GJC_CODING_AGENT_DIR:-$HOME/.gjc/agent}"
+  local claude_dir="${CONFIG_DIR:-$HOME/.claude}"
+  local codex_dir="${CODEX_DIR:-$HOME/.codex}"
+  local agents_dir="${AGENTS_DIR:-$HOME/.agents}"
+  local council_src="$SCRIPT_DIR/skills/herdr-council/SKILL.md"
+  local root base_n=0 council_n=0
+
+  if [ -f "$council_src" ]; then
+    for root in "$gjc_dir/skills" "$claude_dir/skills" "$codex_dir/skills" "$agents_dir/skills"; do
+      if ! mkdir -p "$root/herdr-council"; then
+        log_and_print "    [WARN] cannot create $root/herdr-council"
+        WARNINGS=$((WARNINGS+1))
+        continue
+      fi
+      local council_dst="$root/herdr-council/SKILL.md"
+      if [ -L "$council_dst" ] && ! rm -f "$council_dst"; then
+        log_and_print "    [WARN] cannot replace linked herdr-council skill under $root"
+        WARNINGS=$((WARNINGS+1))
+        continue
+      fi
+      if [ -d "$council_dst" ]; then
+        log_and_print "    [WARN] herdr-council target is a directory under $root"
+        WARNINGS=$((WARNINGS+1))
+        continue
+      fi
+      if cp "$council_src" "$council_dst" && [ -f "$council_dst" ] && [ ! -L "$council_dst" ]; then
+        council_n=$((council_n+1))
+      else
+        log_and_print "    [WARN] cannot install herdr-council under $root"
+        WARNINGS=$((WARNINGS+1))
+      fi
+    done
+    if [ "$council_n" -eq 4 ]; then
+      log_and_print "    [OK] herdr-council skill installed (4 scan roots: gjc/claude/codex/agents)"
+    elif [ "$council_n" -gt 0 ]; then
+      log_and_print "    [WARN] herdr-council skill partially installed ($council_n/4 scan roots)"
+    fi
+  else
+    log_and_print "    [WARN] herdr-council source missing: $council_src"
+    WARNINGS=$((WARNINGS+1))
+  fi
+
+  if ! command -v herdr >/dev/null 2>&1; then
+    log_and_print "    [SKIP] herdr base skill — herdr not installed"
+    return 0
+  fi
   local skill_md
   if ! skill_md="$(herdr --skill 2>/dev/null)" || [ -z "$skill_md" ]; then
-    log_and_print "    [WARN] herdr --skill unavailable; skill not generated"
+    log_and_print "    [WARN] herdr --skill unavailable; base skill not generated"
     WARNINGS=$((WARNINGS+1))
     return 0
   fi
-  local gjc_dir="${GJC_CODING_AGENT_DIR:-$HOME/.gjc/agent}"
+
   # One real SKILL.md per runtime scan root (GJC refuses symlinked skills outside
   # its scan root, unlike the registry.yaml symlink flow, so never symlink here):
   #   GJC     -> ~/.gjc/agent/skills   (verified: gjc skills discover)
   #   Claude  -> ~/.claude/skills      ($CONFIG_DIR; Claude Code convention)
   #   Codex   -> ~/.codex/skills       (Codex's own skill dir; it does NOT read ~/.agents/skills)
   #   OMO/pi  -> ~/.agents/skills      (pi/omo global skill dir; OMO also reads ~/.claude/skills)
-  local d n=0
-  for d in "$gjc_dir/skills/herdr" "$CONFIG_DIR/skills/herdr" "$HOME/.codex/skills/herdr" "$HOME/.agents/skills/herdr"; do
-    mkdir -p "$d" || { log_and_print "    [WARN] cannot create $d"; WARNINGS=$((WARNINGS+1)); continue; }
-    printf '%s\n' "$skill_md" > "$d/SKILL.md" && n=$((n+1))
+  for root in "$gjc_dir/skills" "$claude_dir/skills" "$codex_dir/skills" "$agents_dir/skills"; do
+    if ! mkdir -p "$root/herdr"; then
+      log_and_print "    [WARN] cannot create $root/herdr"
+      WARNINGS=$((WARNINGS+1))
+      continue
+    fi
+    local base_dst="$root/herdr/SKILL.md"
+    if [ -L "$base_dst" ] && ! rm -f "$base_dst"; then
+      log_and_print "    [WARN] cannot replace linked herdr base skill under $root"
+      WARNINGS=$((WARNINGS+1))
+      continue
+    fi
+    if [ -d "$base_dst" ]; then
+      log_and_print "    [WARN] herdr base skill target is a directory under $root"
+      WARNINGS=$((WARNINGS+1))
+      continue
+    fi
+    if printf '%s\n' "$skill_md" > "$base_dst" && [ -f "$base_dst" ] && [ ! -L "$base_dst" ]; then
+      base_n=$((base_n+1))
+    else
+      log_and_print "    [WARN] cannot generate herdr base skill under $root"
+      WARNINGS=$((WARNINGS+1))
+    fi
   done
-  [ "$n" -gt 0 ] && log_and_print "    [OK] herdr skill generated from binary ($n scan roots: gjc/claude/codex/agents)"
+  if [ "$base_n" -eq 4 ]; then
+    log_and_print "    [OK] herdr skill generated from binary (4 scan roots: gjc/claude/codex/agents)"
+  elif [ "$base_n" -gt 0 ]; then
+    log_and_print "    [WARN] herdr skill partially generated ($base_n/4 scan roots)"
+  fi
 }
 
 sync_gjc_settings() {
