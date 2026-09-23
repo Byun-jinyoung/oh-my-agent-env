@@ -346,6 +346,27 @@ PY
   fi
 }
 
+sync_omo_herdr_extension() {
+  # Deploy the herdr agent-state reporting extension into OMO's senpi extension
+  # dir. This is the fix for herdr's sidebar indicator never leaving idle on OMO
+  # panes: herdr classifies omp panes but ships no omp detection manifest, so
+  # passive screen-parsing can't see senpi's working/blocked lines and falls back
+  # to idle. The extension pushes state over herdr's socket (pane.report_agent),
+  # which is authoritative and kind-independent. herdr's own `integration install
+  # omp` targets ~/.omp and refuses when absent, so oma deploys it to ~/.omo.
+  local src="$SCRIPT_DIR/runtimes/omo/extensions/herdr-omp-agent-state.ts"
+  local dest_dir="$HOME/.omo/agent/extensions" dest
+  dest="$dest_dir/herdr-omp-agent-state.ts"
+  [ -f "$src" ] || return 0
+  [ -d "$HOME/.omo/agent" ] || { log_and_print "    [SKIP] OMO herdr extension — ~/.omo/agent absent"; return 0; }
+  if mkdir -p "$dest_dir" && cp -f "$src" "$dest"; then
+    log_and_print "    [OK] OMO herdr agent-state extension deployed"
+  else
+    log_and_print "    [FAIL] OMO herdr agent-state extension deploy"
+    ERRORS=$((ERRORS+1))
+  fi
+}
+
 retract_gjc_graft_mcp() {
   # graft's code-graph reaches GJC through the graft-nudge pre-hook (sync_gjc_hooks),
   # NOT an MCP server: a lazy-activated MCP tool sat unused behind bm25 discovery,
@@ -544,6 +565,7 @@ sync_agent_cli_configs() {
   sync_gjc_settings
   sync_gjc_hooks
   sync_omo_settings
+  sync_omo_herdr_extension
   sync_herdr_skill
   retract_gjc_graft_mcp
   sync_graft_hooks
@@ -609,6 +631,7 @@ sync_agent_cli_install() {
   sync_gjc_settings
   sync_gjc_hooks
   sync_omo_settings
+  sync_omo_herdr_extension
   sync_herdr_skill
   retract_gjc_graft_mcp
   sync_graft_hooks
