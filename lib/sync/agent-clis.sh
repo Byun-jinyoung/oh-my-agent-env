@@ -274,7 +274,9 @@ sync_gjc_settings() {
       WARNINGS=$((WARNINGS+1))
     fi
   done < "$file"
-  [ "$failed" -eq 0 ] && log_and_print "    [OK] GJC settings applied ($applied)"
+  # `if`, not `[ ] &&`: a false test as the last command becomes the function's
+  # status, and setup.sh's `set -e` would then abort every later sync step.
+  if [ "$failed" -eq 0 ]; then log_and_print "    [OK] GJC settings applied ($applied)"; fi
 }
 
 sync_gjc_hooks() {
@@ -313,7 +315,7 @@ sync_gjc_hooks() {
     cp -f "$SCRIPT_DIR/runtimes/gjc/hooks/graphify-nudge.example.json" "$pcfg" \
       && log_and_print "    [OK] seeded graphify-nudge.json (enabled; no-op without graphify-out/graph.json)"
   fi
-  [ "$n" -gt 0 ] && log_and_print "    [OK] GJC attitude-gate + graft-nudge + graphify-nudge hooks deployed ($n files)"
+  if [ "$n" -gt 0 ]; then log_and_print "    [OK] GJC attitude-gate + graft-nudge + graphify-nudge hooks deployed ($n files)"; fi
 }
 
 sync_omo_settings() {

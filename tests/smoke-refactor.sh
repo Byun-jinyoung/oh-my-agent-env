@@ -2177,6 +2177,36 @@ for skill_root in \
   cmp -s "$ROOT/skills/herdr-council/SKILL.md" "$skill_root/herdr-council/SKILL.md" \
     || fail "[34] herdr-council skill differs in $skill_root"
 done
+cmp -s "$ROOT/runtimes/omo/extensions/herdr-omp-agent-state.ts" \
+  "$h34/.omo/agent/extensions/herdr-omp-agent-state.ts" \
+  || fail "[34] OMO herdr agent-state extension was not deployed"
+# setup.sh runs under `set -e`: a GJC that rejects every setting (e.g. a broken
+# native module) must degrade to warnings, not abort before the herdr steps.
+h34_gjcfail="$t34/home-gjc-fail"; b34_gjcfail="$t34/bin-gjc-fail"
+mkdir -p "$h34_gjcfail/.gjc/agent" "$h34_gjcfail/.omo/agent" "$b34_gjcfail"
+cp "$b34/herdr" "$b34_gjcfail/herdr"
+printf '#!/bin/sh\nexit 1\n' > "$b34_gjcfail/gjc"
+chmod +x "$b34_gjcfail/gjc"
+HOME="$h34_gjcfail" \
+XDG_CONFIG_HOME="$h34_gjcfail/.config" \
+GJC_CODING_AGENT_DIR="$h34_gjcfail/.gjc/agent" \
+OMO_CODING_AGENT_DIR="$h34_gjcfail/.omo/agent" \
+HERDR_CONFIG_DIR="$h34_gjcfail/.config/herdr" \
+PATH="$b34_gjcfail:/usr/bin:/bin" \
+bash -c "
+  set -e
+  SCRIPT_DIR='$ROOT'
+  LOG_FILE='$t34/gjc-fail.log'
+  WARNINGS=0
+  ERRORS=0
+  source '$ROOT/lib/common.sh'
+  source '$ROOT/lib/sync/agent-clis.sh'
+  sync_agent_cli_configs
+" >/dev/null || fail "[34] sync aborted under set -e when GJC rejected settings"
+test -f "$h34_gjcfail/.claude/skills/herdr-council/SKILL.md" \
+  || fail "[34] herdr skills skipped after GJC settings failure"
+test -f "$h34_gjcfail/.omo/agent/extensions/herdr-omp-agent-state.ts" \
+  || fail "[34] OMO herdr extension skipped after GJC settings failure"
 h34_no_base="$t34/home-no-base"
 mkdir -p "$h34_no_base"
 HOME="$h34_no_base" \
