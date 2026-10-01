@@ -28,6 +28,16 @@ check_herdr_skill_roots() {
       fi
     fi
   done
+  # Mirrors sync_omo_herdr_extension: only expected once OMO created ~/.omo/agent.
+  local _herdr_ext_src="$SCRIPT_DIR/runtimes/omo/extensions/herdr-omp-agent-state.ts"
+  if [ -d "$HOME/.omo/agent" ] && [ -f "$_herdr_ext_src" ]; then
+    if cmp -s "$_herdr_ext_src" "$HOME/.omo/agent/extensions/herdr-omp-agent-state.ts"; then
+      echo "  [OK]   OMO herdr agent-state extension"
+    else
+      echo "  [MISS] OMO herdr agent-state extension (run setup.sh sync)"
+      WARNINGS=$((WARNINGS+1))
+    fi
+  fi
 }
 
 doctor_local_prereqs() {

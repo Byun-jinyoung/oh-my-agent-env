@@ -2303,6 +2303,8 @@ bash -c "
 " > "$t34/doctor-ok.out"
 test "$(grep -c '\[OK\]   herdr-council skill' "$t34/doctor-ok.out")" -eq 4 \
   || fail "[34] doctor did not validate every herdr-council root"
+grep -q '\[OK\]   OMO herdr agent-state extension' "$t34/doctor-ok.out" \
+  || fail "[34] doctor did not validate the OMO herdr extension"
 printf '%s\n' 'drift' > "$h34_doctor/.codex/skills/herdr-council/SKILL.md"
 HOME="$h34_doctor" \
 CONFIG_DIR="$h34_doctor/.claude" \
@@ -2319,6 +2321,22 @@ bash -c "
 " > "$t34/doctor-drift.out"
 grep -q '\[MISS\] herdr-council skill (Codex scan root' "$t34/doctor-drift.out" \
   || fail "[34] doctor did not detect Codex council drift"
+rm -f "$h34_doctor/.omo/agent/extensions/herdr-omp-agent-state.ts"
+HOME="$h34_doctor" \
+CONFIG_DIR="$h34_doctor/.claude" \
+CODEX_DIR="$h34_doctor/.codex" \
+AGENTS_DIR="$h34_doctor/.agents" \
+GJC_CODING_AGENT_DIR="$h34_doctor/.gjc/agent" \
+PATH="$b34:/usr/bin:/bin" \
+bash -c "
+  SCRIPT_DIR='$ROOT'
+  WARNINGS=0
+  source '$ROOT/lib/doctor/local-prereqs.sh'
+  check_herdr_skill_roots
+  test \"\$WARNINGS\" -eq 2
+" > "$t34/doctor-ext.out" || fail "[34] doctor warning count wrong without OMO extension"
+grep -q '\[MISS\] OMO herdr agent-state extension' "$t34/doctor-ext.out" \
+  || fail "[34] doctor did not detect missing OMO herdr extension"
 cp -a "$h34" "$t34/snapshot"
 run34
 diff -ru "$t34/snapshot" "$h34" >/dev/null \
