@@ -504,6 +504,12 @@ PYEOF
   if command -v graphify &>/dev/null; then
     log_and_print "    [OK] Graphify CLI installed ($(command -v graphify))"
   elif command -v uv &>/dev/null; then
+    # A dangling ~/.local/bin/graphify (uv tool removed, link left) is invisible
+    # to `command -v` yet makes uv refuse with "Executable already exists".
+    if [ -L "$HOME/.local/bin/graphify" ] && [ ! -e "$HOME/.local/bin/graphify" ]; then
+      rm -f "$HOME/.local/bin/graphify"
+      log_and_print "    [FIX] removed dangling ~/.local/bin/graphify symlink"
+    fi
     log_and_print "    Installing Graphify (uv tool install graphifyy)..."
     run_with_timeout "Graphify install (uv)" "uv tool install graphifyy < /dev/null" \
       | tail -2 || true
