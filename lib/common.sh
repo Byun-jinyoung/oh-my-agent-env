@@ -528,7 +528,9 @@ ensure_codex_mcp_paths() {
   local _specs="" _pair _name _bin _abs
   for _pair in "serena:serena" "code-review-graph:code-review-graph" "antigravity-mcp:antigravity-mcp"; do
     _name="${_pair%%:*}"; _bin="${_pair##*:}"
-    _abs="$(command -v "$_bin" 2>/dev/null)"
+    # `|| true`: a missing binary is expected (fallback below); without it the
+    # failed substitution aborts setup.sh's `set -e` sync here.
+    _abs="$(command -v "$_bin" 2>/dev/null)" || true
     # Fallback: the sync shell's PATH may lack ~/.local/bin even though _baked
     # includes it — probe the baked dirs so we still harden the server.
     if [ -z "$_abs" ]; then

@@ -2351,5 +2351,20 @@ grep -q 'sync_agent_cli_configs' "$ROOT/lib/sync.sh" \
   || fail "[34] local agent configuration is not called by sync"
 grep -q 'sync_agent_cli_install' "$ROOT/lib/sync.sh" \
   || fail "[34] agent installers are not called by sync"
+# A managed Codex MCP binary that is not installed (e.g. serena) must be skipped,
+# not abort setup.sh's `set -e` sync before the framework installers run.
+h34_mcp="$t34/home-codex-mcp"
+mkdir -p "$h34_mcp/.codex"
+printf 'model = "x"\n' > "$h34_mcp/.codex/config.toml"
+HOME="$h34_mcp" PATH="/usr/bin:/bin" bash -c "
+  set -e
+  SCRIPT_DIR='$ROOT'; LOG_FILE='$t34/codex-mcp.log'; WARNINGS=0; ERRORS=0
+  source '$ROOT/lib/common.sh'
+  CODEX_DIR=\"\$HOME/.codex\"
+  ensure_codex_mcp_paths
+  echo REACHED
+" > "$t34/codex-mcp.out" 2>&1 || true
+grep -q '^REACHED$' "$t34/codex-mcp.out" \
+  || fail "[34] ensure_codex_mcp_paths aborted under set -e on a missing MCP binary"
 
 echo "smoke-refactor OK"
