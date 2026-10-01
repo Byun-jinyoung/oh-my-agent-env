@@ -2366,5 +2366,9 @@ HOME="$h34_mcp" PATH="/usr/bin:/bin" bash -c "
 " > "$t34/codex-mcp.out" 2>&1 || true
 grep -q '^REACHED$' "$t34/codex-mcp.out" \
   || fail "[34] ensure_codex_mcp_paths aborted under set -e on a missing MCP binary"
+# graft is installed by sync_external_tools, after both earlier sync_graft_hooks
+# calls; without a later call a fresh machine needs a second sync to wire hooks.
+awk '/^ *sync_external_tools$/{t=NR} /^ *sync_graft_hooks$/{h=NR} END{exit !(t && h > t)}' "$ROOT/lib/sync.sh" \
+  || fail "[34] graft hooks are not wired after graft is installed"
 
 echo "smoke-refactor OK"

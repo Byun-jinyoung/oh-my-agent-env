@@ -102,6 +102,9 @@ cmd_sync() {
 
   sync_agent_cli_install
   sync_external_tools
+  # graft is installed by sync_external_tools, after the earlier hook calls ran
+  # and skipped it; re-run (idempotent) so a first sync also wires its hooks.
+  sync_graft_hooks
   sync_plugins_mcp
   sync_agent_mcp_frameworks
 
