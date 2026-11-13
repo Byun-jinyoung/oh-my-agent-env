@@ -35,7 +35,7 @@ is automatic. Below is only what still needs deliberate behavior.
 
      안전장치(약한 것부터): ①경계에서 `done` → ②세션 종료 시 SessionEnd 훅이 마커
      정리 → ③마커 90분 TTL 만료 시 자동 삭제 → ④세션당 연속 미룸 2회 → ⑤컨텍스트
-     800k 실링. 실링은 압축 지점(`autoCompactWindow` 700k → 실효 680k)보다 **위**여야
+     800k 실링. 실링은 압축 지점(`autoCompactWindow` 400k → 실효 380k)보다 **위**여야
      한다. 아래로 내려가면 게이트가 매번 `ceiling-reached`로 즉시 허용해 무력화된다.
      두 값은 짝이므로 한쪽만 배포되면 안 된다. 실링은 manifest의 `run`에, 압축 지점은
      manifest의 `settings`에 있고 sync가 둘 다 settings.json에 쓴다. 압축 지점은 훅

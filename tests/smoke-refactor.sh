@@ -268,7 +268,7 @@ PY
 hook_cfg="$TMP/hookcfg"; mkdir -p "$hook_cfg/hooks"
 cat > "$hook_cfg/settings.json" <<JSON
 {"statusLine":{"command":"keep-me"},
- "autoCompactWindow":400000,
+ "autoCompactWindow":300000,
  "hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"rtk hook claude"}]}],
           "SessionStart":[{"hooks":[{"type":"command","command":"$hook_cfg/hooks/foreign-tool.mjs"}]}]}}
 JSON
