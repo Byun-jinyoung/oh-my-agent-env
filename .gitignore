@@ -50,3 +50,4 @@ skills/slurm-hpc/references/cluster.generated.md
 
 # oh-my-omo runtime evidence (local artifacts — do not commit)
 .omo/evidence/
+.omo/thread-tools/

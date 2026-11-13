@@ -349,20 +349,16 @@ PY
 }
 
 sync_omo_herdr_extension() {
-  # Deploy the herdr agent-state reporting extension into OMO's senpi extension
-  # dir. This is the fix for herdr's sidebar indicator never leaving idle on OMO
-  # panes: herdr classifies omp panes but ships no omp detection manifest, so
-  # passive screen-parsing can't see senpi's working/blocked lines and falls back
-  # to idle. The extension pushes state over herdr's socket (pane.report_agent),
-  # which is authoritative and kind-independent. herdr's own `integration install
-  # omp` targets ~/.omp and refuses when absent, so oma deploys it to ~/.omo.
+  # One extension supports both generations: OSC 7501 (app=pi) for herdr-core,
+  # pane.report_agent (agent=omo) for legacy Herdr. Outside either host it is inert.
+  # Create the extension directory even before OMO's first interactive launch.
   local src="$SCRIPT_DIR/runtimes/omo/extensions/herdr-omp-agent-state.ts"
-  local dest_dir="$HOME/.omo/agent/extensions" dest
+  local agent_dir="${OMO_CODING_AGENT_DIR:-$HOME/.omo/agent}"
+  local dest_dir="$agent_dir/extensions" dest
   dest="$dest_dir/herdr-omp-agent-state.ts"
   [ -f "$src" ] || return 0
-  [ -d "$HOME/.omo/agent" ] || { log_and_print "    [SKIP] OMO herdr extension — ~/.omo/agent absent"; return 0; }
   if mkdir -p "$dest_dir" && cp -f "$src" "$dest"; then
-    log_and_print "    [OK] OMO herdr agent-state extension deployed"
+    log_and_print "    [OK] OMO herdr agent-state extension deployed -> $dest (OMO: /reload when idle)"
   else
     log_and_print "    [FAIL] OMO herdr agent-state extension deploy"
     ERRORS=$((ERRORS+1))

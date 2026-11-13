@@ -61,7 +61,7 @@ oh-my-agent-env/
 │   │   ├── instructions.md               # Codex global rules
 │   │   └── tools.md                      # Codex tool guidance
 │   ├── herdr/                             # Herdr config + GJC/OMO recognition wrappers
-│   ├── omo/                               # OMO keybindings
+│   ├── omo/                               # OMO keybindings, settings, Herdr state extension
 │   └── antigravity/
 │       ├── tools.md                      # Antigravity (agy) tool guidance
 │       └── skills/
@@ -203,11 +203,84 @@ tracked configuration under `runtimes/{herdr,omo}` and the top-level `gjc/` bund
   `openai-codex/gpt-5.6-sol`;
 - applies `runtimes/gjc/settings.conf` via `gjc config set`, and deploys the `runtimes/gjc/hooks/`
   attitude-gate hooks to `~/.gjc/agent/hooks/pre/` (inert until opted in via
-  `~/.gjc/agent/hooks/attitude-gate.json`).
+  `~/.gjc/agent/hooks/attitude-gate.json`);
+- copies `runtimes/omo/extensions/herdr-omp-agent-state.ts` into
+  `${OMO_CODING_AGENT_DIR:-$HOME/.omo/agent}/extensions/`, including before
+  OMO's first launch. Re-running sync refreshes the same managed file.
 
 Network installation is skipped by `setup.sh sync --skip-network`, but all
 local configuration still applies. Re-run normal `setup.sh sync` after
 installing a previously missing CLI.
+
+### OMO with the new herdr-core + herdr-app
+
+The installer above manages **legacy Herdr**; it does not install the new
+`herdr-core`/`herdr-app` pair. Install that pair and OMO separately before the
+steps below. Put this repository's updated files on the machine **running OMO**
+(the remote machine for an SSH-backed space), not just the machine showing the app.
+Credentials remain local and are not part of this integration.
+
+One shared extension handles both hosts:
+
+| Host | Detection | State transport | Reported identity |
+|---|---|---|---|
+| New core/app | `HC_TERMINAL_ID` + `HC_TERMINAL_SOCKET` | OSC 7501 to the controlling terminal | `pi` |
+| Legacy Herdr | `HERDR_ENV=1` + socket + pane ID | `pane.report_agent` over its socket | `omo` |
+| Neither | No matching host environment | Disabled | None |
+
+The app recognizes Claude/Codex through its program table and reported `app` name;
+the core stores the program's explicit OSC status, not a guess from screen text.
+OMO reuses its existing working/idle, approval, question, and retry handlers.
+For the new core it emits `state=...:app=pi`; this selects the app's built-in Pi
+identity without modifying or restarting the app/core. Reports go to `/dev/tty`
+(`CONOUT$` on Windows), since OMO redirects stdout/stderr to its debug log.
+Shutdown sends `state=clear`, so a returned shell does not retain the Pi status.
+
+Apply the normal local configuration sync:
+
+```bash
+cd ~/.oh-my-agent-env
+bash setup.sh sync --skip-network
+```
+
+To deploy **only this integration**, without changing other agent settings:
+
+```bash
+cd ~/.oh-my-agent-env
+agent_dir="${OMO_CODING_AGENT_DIR:-$HOME/.omo/agent}"
+mkdir -p "$agent_dir/extensions"
+cp runtimes/omo/extensions/herdr-omp-agent-state.ts "$agent_dir/extensions/"
+```
+
+In a new app/core terminal run `omo` normally; no `exec -a omp` or legacy
+`omo-herdr` wrapper is needed. An already-running OMO must finish its response,
+then run `/reload`. Do not set legacy `HERDR_ENV` manually to enable the new host.
+`OMO_CODING_AGENT_DIR` must match the directory used by that OMO launch.
+
+Verify from that terminal (the binary may also be named `hc`):
+
+```bash
+herdr-core get "$HC_TERMINAL_ID" --json
+herdr-core ls --json
+```
+
+Expect `reported: true`, `status.app: "pi"` in `get`, and `agent: "pi"` in `ls`.
+State is `idle` at the prompt, `working` during a response, or `blocked` when
+input/approval is required. `status: null` means reporting has not started:
+check the extension location, host environment, `/reload`, and extension errors.
+If core cannot find `omo`, launch it by the absolute path returned by
+`command -v omo` in the user's shell; the core service can have a different PATH.
+
+Regression checks (isolated HOME; no model calls or network):
+
+```bash
+bun test tests/herdr-core-state.test.ts
+bash -n lib/sync/agent-clis.sh
+```
+
+Verified on Linux with herdr-core 0.1.16 and OMO 5.1.48: real OMO startup,
+current-session reload, Pi working/idle reports, and clear on normal exit.
+Cross-OS execution and the remote desktop's rendered pixels were not verified.
 
 ## Project Graphify Setup
 
