@@ -19,6 +19,7 @@
 
 import net from "node:net";
 import path from "node:path";
+import fs from "node:fs";
 
 const HERDR_ENV = process.env.HERDR_ENV;
 const socketPath = process.env.HERDR_SOCKET_PATH;
@@ -26,9 +27,30 @@ const socketEndpoint =
   process.platform === "win32" && socketPath ? `\\\\.\\pipe\\${socketPath}` : socketPath;
 const paneId = process.env.HERDR_PANE_ID;
 const source = "herdr:omp";
+// New herdr-core consumes OSC 7501 instead of the legacy Herdr socket protocol.
+const coreEnabled = !!process.env.HC_TERMINAL_ID && !!process.env.HC_TERMINAL_SOCKET;
 
 function enabled() {
-  return HERDR_ENV === "1" && !!socketPath && !!paneId;
+  return coreEnabled || (HERDR_ENV === "1" && !!socketPath && !!paneId);
+}
+
+function reportCore(state: AgentState | "clear", message?: string): void {
+  const fields = [`state=${state}`];
+  if (state !== "clear") {
+    // Pi is a built-in app identity, including on a remote Herdr app.
+    fields.push("app=pi");
+    if (message) fields.push(`msg=${Buffer.from(message).toString("base64")}`);
+  }
+  // OMO redirects stdout/stderr to its debug log; OSC must reach the actual PTY.
+  const fd = fs.openSync(process.platform === "win32" ? "CONOUT$" : "/dev/tty", "w");
+  try {
+    const osc = `\x1b]7501;${fields.join(":")}\x1b\\`;
+    // Inside tmux (e.g. an OMS panel main) tmux swallows unknown OSC; its DCS passthrough
+    // (needs the pane's allow-passthrough on) forwards it to the Herdr terminal.
+    fs.writeSync(fd, process.env.TMUX ? `\x1bPtmux;${osc.replace(/\x1b/g, "\x1b\x1b")}\x1b\\` : osc);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 let requestQueue = Promise.resolve();
@@ -153,6 +175,9 @@ function currentSessionRef(): Record<string, unknown> | undefined {
 }
 
 function reportSession(sessionStartSource = "startup"): Promise<void> {
+  if (coreEnabled) {
+    return Promise.resolve();
+  }
   const sessionRef = currentSessionRef();
   if (!sessionRef) {
     return Promise.resolve();
@@ -176,6 +201,10 @@ function reportSession(sessionStartSource = "startup"): Promise<void> {
 }
 
 function sendState(state: AgentState, message?: string, seq = nextReportSeq()): Promise<void> {
+  if (coreEnabled) {
+    reportCore(state, message);
+    return Promise.resolve();
+  }
   return sendRequest({
     id: `${source}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
     method: "pane.report_agent",
@@ -475,6 +504,10 @@ export default function (pi) {
   pi.on("session_shutdown", () => {
     if (rootSession) {
       clearPendingTimers();
+      if (coreEnabled) {
+        queuedState = undefined;
+        reportCore("clear");
+      }
     }
   });
 }
