@@ -19,7 +19,7 @@ bash setup.sh
 | **GEMINI.md** | Global reliability rules for Antigravity (agy reads `~/.gemini/GEMINI.md` via gemini-cli inheritance) |
 | **instructions.md** | Global reliability rules for Codex CLI |
 | **LazyCodex** | Codex plugin `omo@sisyphuslabs` installed via `npx lazycodex-ai@latest install --no-tui` |
-| **Herdr + GJC + OMO** | Installs all three CLIs and merges portable Herdr recognition, Emacs keybindings, aliases, and the GJC `combo-custom` profile (`openai-codex/gpt-5.6-sol` by default) |
+| **Herdr + GJC + OMO** | Installs all three CLIs and merges portable Herdr recognition, Emacs keybindings, aliases, and the GJC `claude-custom` profile (`anthropic/claude-opus-4-8` by default) |
 | **oh-my-agent (oma)** | Per-project multi-agent harness (first-fluke/oh-my-agent), installed via `setup.sh oma <path>` |
 | **Graphify** | Knowledge graph CLI (`graphifyy` package, `graphify` command), Claude/Codex skills, and project hooks |
 
@@ -199,8 +199,8 @@ tracked configuration under `runtimes/{herdr,omo}` and the top-level `gjc/` bund
   `~/.config/herdr/config.toml` sections;
 - links `gjc-herdr` and `omo-herdr` into `~/.local/bin` and installs an
   idempotent managed alias block in `~/.bashrc`;
-- sets GJC's default model profile to `combo-custom`, whose primary model is
-  `openai-codex/gpt-5.6-sol`;
+- sets GJC's default model profile to `claude-custom`, whose primary model is
+  `anthropic/claude-opus-4-8`;
 - applies `runtimes/gjc/settings.conf` via `gjc config set`, and deploys the `runtimes/gjc/hooks/`
   attitude-gate hooks to `~/.gjc/agent/hooks/pre/` (inert until opted in via
   `~/.gjc/agent/hooks/attitude-gate.json`);
