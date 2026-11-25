@@ -2169,6 +2169,10 @@ test -L "$h34/.local/bin/gjc-herdr" || fail "[34] gjc-herdr wrapper was not link
 test -L "$h34/.local/bin/omo-herdr" || fail "[34] omo-herdr wrapper was not linked"
 test -L "$h34/.local/bin/agy-app-herdr" || fail "[34] agy-app-herdr was not linked"
 test -L "$h34/.local/bin/herdr-tmux-osc" || fail "[34] herdr-tmux-osc was not linked"
+[ "$(readlink "$h34/.claude/rules/herdr-agent-tree.md")" = "$ROOT/runtimes/claude/rules/herdr-agent-tree.md" ] \
+  || fail "[34] the user Claude rule was not linked"
+[ "$(readlink "$h34/.omo/agent/AGENTS.md")" = "$ROOT/runtimes/omo/AGENTS.md" ] \
+  || fail "[34] the OMO global AGENTS.md was not linked"
 test ! -e "$h34/.local/bin/herdr-keep-missing" \
   || fail "[34] herdr-keep-missing linked without herdr-app"
 test ! -e "$h34/.config/herdr-app" || fail "[34] herdr-app mod installed without herdr-app"
