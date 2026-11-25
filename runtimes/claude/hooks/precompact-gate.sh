@@ -71,6 +71,20 @@ EOF
 
 mkdir -p "$GATE_DIR" 2>/dev/null
 
+# `stat -c` and `date -Is` are GNU-only. On BSD/macOS stat exits non-zero, which
+# made tier 1b read every marker as age-unknown, delete it and allow — the gate
+# could never defer on a Mac. Probe once and bind the portable form.
+if stat -c %Y . >/dev/null 2>&1; then
+  mtime_of() { stat -c %Y "$1" 2>/dev/null; }
+else
+  mtime_of() { stat -f %m "$1" 2>/dev/null; }
+fi
+if date -Is >/dev/null 2>&1; then
+  now_iso() { date -Is; }
+else
+  now_iso() { date -u '+%Y-%m-%dT%H:%M:%S+00:00'; }
+fi
+
 payload=$(cat)
 
 # ---- parse stdin ------------------------------------------------------------
@@ -109,7 +123,7 @@ if [ -f "$LOG" ]; then
 fi
 
 log() { printf '%s gate=%s sid=%s tokens=%s ceiling=%s marker=%s\n' \
-        "$(date -Is)" "$1" "$sid" "${2:--}" "$CEILING" "$marker" >> "$LOG" 2>/dev/null; }
+        "$(now_iso)" "$1" "$sid" "${2:--}" "$CEILING" "$marker" >> "$LOG" 2>/dev/null; }
 
 allow() { log "ALLOW:$1" "${2:--}"; printf '%s\n' "$ALLOW_INSTRUCTIONS"; exit 0; }
 
@@ -127,7 +141,7 @@ esac
 
 # ---- tier 1b: stale marker (crashed session, missed `done`) -> allow --------
 # fail-open: if the marker age cannot be read, treat it as stale.
-mtime=$(stat -c %Y "$marker" 2>/dev/null) || mtime=""
+mtime=$(mtime_of "$marker") || mtime=""
 now=$(date +%s)
 if [ -z "$mtime" ]; then
   rm -f "$marker" 2>/dev/null
