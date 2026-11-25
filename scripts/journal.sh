@@ -148,20 +148,35 @@ PYEOF
 #
 # Bounded wait, then give up: a journal must never hold up the work it records.
 LOCK_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/oh-my-agent-env/locks"
-if command -v flock >/dev/null 2>&1 && mkdir -p "$LOCK_DIR" 2>/dev/null; then
-  if exec 9>"$LOCK_DIR/journal-$DAY.lock" 2>/dev/null; then
-    if flock -w 10 9; then
-      write_entry
-      flock -u 9
-    else
-      warn "another writer held the journal lock for 10s — entry not recorded"
-    fi
-  else
-    warn "cannot open journal lock — writing unserialized"
+
+# flock(1) is absent on macOS. It only calls flock(2) on the inherited fd, and the
+# lock belongs to the open file description, so python's fcntl.flock on fd 9 holds
+# it the same way after python exits.
+lock_fd9() {
+  if command -v flock >/dev/null 2>&1; then flock -w 10 9; return; fi
+  python3 - <<'PYEOF'
+import fcntl, sys, time
+deadline = time.time() + 10
+while True:
+    try:
+        fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        sys.exit(0)
+    except BlockingIOError:
+        if time.time() > deadline:
+            sys.exit(1)
+        time.sleep(0.05)
+PYEOF
+}
+
+if mkdir -p "$LOCK_DIR" 2>/dev/null && { exec 9>"$LOCK_DIR/journal-$DAY.lock"; } 2>/dev/null; then
+  if lock_fd9; then
     write_entry
+    exec 9>&-
+  else
+    warn "another writer held the journal lock for 10s — entry not recorded"
   fi
 else
-  warn "flock unavailable — writing unserialized"
+  warn "cannot open journal lock — writing unserialized"
   write_entry
 fi
 exit 0
