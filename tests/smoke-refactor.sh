@@ -25,6 +25,22 @@ mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$TMPDIR"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# macOS ships no timeout(1). Without it the hook smoke exits 127 and the hang
+# check in [9] passes vacuously, so keep GNU's contract: 124 when time runs out.
+if ! command -v timeout >/dev/null 2>&1; then
+  if command -v gtimeout >/dev/null 2>&1; then
+    timeout() { gtimeout "$@"; }
+  else
+    timeout() {
+      perl -e 'my $s = shift; my $p = fork // die "fork: $!";
+        if (!$p) { exec { $ARGV[0] } @ARGV; exit 127 }
+        $SIG{ALRM} = sub { kill "TERM", $p; waitpid $p, 0; exit 124 };
+        alarm $s; waitpid $p, 0;
+        exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
+    }
+  fi
+fi
+
 echo "[1] shell syntax"
 bash -n "$ROOT/setup.sh" "$ROOT/lib/common.sh" "$ROOT/lib/sync.sh" "$ROOT"/lib/sync/*.sh "$ROOT/lib/doctor.sh" "$ROOT"/lib/doctor/*.sh
 
@@ -682,8 +698,8 @@ while IFS=$'\x1f' read -r event script matcher template; do
   # their markers under $HOME/.claude/compact-gate — running them unsandboxed
   # would clear a live session's busy marker or spend its defer budget.
   set +e
-  printf '%s' "$payload" | (cd "$hp/cwd" && env HOME="$hp/home" \
-    COMPACT_GATE_DIR="$hp/home/gate" timeout 20 bash -c "$cmd") \
+  printf '%s' "$payload" | (cd "$hp/cwd" && timeout 20 env HOME="$hp/home" \
+    COMPACT_GATE_DIR="$hp/home/gate" bash -c "$cmd") \
     >"$TMP/hook.out" 2>"$TMP/hook.err"
   rc=$?
   set -e
@@ -1231,12 +1247,13 @@ cmp -s "$t24/expected-before.yml" "$t24/fixme/.serena/project.yml" \
 # ones do. An atomic temp-write-then-rename would split that link and leave the
 # two paths silently diverged, so the write has to be in place.
 ln "$t24/fixme/.serena/project.yml" "$t24/hardlink.yml"
-ino_before="$(stat -c %i "$t24/fixme/.serena/project.yml")"
+ino24() { ls -i "$1" | awk '{print $1}'; }   # stat -c is GNU-only
+ino_before="$(ino24 "$t24/fixme/.serena/project.yml")"
 
 out="$(py24 "$t24/fake_yml" --fix "$t24/fixme/.serena/project.yml")"
 printf '%s\n' "$out" | grep -q '\[FIXED\].*language_servers -> languages' \
   || fail "[24] --fix did not repair a config the loader could not read: $out"
-[ "$(stat -c %i "$t24/fixme/.serena/project.yml")" = "$ino_before" ] \
+[ "$(ino24 "$t24/fixme/.serena/project.yml")" = "$ino_before" ] \
   || fail "[24] --fix replaced the inode — a hardlinked worktree config would have split"
 grep -q '^languages:' "$t24/hardlink.yml" \
   || fail "[24] the hardlinked path did not see the repair"
@@ -1809,7 +1826,7 @@ printf '%s\n' "$out29" | grep -q '\[MISS\]' \
 # magnitude reads as a nit, and 351 is not a nit.
 r29s="$TMP/g29/stale"; mkrepo29 "$r29s"
 mkdir -p "$r29s/graphify-out"; echo '{}' > "$r29s/graphify-out/graph.json"
-touch -d '2020-01-01' "$r29s/graphify-out/graph.json"
+touch -t 202001010000 "$r29s/graphify-out/graph.json"   # -t: POSIX; -d is GNU-only
 ( cd "$r29s" && echo y >> f.py && git commit -qam two ) >/dev/null 2>&1
 out29="$(run29 "$r29s")"
 printf '%s\n' "$out29" | grep -q '\[STALE\]' \
@@ -1898,7 +1915,7 @@ echo "[30] every graphify command this harness prescribes exists in the installe
 # as the whole listing. An existence check against the live CLI cannot be fooled
 # that way, and it also catches the real risk here, which is upstream renaming a
 # subcommand out from under text this harness ships into every project.
-sec30="$(sed -n '/graphify update\|^- For cross-module/p' "$ROOT/lib/common.sh")"
+sec30="$(sed -nE '/graphify update|^- For cross-module/p' "$ROOT/lib/common.sh")"   # BRE \| is GNU-only
 [ -n "$sec30" ] || fail "[30] could not find the graphify guidance in lib/common.sh"
 if command -v graphify >/dev/null 2>&1; then
   help30="$(graphify --help 2>&1 || true)"
@@ -2059,7 +2076,7 @@ t33="$TMP/stale-sessions"; mkdir -p "$t33"
 printf '{}\n' > "$t33/settings.json"
 if pgrep -x claude >/dev/null 2>&1 || pgrep -f '(^|/)claude( |$)' >/dev/null 2>&1; then
   # settings newer than every live session -> every one is stale
-  touch -d '+1 day' "$t33/settings.json"
+  touch -t "$(( $(date +%Y) + 1 ))01010000" "$t33/settings.json"
   # `set -e` would end the suite on the non-zero return this branch EXPECTS.
   rc33=0; out33="$(bash -c "source '$ROOT/lib/common.sh' 2>/dev/null; report_stale_sessions '$t33/settings.json'" 2>&1)" || rc33=$?
   printf '%s\n' "$out33" | grep -q '\[STALE\] pid [0-9]* started' \
@@ -2068,7 +2085,7 @@ if pgrep -x claude >/dev/null 2>&1 || pgrep -f '(^|/)claude( |$)' >/dev/null 2>&
     || fail "[33] stale sessions were listed without saying to restart them: $out33"
   [ "$rc33" -ne 0 ] || fail "[33] stale sessions found but the function returned 0"
   # settings older than every live session -> none stale, exit 0
-  touch -d '2000-01-01' "$t33/settings.json"
+  touch -t 200001010000 "$t33/settings.json"
   rc33=0; out33="$(bash -c "source '$ROOT/lib/common.sh' 2>/dev/null; report_stale_sessions '$t33/settings.json'" 2>&1)" || rc33=$?
   printf '%s\n' "$out33" | grep -q '\[STALE\]' \
     && fail "[33] a settings.json older than every session still flagged one as stale: $out33"
