@@ -16,8 +16,7 @@ bash setup.sh
 |---|---|
 | **codex-gemini-mcp** (fork) | MCP servers `codex-mcp` + `antigravity-mcp` with multi-turn `session_id` resume (Gemini provider removed 2026-06-18) |
 | **my-statusline.mjs** | Custom statusline (omc-free, OMC-style bars): `Model: \| branch: \| 5h/wk usage bars \| session \| ctx` — renders from the cc-alchemy usage cache + transcript |
-| **GEMINI.md** | Global reliability rules for Antigravity (agy reads `~/.gemini/GEMINI.md` via gemini-cli inheritance) |
-| **instructions.md** | Global reliability rules for Codex CLI |
+| **Global agent rules** | Not installed: OMS (`~/.oh-my-setting`) owns `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`. `sync` removes the rule block earlier versions wrote; `rules/*.md` stays here for reference only |
 | **LazyCodex** | Codex plugin `omo@sisyphuslabs` installed via `npx lazycodex-ai@latest install --no-tui` |
 | **Herdr + GJC + OMO** | Installs all three CLIs and merges portable Herdr recognition, Emacs keybindings, aliases, and the GJC `claude-custom` profile (`anthropic/claude-opus-4-8` by default) |
 | **oh-my-agent (oma)** | Per-project multi-agent harness (first-fluke/oh-my-agent), installed via `setup.sh oma <path>` |
@@ -33,7 +32,7 @@ oh-my-agent-env/
 │   ├── sync.sh                           #   cmd_sync orchestrator, stable phase order
 │   ├── sync/
 │   │   ├── core.sh                       #   Claude commands/hooks
-│   │   ├── rules.sh                      #   Codex/Gemini dirs + global rules
+│   │   ├── rules.sh                      #   Codex/Gemini dirs + retire old global rules
 │   │   ├── skills.sh                     #   registry.yaml skill links + statusline
 │   │   ├── agent-clis.sh                 #   Herdr/GJC/OMO install + portable config merge
 │   │   ├── external-tools.sh             #   context-mode, Codex CLI, LazyCodex, fork install
@@ -58,7 +57,7 @@ oh-my-agent-env/
 │   │   ├── manifest.json                 #   SSOT: which hooks install AND register
 │   │   └── *.js                          #   one file per enforced rule
 │   ├── codex/
-│   │   ├── instructions.md               # Codex global rules
+│   │   ├── instructions.md               # old Codex rules (reference only)
 │   │   └── tools.md                      # Codex tool guidance
 │   ├── herdr/                             # Herdr config + GJC/OMO recognition wrappers
 │   ├── herdr-app/                         # herdr-app status helpers, agy hooks, tmux relay, mod/layout
@@ -86,9 +85,9 @@ are now visible in the file tree instead of being hidden in monolithic scripts.
 
 ## Rules Enforcement
 
-`rules/*.md` is the single always-on prose contract assembled into each CLI's
-global instruction file. It guides model judgment; it is not presented as a
-hard gate. Hooks enforce only signals they can observe directly, such as the
+Global prose rules now come from OMS. `rules/*.md` (and `assemble_global_rules`)
+are kept for reference but no longer installed; the sections below describe how
+they worked while they were. Hooks are not a hard rule gate either: Hooks enforce only signals they can observe directly, such as the
 destination path, payload size, file size, and service state.
 
 `runtimes/claude/hooks/manifest.json` is the single source of truth: it decides

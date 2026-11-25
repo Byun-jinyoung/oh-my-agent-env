@@ -93,10 +93,8 @@ cmd_install() {
   echo "=== oh-my-agent-env install (legacy copy mode) ==="
   mkdir -p "$CONFIG_DIR/commands" "$CONFIG_DIR/hud" "$CODEX_DIR" "$GEMINI_DIR"
   cp "$SCRIPT_DIR/runtimes/claude/commands/"*.md "$CONFIG_DIR/commands/" 2>/dev/null || true
-  cp "$SCRIPT_DIR/runtimes/codex/instructions.md" "$CODEX_DIR/" 2>/dev/null || true
   cp "$SCRIPT_DIR/ui/statusline/my-statusline.mjs" "$CONFIG_DIR/hud/" 2>/dev/null || true
-  # Global rule files (Layer A + Layer B) for Claude/Codex/Gemini
-  assemble_global_rules
+  # Global rules are OMS's (rules/*.md here are kept for reference only).
   for rt in claude codex agents gemini; do
     for sd in "$SCRIPT_DIR/skills/"*/; do
       dst_base="$HOME/.$rt/skills"
