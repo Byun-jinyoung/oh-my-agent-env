@@ -55,7 +55,7 @@ sync_claude() {
 }
 
 # [2c] Machine snapshot. Three agent-facing surfaces tell the agent to read
-# ~/.oh-my-agent-env/local/machine.md when compute, GPU/CUDA or Slurm matter —
+# ~/.oh-my-env/local/machine.md when compute, GPU/CUDA or Slurm matter —
 # templates/project-ml-AGENTS.md:15 and :56, skills/multi-agent-review/SKILL.md:27,
 # and apply-project-template.sh:139 stamps the path into every scaffolded
 # PROJECT.md. The writer existed and local/ is gitignored on purpose ("generated
@@ -67,13 +67,13 @@ sync_claude() {
 # a hardware or driver change, which is what its own header already says.
 #
 # The path is the writer's own default and is NOT overridden here. All four
-# surfaces hardcode ~/.oh-my-agent-env/local/machine.md, so pinning it to
+# surfaces hardcode ~/.oh-my-env/local/machine.md, so pinning it to
 # $SCRIPT_DIR/local would manage a different file than the agent is told to read
 # on any machine where the harness is checked out somewhere else. They happen to
 # be the same path here, which is exactly how that would have gone unnoticed.
 sync_machine_snapshot() {
   local writer="$SCRIPT_DIR/scripts/write-machine-snapshot.sh"
-  local out="$HOME/.oh-my-agent-env/local/machine.md"
+  local out="$HOME/.oh-my-env/local/machine.md"
   echo "[2c] Machine snapshot"
   if [ ! -f "$writer" ]; then
     log_and_print "  [FAIL] missing $writer"
