@@ -412,6 +412,17 @@ sync_omo_herdr_extension() {
   fi
 }
 
+# User additions loaded beside OMS's global rules: Claude reads ~/.claude/rules/*.md,
+# OMO (pi) reads its agentDir AGENTS.md. OMS owns CLAUDE.md/AGENTS.md themselves.
+sync_user_agent_rules() {
+  local omo_dir="${OMO_CODING_AGENT_DIR:-$HOME/.omo/agent}" f
+  for f in "$SCRIPT_DIR"/runtimes/claude/rules/*.md; do
+    [ -f "$f" ] && make_link "$f" "${CONFIG_DIR:-$HOME/.claude}/rules/$(basename "$f")"
+  done
+  [ -f "$SCRIPT_DIR/runtimes/omo/AGENTS.md" ] && make_link "$SCRIPT_DIR/runtimes/omo/AGENTS.md" "$omo_dir/AGENTS.md"
+  return 0
+}
+
 retract_gjc_graft_mcp() {
   # graft's code-graph reaches GJC through the graft-nudge pre-hook (sync_gjc_hooks),
   # NOT an MCP server: a lazy-activated MCP tool sat unused behind bm25 discovery,
@@ -611,6 +622,7 @@ sync_agent_cli_configs() {
   sync_gjc_hooks
   sync_omo_settings
   sync_omo_herdr_extension
+  sync_user_agent_rules
   sync_herdr_skill
   sync_herdr_app
   retract_gjc_graft_mcp
@@ -678,6 +690,7 @@ sync_agent_cli_install() {
   sync_gjc_hooks
   sync_omo_settings
   sync_omo_herdr_extension
+  sync_user_agent_rules
   sync_herdr_skill
   sync_herdr_app
   retract_gjc_graft_mcp
