@@ -17,6 +17,8 @@ bash setup.sh
 | **codex-gemini-mcp** (fork) | MCP servers `codex-mcp` + `antigravity-mcp` with multi-turn `session_id` resume (Gemini provider removed 2026-06-18) |
 | **my-statusline.mjs** | Custom statusline (omc-free, OMC-style bars): `Model: \| branch: \| 5h/wk usage bars \| session \| ctx` — renders from the cc-alchemy usage cache + transcript |
 | **Global agent rules** | Not installed: OMS (`~/.oh-my-setting`) owns `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`. `sync` removes the rule block earlier versions wrote; `rules/*.md` stays here for reference only |
+| **User agent rules** | `runtimes/claude/rules/*.md` → `~/.claude/rules/`, `runtimes/omo/AGENTS.md` → OMO agent dir (herdr tree/tab rules loaded beside OMS) |
+| **Shared shell** | `shell/bashrc.sh`, sourced from a marker block in `~/.bashrc` and `~/.bash_profile`; adds only aliases a machine has not defined. Machine-only lines and secrets stay outside the block |
 | **LazyCodex** | Codex plugin `omo@sisyphuslabs` installed via `npx lazycodex-ai@latest install --no-tui` |
 | **Herdr + GJC + OMO** | Installs all three CLIs and merges portable Herdr recognition, Emacs keybindings, aliases, and the GJC `claude-custom` profile (`anthropic/claude-opus-4-8` by default) |
 | **oh-my-agent (oma)** | Per-project multi-agent harness (first-fluke/oh-my-agent), installed via `setup.sh oma <path>` |

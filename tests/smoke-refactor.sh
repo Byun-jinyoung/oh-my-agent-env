@@ -2173,6 +2173,15 @@ test -L "$h34/.local/bin/herdr-tmux-osc" || fail "[34] herdr-tmux-osc was not li
   || fail "[34] the user Claude rule was not linked"
 [ "$(readlink "$h34/.omo/agent/AGENTS.md")" = "$ROOT/runtimes/omo/AGENTS.md" ] \
   || fail "[34] the OMO global AGENTS.md was not linked"
+for rc in .bashrc .bash_profile; do
+  [ "$(grep -c '^# >>> oh-my-agent-env:shell >>>$' "$h34/$rc")" = 1 ] \
+    || fail "[34] $rc does not hold exactly one shared shell block"
+done
+grep -q 'export KEEP_ME=1' "$h34/.bashrc" || fail "[34] the shell block clobbered existing .bashrc text"
+# Local aliases win, missing ones are added, and a second load is a no-op.
+out34="$(HOME="$h34" bash --norc --noprofile -ic "alias e='vim'; . '$ROOT/shell/bashrc.sh'; . '$ROOT/shell/bashrc.sh'; alias e; alias cdp" 2>/dev/null)"
+printf '%s\n' "$out34" | grep -qx "alias e='vim'" || fail "[34] shell/bashrc.sh overrode a local alias: $out34"
+printf '%s\n' "$out34" | grep -qx "alias cdp='cd ..'" || fail "[34] shell/bashrc.sh did not add a shared alias: $out34"
 test ! -e "$h34/.local/bin/herdr-keep-missing" \
   || fail "[34] herdr-keep-missing linked without herdr-app"
 test ! -e "$h34/.config/herdr-app" || fail "[34] herdr-app mod installed without herdr-app"
