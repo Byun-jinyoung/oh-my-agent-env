@@ -2208,6 +2208,17 @@ grep -q 'export KEEP_ME=1' "$h34/.bashrc" || fail "[34] the shell block clobbere
 out34="$(HOME="$h34" bash --norc --noprofile -ic "alias e='vim'; . '$ROOT/shell/bashrc.sh'; . '$ROOT/shell/bashrc.sh'; alias e; alias cdp" 2>/dev/null)"
 printf '%s\n' "$out34" | grep -qx "alias e='vim'" || fail "[34] shell/bashrc.sh overrode a local alias: $out34"
 printf '%s\n' "$out34" | grep -qx "alias cdp='cd ..'" || fail "[34] shell/bashrc.sh did not add a shared alias: $out34"
+# nvm is loaded only when no other node is on PATH.
+mkdir -p "$h34/.nvm/bin" "$h34/sysbin"
+printf '#!/bin/sh\n' > "$h34/.nvm/bin/node"; cp "$h34/.nvm/bin/node" "$h34/sysbin/node"
+chmod +x "$h34/.nvm/bin/node" "$h34/sysbin/node"
+printf 'PATH="%s/.nvm/bin:$PATH"; : > "%s/.nvm/loaded"\n' "$h34" "$h34" > "$h34/.nvm/nvm.sh"
+out34="$(HOME="$h34" PATH="$h34/none" "$BASH" --norc --noprofile -c ". '$ROOT/shell/bashrc.sh'; command -v node")"
+[ "$out34" = "$h34/.nvm/bin/node" ] || fail "[34] nvm node not loaded when PATH had none: $out34"
+rm -f "$h34/.nvm/loaded"
+out34="$(HOME="$h34" PATH="$h34/sysbin" "$BASH" --norc --noprofile -c ". '$ROOT/shell/bashrc.sh'; command -v node")"
+[ "$out34" = "$h34/sysbin/node" ] && test ! -e "$h34/.nvm/loaded" \
+  || fail "[34] nvm loaded although PATH already had node: $out34"
 test ! -e "$h34/.local/bin/herdr-keep-missing" \
   || fail "[34] herdr-keep-missing linked without herdr-app"
 test ! -e "$h34/.config/herdr-app" || fail "[34] herdr-app mod installed without herdr-app"

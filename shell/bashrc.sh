@@ -12,6 +12,12 @@ if [ -d "$HOME/.bun/bin" ]; then
   export BUN_INSTALL="$HOME/.bun"
   case ":$PATH:" in *":$BUN_INSTALL/bin:"*) ;; *) export PATH="$BUN_INSTALL/bin:$PATH" ;; esac
 fi
+# nvm only as a fallback: a node from mise, conda or the system keeps priority.
+if ! command -v node >/dev/null 2>&1 && [ -s "$HOME/.nvm/nvm.sh" ]; then
+  export NVM_DIR="$HOME/.nvm"
+  # shellcheck source=/dev/null
+  . "$NVM_DIR/nvm.sh"
+fi
 
 case $- in *i*) ;; *) return 0 ;; esac   # the rest is for interactive shells
 
