@@ -107,24 +107,25 @@ print(f"[OK] set Herdr prefix in {target}")
 PY
 }
 
+# merge_bash_aliases TARGET [TAG BODY]: one marker block per TAG (default: the
+# Herdr wrapper aliases), replaced in place, appended when absent.
 merge_bash_aliases() {
   local target="$1"
-  python3 - "$target" <<'PY'
+  python3 - "$target" "${2:-herdr-agents}" "${3:-}" <<'PY'
 import os, re, shutil, sys, tempfile
 from pathlib import Path
 
-target = Path(sys.argv[1])
+target, tag, body = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 target.parent.mkdir(parents=True, exist_ok=True)
-begin = "# >>> oh-my-agent-env:herdr-agents >>>"
-end = "# <<< oh-my-agent-env:herdr-agents <<<"
-block = """# >>> oh-my-agent-env:herdr-agents >>>
-# Herdr-aware wrappers are vanilla-equivalent outside Herdr.
+begin = f"# >>> oh-my-agent-env:{tag} >>>"
+end = f"# <<< oh-my-agent-env:{tag} <<<"
+body = body or """# Herdr-aware wrappers are vanilla-equivalent outside Herdr.
 if [ -x "$HOME/.local/bin/gjc-herdr" ]; then alias gjc='gjc-herdr'; fi
-if [ -x "$HOME/.local/bin/omo-herdr" ]; then alias omo='omo-herdr'; fi
-# <<< oh-my-agent-env:herdr-agents <<<"""
+if [ -x "$HOME/.local/bin/omo-herdr" ]; then alias omo='omo-herdr'; fi"""
+block = f"{begin}\n{body.rstrip()}\n{end}"
 old = target.read_text(encoding="utf-8") if target.exists() else ""
 if (begin in old) != (end in old):
-    print(f"[WARN] broken Herdr alias managed block left unchanged: {target}")
+    print(f"[WARN] broken {tag} managed block left unchanged: {target}")
     sys.exit(3)
 # Migrate the one-off block used before this became repository-managed.
 base = re.sub(
@@ -134,12 +135,12 @@ base = re.sub(
 if begin in base:
     head, rest = base.split(begin, 1)
     _, tail = rest.split(end, 1)
-    rendered = head.rstrip() + "\n\n" + block + tail
+    rendered = (head.rstrip() + "\n\n" if head.strip() else "") + block + tail
 else:
     rendered = base.rstrip() + ("\n\n" if base.strip() else "") + block + "\n"
 rendered = rendered.rstrip() + "\n"
 if old == rendered:
-    print(f"[OK] {target} aliases already current")
+    print(f"[OK] {target} {tag} block already current")
     sys.exit(0)
 if target.exists():
     shutil.copy2(target, target.with_name(target.name + ".bak.oh-my-agent-env"))
@@ -153,7 +154,7 @@ try:
 finally:
     if os.path.exists(tmp):
         os.unlink(tmp)
-print(f"[OK] installed Herdr aliases in {target}")
+print(f"[OK] installed {tag} block in {target}")
 PY
 }
 
@@ -617,6 +618,14 @@ sync_agent_cli_configs() {
   make_link "$SCRIPT_DIR/runtimes/herdr/gjc-herdr" "$HOME/.local/bin/gjc-herdr"
   make_link "$SCRIPT_DIR/runtimes/herdr/omo-herdr" "$HOME/.local/bin/omo-herdr"
   merge_bash_aliases "$HOME/.bashrc" || { log_and_print "    [FAIL] Bash alias merge"; ERRORS=$((ERRORS+1)); }
+  # Both files: some machines' .bashrc sources .bash_profile, so chaining one to
+  # the other could loop. shell/bashrc.sh guards against a second load instead.
+  local rc_line rc_file
+  rc_line="[ -f \"${SCRIPT_DIR/#$HOME/\$HOME}/shell/bashrc.sh\" ] && . \"${SCRIPT_DIR/#$HOME/\$HOME}/shell/bashrc.sh\""
+  for rc_file in "$HOME/.bashrc" "$HOME/.bash_profile"; do
+    merge_bash_aliases "$rc_file" shell "# Shared shell settings; machine-only lines stay outside this block.
+$rc_line" || { log_and_print "    [FAIL] shell block merge: $rc_file"; ERRORS=$((ERRORS+1)); }
+  done
   sync_gjc_default_profile
   sync_gjc_settings
   sync_gjc_hooks
