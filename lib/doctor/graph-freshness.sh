@@ -100,7 +100,7 @@ PY
       # `--since` is inclusive, so a graph written in the same second as the
       # commit it describes counted that commit and every fresh build reported
       # itself stale.
-      mtime="$(stat -c %Y "$art" 2>/dev/null || echo 0)"
+      mtime="$(stat -c %Y "$art" 2>/dev/null || stat -f %m "$art" 2>/dev/null || echo 0)"
       head_ct="$(git -C "$repo" log -1 --format=%ct 2>/dev/null || echo 0)"
       if [ "${head_ct:-0}" -gt "${mtime:-0}" ]; then
         behind="$(git -C "$repo" rev-list --count --since="@$mtime" HEAD 2>/dev/null || echo 0)"

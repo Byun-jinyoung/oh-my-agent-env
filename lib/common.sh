@@ -295,18 +295,25 @@ append_section_if_missing() {
   local file="$1" marker="$2" section="$3"
   mkdir -p "$(dirname "$file")"
   if [ -f "$file" ] && grep -qF "$marker" "$file"; then
-    if [ "$(sed -n "/^$(printf '%s' "$marker" | sed 's/[][\.*^$/]/\\&/g')\$/,/^## \|^# /{p}" "$file" \
+    # ERE, ENVIRON and a bare `p`: BSD sed/awk (macOS) reject BRE `\|`, `{p}`
+    # and a multi-line `awk -v`, which left the section stale while saying OK.
+    if [ "$(sed -nE "/^$(printf '%s' "$marker" | sed 's/[][\.*^$/+?(){}|]/\\&/g')\$/,/^#{1,2} /p" "$file" \
            | grep -cF -- "$(printf '%s' "$section" | sed -n '3p')")" -gt 0 ] 2>/dev/null; then
       echo "    [OK] $(basename "$file") graphify section is current"
       return 0
     fi
     local tmp="$file.oma-sec.tmp"
-    awk -v m="$marker" -v sec="$section" '
+    if OMA_SEC_M="$marker" OMA_SEC_S="$section" awk '
+      BEGIN { m = ENVIRON["OMA_SEC_M"]; sec = ENVIRON["OMA_SEC_S"] }
       $0 == m && !done { print sec; skip = 1; done = 1; next }
       skip && /^#/ && $0 != m { skip = 0 }
       !skip
-    ' "$file" > "$tmp" && mv "$tmp" "$file"
-    echo "    [OK] $(basename "$file") graphify section refreshed"
+    ' "$file" > "$tmp" && mv "$tmp" "$file"; then
+      echo "    [OK] $(basename "$file") graphify section refreshed"
+    else
+      rm -f "$tmp"
+      echo "    [WARN] $(basename "$file") graphify section could not be refreshed"
+    fi
   elif [ -f "$file" ]; then
     printf '\n%s\n' "$section" >> "$file"
     echo "    [OK] Added graphify section to $file"
@@ -849,7 +856,9 @@ report_stale_sessions() {
   local settings="$1" reg stale=0 live=0 pid args start start_e cwd
   command -v ps >/dev/null 2>&1 || { echo "  (ps unavailable — not checked)"; return 0; }
   [ -f "$settings" ] || { echo "  (no $settings — not checked)"; return 0; }
-  reg="$(stat -c %Y "$settings" 2>/dev/null || echo 0)"
+  # GNU first, then the BSD spelling: macOS has only the latter, and a silent 0
+  # here made every session look current there.
+  reg="$(stat -c %Y "$settings" 2>/dev/null || stat -f %m "$settings" 2>/dev/null || echo 0)"
   while IFS= read -r pid; do
     [ -n "$pid" ] || continue
     args="$(ps -o args= -p "$pid" 2>/dev/null)"
@@ -860,10 +869,11 @@ report_stale_sessions() {
     # (for example "금 9월 ...") is not accepted by GNU date and previously
     # made every live session look current.
     start="$(LC_ALL=C ps -o lstart= -p "$pid" 2>/dev/null)"
-    start_e="$(LC_ALL=C date -d "$start" +%s 2>/dev/null || echo 0)"
+    start_e="$(LC_ALL=C date -d "$start" +%s 2>/dev/null \
+      || LC_ALL=C date -j -f '%a %b %e %T %Y' "$start" +%s 2>/dev/null || echo 0)"
     if [ "$start_e" -gt 0 ] && [ "$start_e" -lt "$reg" ]; then
       cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || echo '?')"
-      echo "  [STALE] pid $pid started $(date -d "@$start_e" +%H:%M 2>/dev/null) < settings.json $(date -d "@$reg" +%H:%M 2>/dev/null) — ${cwd/#$HOME/~}"
+      echo "  [STALE] pid $pid started $(date -d "@$start_e" +%H:%M 2>/dev/null || date -r "$start_e" +%H:%M) < settings.json $(date -d "@$reg" +%H:%M 2>/dev/null || date -r "$reg" +%H:%M) — ${cwd/#$HOME/~}"
       stale=$((stale+1))
     fi
   done < <({ pgrep -x claude 2>/dev/null; pgrep -f '(^|/)claude( |$)' 2>/dev/null; } | sort -un)
