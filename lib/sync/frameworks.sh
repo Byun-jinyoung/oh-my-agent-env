@@ -488,14 +488,7 @@ PYEOF
   if [ -x "$RTK_BIN" ]; then
     run_with_timeout "RTK init Codex" "$RTK_BIN init -g --codex < /dev/null" | tail -1 || true
     run_with_timeout "RTK init Gemini" "$RTK_BIN init -g --gemini --auto-patch < /dev/null" | tail -1 || true
-    # `rtk init --gemini` overwrites ~/.gemini/GEMINI.md wholesale with RTK guidance
-    # (Gemini has no @-include, so RTK replaces the file instead of appending a ref).
-    # This clobbers the Layer A+B assembly from [4b], leaving GEMINI.md ~29 lines.
-    # RTK usage notes already live in runtimes/<cli>/tools.md (Layer B), so re-assemble
-    # to restore the full file. The RTK *hook* lives in settings.json — assembly never
-    # touches it, so the token-rewrite hook stays wired.
-    log_and_print "    Re-assembling global rules (rtk init --gemini clobbers GEMINI.md)..."
-    assemble_global_rules
+    # GEMINI.md is left as RTK writes it: global rules are OMS's, not re-assembled here.
   fi
   # Graphify — package name is graphifyy; CLI command is graphify.
   # The graphify CLI is the source of truth for ~/.claude/skills/graphify/SKILL.md

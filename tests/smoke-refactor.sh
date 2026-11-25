@@ -2352,4 +2352,28 @@ grep -q '^REACHED$' "$t34/codex-mcp.out" \
 awk '/^ *sync_external_tools$/{t=NR} /^ *sync_graft_hooks$/{h=NR} END{exit !(t && h > t)}' "$ROOT/lib/sync.sh" \
   || fail "[34] graft hooks are not wired after graft is installed"
 
+echo "[35] sync retires the repo's global rules without touching OMS links"
+t35="$TMP/retire"; mkdir -p "$t35/claude" "$t35/codex" "$t35/gemini" "$t35/oms"
+printf 'OMS rules\n' > "$t35/oms/global-AGENTS.md"
+ln -s "$t35/oms/global-AGENTS.md" "$t35/claude/CLAUDE.md"
+ln -s "$ROOT/runtimes/codex/instructions.md" "$t35/codex/instructions.md"
+(
+  SCRIPT_DIR="$ROOT"; CONFIG_DIR="$t35/claude"; CODEX_DIR="$t35/codex"; GEMINI_DIR="$t35/gemini"
+  LOG_FILE="$t35/log"
+  # shellcheck disable=SC1091
+  source "$ROOT/lib/common.sh"
+  # shellcheck disable=SC1091
+  source "$ROOT/lib/sync/rules.sh"
+  printf 'mine above\n%s\nold rules\n%s\nmine below\n' "$OMA_BLOCK_BEGIN" "$OMA_BLOCK_END" > "$CODEX_DIR/AGENTS.md"
+  printf '%s\nold rules\n%s\n' "$OMA_BLOCK_BEGIN" "$OMA_BLOCK_END" > "$GEMINI_DIR/GEMINI.md"
+  retire_global_rules && retire_global_rules
+) > "$t35/out" 2>&1 || fail "[35] retire_global_rules failed: $(cat "$t35/out")"
+[ "$(readlink "$t35/claude/CLAUDE.md")" = "$t35/oms/global-AGENTS.md" ] \
+  && [ "$(cat "$t35/oms/global-AGENTS.md")" = "OMS rules" ] \
+  || fail "[35] the OMS symlink or its target was modified"
+[ "$(cat "$t35/codex/AGENTS.md")" = "$(printf 'mine above\n\nmine below')" ] \
+  || fail "[35] user text around the env block was not kept: $(cat "$t35/codex/AGENTS.md")"
+[ ! -e "$t35/gemini/GEMINI.md" ] || fail "[35] a file holding only the env block was not removed"
+[ ! -e "$t35/codex/instructions.md" ] || fail "[35] the instructions.md link into the repo was not removed"
+
 echo "smoke-refactor OK"
