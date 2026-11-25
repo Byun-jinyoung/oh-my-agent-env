@@ -136,7 +136,7 @@ project_content() {
     printf -- '- Package manager: uv\n'
     printf -- '- Python env: .venv\n'
     printf -- '- Run prefix: uv run\n'
-    printf -- '- Machine snapshot: ~/.oh-my-agent-env/local/machine.md\n'
+    printf -- '- Machine snapshot: ~/.oh-my-env/local/machine.md\n'
     printf -- '- Project-specific compute:\n\n'
   fi
   printf '## Paths\n\n'

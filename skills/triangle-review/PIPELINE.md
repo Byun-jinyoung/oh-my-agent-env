@@ -235,8 +235,8 @@ flowchart LR
 
 ```bash
 # 새 머신 셋업 (1회)
-git clone https://github.com/Byun-jinyoung/oh-my-agent-env.git ~/.oh-my-agent-env
-cd ~/.oh-my-agent-env && ./setup.sh sync
+git clone https://github.com/Byun-jinyoung/oh-my-agent-env.git ~/.oh-my-env
+cd ~/.oh-my-env && ./setup.sh sync
 
 # Triangle Review 실행 (기본 = Round 1만)
 # Claude Code 안에서 "triangle review <target>" 트리거

@@ -77,10 +77,10 @@ PYEOF
   # the agent as "no compute constraints", which is not the same as "unknown".
   # Checked at the path the surfaces cite, not at $SCRIPT_DIR/local — those are
   # the same directory here and would diverge on any other checkout.
-  if [ -f "$HOME/.oh-my-agent-env/local/machine.md" ]; then
-    echo "  [OK] ~/.oh-my-agent-env/local/machine.md"
+  if [ -f "$HOME/.oh-my-env/local/machine.md" ]; then
+    echo "  [OK] ~/.oh-my-env/local/machine.md"
   else
-    echo "  [MISS] ~/.oh-my-agent-env/local/machine.md — 4 agent-facing surfaces cite it; run 'setup.sh sync'"
+    echo "  [MISS] ~/.oh-my-env/local/machine.md — 4 agent-facing surfaces cite it; run 'setup.sh sync'"
     WARNINGS=$((WARNINGS+1))
   fi
 

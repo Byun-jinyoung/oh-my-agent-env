@@ -1,8 +1,8 @@
 #!/bin/bash
 # oh-my-agent-env: AI development environment bootstrap
 # Usage:
-#   git clone https://github.com/Byun-jinyoung/oh-my-agent-env.git ~/.oh-my-agent-env
-#   cd ~/.oh-my-agent-env && ./setup.sh sync
+#   git clone https://github.com/Byun-jinyoung/oh-my-agent-env.git ~/.oh-my-env
+#   cd ~/.oh-my-env && ./setup.sh sync
 #
 # Subcommands:
 #   sync      — Create/update symlinks from runtime dirs to this repo
@@ -46,7 +46,7 @@ for arg in "$@"; do
 done
 
 # Logging
-LOG_DIR="$HOME/.oh-my-agent-env/logs"
+LOG_DIR="$HOME/.oh-my-env/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/setup_$(date +%Y%m%d_%H%M%S).log"
 STEP_TIMEOUT=120  # seconds per step

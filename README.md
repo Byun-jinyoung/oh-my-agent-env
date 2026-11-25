@@ -25,7 +25,7 @@ bash setup.sh
 ## Directory Structure
 
 ```
-oh-my-agent-env/
+oh-my-env/
 ├── setup.sh                              # Entry: globals, .env source, dispatcher, small cmd_*
 ├── lib/                                  # setup.sh helpers (sourced after globals)
 │   ├── common.sh                         #   shared helpers (log, link, MCP verify/cleanup, codex hooks, ...)
@@ -248,14 +248,14 @@ Shutdown sends `state=clear`, so a returned shell does not retain the Pi status.
 Apply the normal local configuration sync:
 
 ```bash
-cd ~/.oh-my-agent-env
+cd ~/.oh-my-env
 bash setup.sh sync --skip-network
 ```
 
 To deploy **only this integration**, without changing other agent settings:
 
 ```bash
-cd ~/.oh-my-agent-env
+cd ~/.oh-my-env
 agent_dir="${OMO_CODING_AGENT_DIR:-$HOME/.omo/agent}"
 mkdir -p "$agent_dir/extensions"
 cp runtimes/omo/extensions/herdr-omp-agent-state.ts "$agent_dir/extensions/"
