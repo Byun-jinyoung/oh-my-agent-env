@@ -106,7 +106,8 @@ sync_plugins_mcp() {
       fi
     }
 
-    install_plugin "octo" "octo@nyldn" "https://github.com/nyldn/claude-octopus.git" "octo@nyldn-plugins"
+    # octo removed 2026-07-07: ~52 agents + ~60 skills/commands per session made it
+    # the #1 context-overload source (truncated tool calls); low usage did not justify it.
     install_plugin "claude-mem" "claude-mem@thedotmack" "thedotmack/claude-mem" "claude-mem@thedotmack"
     install_plugin "ouroboros" "ouroboros@ouroboros" "Q00/ouroboros" "ouroboros@ouroboros"
     install_plugin "document-skills" "document-skills@anthropic" "anthropics/skills" "document-skills@anthropic-agent-skills"
