@@ -1,0 +1,4 @@
+interface:
+  display_name: "Claude Relay"
+  short_description: "Continue local Claude Code conversations from Codex"
+  default_prompt: "Use $claude-relay to consult Claude Code and continue the same session."

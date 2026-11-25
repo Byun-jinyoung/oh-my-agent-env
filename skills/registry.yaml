@@ -56,3 +56,7 @@ git-cli-workflow:
 multi-agent-review:
   path: skills/multi-agent-review
   runtimes: [claude, agents]
+
+claude-relay:
+  path: skills/claude-relay
+  runtimes: [codex]
