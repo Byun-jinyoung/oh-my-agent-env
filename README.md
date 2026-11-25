@@ -61,6 +61,7 @@ oh-my-agent-env/
 │   │   ├── instructions.md               # Codex global rules
 │   │   └── tools.md                      # Codex tool guidance
 │   ├── herdr/                             # Herdr config + GJC/OMO recognition wrappers
+│   ├── herdr-app/                         # herdr-app status helpers, agy hooks, tmux relay, mod/layout
 │   ├── omo/                               # OMO keybindings, settings, Herdr state extension
 │   └── antigravity/
 │       ├── tools.md                      # Antigravity (agy) tool guidance
@@ -206,7 +207,16 @@ tracked configuration under `runtimes/{herdr,omo}` and the top-level `gjc/` bund
   `~/.gjc/agent/hooks/attitude-gate.json`);
 - copies `runtimes/omo/extensions/herdr-omp-agent-state.ts` into
   `${OMO_CODING_AGENT_DIR:-$HOME/.omo/agent}/extensions/`, including before
-  OMO's first launch. Re-running sync refreshes the same managed file.
+  OMO's first launch. Re-running sync refreshes the same managed file;
+- installs `skills/herdr-app` and `skills/herdr-council` into the GJC, Claude,
+  Codex and OMO skill roots, and removes the `herdr` skill older syncs generated
+  from the legacy `herdr --skill`;
+- applies `runtimes/herdr-app/` (herdr-app sidebar status): links
+  `agy-app-herdr` and `herdr-tmux-osc` into `~/.local/bin`, merges the
+  `herdr-agy-app` group into `~/.gemini/config/hooks.json` (other groups kept),
+  adds a marked block to `~/.tmux.conf` so agents in OMS panel mains report
+  OSC 7501 through tmux, and on a Mac with `herdr-app` also links
+  `herdr-keep-missing` and copies the `my-agents` mod and `my-layout` layout.
 
 Network installation is skipped by `setup.sh sync --skip-network`, but all
 local configuration still applies. Re-run normal `setup.sh sync` after

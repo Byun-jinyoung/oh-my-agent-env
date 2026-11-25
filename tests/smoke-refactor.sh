@@ -2086,31 +2086,23 @@ grep -q 'report_stale_sessions "\$CONFIG_DIR/settings.json"' "$ROOT/lib/sync.sh"
   || fail "[33] sync closing line does not call report_stale_sessions"
 
 echo "[34] GJC / OMO / Herdr configuration is portable, merged, and idempotent"
-t34="$TMP/agent-clis"; h34="$t34/home"; b34="$t34/bin"; b34_bad="$t34/bin-no-base"
-mkdir -p "$h34/.gjc/agent" "$h34/.omo/agent" "$h34/.config/herdr" "$b34" "$b34_bad"
+t34="$TMP/agent-clis"; h34="$t34/home"; b34="$t34/bin"
+mkdir -p "$h34/.gjc/agent" "$h34/.omo/agent" "$h34/.config/herdr" "$b34" \
+  "$h34/.gemini/config" "$h34/.claude/skills/herdr"
 cat > "$b34/herdr" <<'SH'
 #!/bin/sh
 case "${1:-}" in
-  --skill)
-    printf '%s\n' '---' 'name: herdr' 'description: generated test skill' '---'
-    ;;
-  config)
-    exit 0
-    ;;
-  server)
-    exit 0
-    ;;
-  *)
-    exit 1
-    ;;
+  config|server) exit 0 ;;
+  *) exit 1 ;;
 esac
 SH
-chmod +x "$b34/herdr"
-cat > "$b34_bad/herdr" <<'SH'
-#!/bin/sh
-exit 1
-SH
-chmod +x "$b34_bad/herdr"
+printf '#!/bin/sh\nexit 0\n' > "$b34/tmux"
+chmod +x "$b34/herdr" "$b34/tmux"
+# A legacy `herdr --skill` file from an older sync must be cleaned up.
+printf '%s\n' '---' 'name: herdr' '---' > "$h34/.claude/skills/herdr/SKILL.md"
+printf '%s\n' '{"orca": {"Stop": []}}' > "$h34/.gemini/config/hooks.json"
+# User line kept; an unmarked hand-installed managed line is folded into the block.
+{ printf '%s\n' 'set -g mouse on'; grep -m1 '^set-hook' "$ROOT/runtimes/herdr-app/tmux.conf"; } > "$h34/.tmux.conf"
 cat > "$h34/.gjc/agent/keybindings.json" <<'JSON'
 {"foreign.gjc.action":"keep"}
 JSON
@@ -2162,20 +2154,35 @@ assert "[ui]" in herdr and "mouse_capture = true" in herdr
 bashrc = (home / ".bashrc").read_text()
 assert "export KEEP_ME=1" in bashrc
 assert bashrc.count("oh-my-agent-env:herdr-agents >>>") == 1
+hooks = json.loads((home / ".gemini/config/hooks.json").read_text())
+assert hooks["orca"] == {"Stop": []}
+cmd = f"{home}/.local/bin/agy-app-herdr hook "
+assert hooks["herdr-agy-app"]["Stop"][0]["command"] == cmd + "Stop"
+assert hooks["herdr-agy-app"]["PreToolUse"][0]["hooks"][0]["command"] == cmd + "PreToolUse"
+tmux = (home / ".tmux.conf").read_text()
+managed = (root / "runtimes/herdr-app/tmux.conf").read_text().strip()
+assert tmux.startswith("set -g mouse on\n")
+assert tmux.count("set-hook") == managed.count("set-hook")
+assert f"# >>> oh-my-agent-env:herdr-app >>>\n{managed}\n# <<< oh-my-agent-env:herdr-app <<<\n" in tmux
 PY
 test -L "$h34/.local/bin/gjc-herdr" || fail "[34] gjc-herdr wrapper was not linked"
 test -L "$h34/.local/bin/omo-herdr" || fail "[34] omo-herdr wrapper was not linked"
+test -L "$h34/.local/bin/agy-app-herdr" || fail "[34] agy-app-herdr was not linked"
+test -L "$h34/.local/bin/herdr-tmux-osc" || fail "[34] herdr-tmux-osc was not linked"
+test ! -e "$h34/.local/bin/herdr-keep-missing" \
+  || fail "[34] herdr-keep-missing linked without herdr-app"
+test ! -e "$h34/.config/herdr-app" || fail "[34] herdr-app mod installed without herdr-app"
 for skill_root in \
   "$h34/.gjc/agent/skills" \
   "$h34/.claude/skills" \
   "$h34/.codex/skills" \
   "$h34/.agents/skills"; do
-  test -f "$skill_root/herdr/SKILL.md" \
-    || fail "[34] generated herdr skill missing from $skill_root"
-  test -f "$skill_root/herdr-council/SKILL.md" \
-    || fail "[34] herdr-council skill missing from $skill_root"
-  cmp -s "$ROOT/skills/herdr-council/SKILL.md" "$skill_root/herdr-council/SKILL.md" \
-    || fail "[34] herdr-council skill differs in $skill_root"
+  test ! -e "$skill_root/herdr" \
+    || fail "[34] legacy herdr skill left in $skill_root"
+  for skill in herdr-council herdr-app; do
+    cmp -s "$ROOT/skills/$skill/SKILL.md" "$skill_root/$skill/SKILL.md" \
+      || fail "[34] $skill skill missing or different in $skill_root"
+  done
 done
 cmp -s "$ROOT/runtimes/omo/extensions/herdr-omp-agent-state.ts" \
   "$h34/.omo/agent/extensions/herdr-omp-agent-state.ts" \
@@ -2207,34 +2214,6 @@ test -f "$h34_gjcfail/.claude/skills/herdr-council/SKILL.md" \
   || fail "[34] herdr skills skipped after GJC settings failure"
 test -f "$h34_gjcfail/.omo/agent/extensions/herdr-omp-agent-state.ts" \
   || fail "[34] OMO herdr extension skipped after GJC settings failure"
-h34_no_base="$t34/home-no-base"
-mkdir -p "$h34_no_base"
-HOME="$h34_no_base" \
-CONFIG_DIR="$h34_no_base/.claude" \
-CODEX_DIR="$h34_no_base/.codex" \
-AGENTS_DIR="$h34_no_base/.agents" \
-GJC_CODING_AGENT_DIR="$h34_no_base/.gjc/agent" \
-PATH="$b34_bad:/usr/bin:/bin" \
-bash -c "
-  SCRIPT_DIR='$ROOT'
-  LOG_FILE='$t34/no-base.log'
-  WARNINGS=0
-  ERRORS=0
-  source '$ROOT/lib/common.sh'
-  source '$ROOT/lib/sync/agent-clis.sh'
-  sync_herdr_skill
-  test \"\$WARNINGS\" -eq 1
-" >/dev/null
-for skill_root in \
-  "$h34_no_base/.gjc/agent/skills" \
-  "$h34_no_base/.claude/skills" \
-  "$h34_no_base/.codex/skills" \
-  "$h34_no_base/.agents/skills"; do
-  test -f "$skill_root/herdr-council/SKILL.md" \
-    || fail "[34] herdr-council depends on unavailable base skill in $skill_root"
-  test ! -e "$skill_root/herdr/SKILL.md" \
-    || fail "[34] invalid generated herdr skill was installed in $skill_root"
-done
 h34_partial="$t34/home-partial"
 mkdir -p "$h34_partial"
 touch "$h34_partial/.codex-block"
@@ -2256,8 +2235,8 @@ bash -c "
 " > "$t34/partial.out"
 grep -q '\[WARN\] herdr-council skill partially installed (3/4 scan roots)' "$t34/partial.out" \
   || fail "[34] partial herdr-council deployment was not summarized"
-grep -q '\[WARN\] herdr skill partially generated (3/4 scan roots)' "$t34/partial.out" \
-  || fail "[34] partial herdr base deployment was not summarized"
+grep -q '\[WARN\] herdr-app skill partially installed (3/4 scan roots)' "$t34/partial.out" \
+  || fail "[34] partial herdr-app deployment was not summarized"
 if grep -q '\[OK\] herdr-council skill installed' "$t34/partial.out"; then
   fail "[34] partial herdr-council deployment was reported as OK"
 fi
@@ -2303,6 +2282,8 @@ bash -c "
 " > "$t34/doctor-ok.out"
 test "$(grep -c '\[OK\]   herdr-council skill' "$t34/doctor-ok.out")" -eq 4 \
   || fail "[34] doctor did not validate every herdr-council root"
+test "$(grep -c '\[OK\]   herdr-app skill' "$t34/doctor-ok.out")" -eq 4 \
+  || fail "[34] doctor did not validate every herdr-app root"
 grep -q '\[OK\]   OMO herdr agent-state extension' "$t34/doctor-ok.out" \
   || fail "[34] doctor did not validate the OMO herdr extension"
 printf '%s\n' 'drift' > "$h34_doctor/.codex/skills/herdr-council/SKILL.md"

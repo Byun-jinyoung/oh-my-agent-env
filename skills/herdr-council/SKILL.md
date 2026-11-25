@@ -14,7 +14,7 @@ description: >
 
 Use Herdr as a persistent workspace for independent reasoning, direct agent-to-agent discussion, reconciliation, and then ownership-based implementation. The orchestration session owns the workflow and the final user report.
 
-This skill complements the machine-generated `herdr` skill. Follow that skill and the installed `herdr` binary for current CLI syntax, lifecycle semantics, targeting, and safety. Do not copy or guess Herdr commands here.
+This skill complements the `herdr-app` skill (herdr-app with the `hc` CLI). Follow that skill for current CLI syntax, lifecycle semantics, targeting, and safety; under the legacy `herdr` CLI (`HERDR_ENV=1`) read `herdr --skill` instead. Do not copy or guess Herdr commands here.
 
 ## Non-negotiable model
 

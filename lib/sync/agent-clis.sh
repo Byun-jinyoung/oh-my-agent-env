@@ -158,100 +158,147 @@ PY
 }
 
 sync_herdr_skill() {
-  # Herdr ships its agent instructions via `herdr --skill`. The installed binary
-  # is the source of truth (its version differs per machine, like graphify), so
-  # generate SKILL.md per-machine instead of vendoring a copy that goes stale.
-  # herdr-council is a repository-managed companion workflow. Install both as
-  # real files so every runtime can discover them without the user re-explaining
-  # Herdr, while keeping the binary authoritative for the base skill.
-  local gjc_dir="${GJC_CODING_AGENT_DIR:-$HOME/.gjc/agent}"
-  local claude_dir="${CONFIG_DIR:-$HOME/.claude}"
-  local codex_dir="${CODEX_DIR:-$HOME/.codex}"
-  local agents_dir="${AGENTS_DIR:-$HOME/.agents}"
-  local council_src="$SCRIPT_DIR/skills/herdr-council/SKILL.md"
-  local root base_n=0 council_n=0
-
-  if [ -f "$council_src" ]; then
-    for root in "$gjc_dir/skills" "$claude_dir/skills" "$codex_dir/skills" "$agents_dir/skills"; do
-      if ! mkdir -p "$root/herdr-council"; then
-        log_and_print "    [WARN] cannot create $root/herdr-council"
-        WARNINGS=$((WARNINGS+1))
-        continue
-      fi
-      local council_dst="$root/herdr-council/SKILL.md"
-      if [ -L "$council_dst" ] && ! rm -f "$council_dst"; then
-        log_and_print "    [WARN] cannot replace linked herdr-council skill under $root"
-        WARNINGS=$((WARNINGS+1))
-        continue
-      fi
-      if [ -d "$council_dst" ]; then
-        log_and_print "    [WARN] herdr-council target is a directory under $root"
-        WARNINGS=$((WARNINGS+1))
-        continue
-      fi
-      if cp "$council_src" "$council_dst" && [ -f "$council_dst" ] && [ ! -L "$council_dst" ]; then
-        council_n=$((council_n+1))
-      else
-        log_and_print "    [WARN] cannot install herdr-council under $root"
-        WARNINGS=$((WARNINGS+1))
-      fi
-    done
-    if [ "$council_n" -eq 4 ]; then
-      log_and_print "    [OK] herdr-council skill installed (4 scan roots: gjc/claude/codex/agents)"
-    elif [ "$council_n" -gt 0 ]; then
-      log_and_print "    [WARN] herdr-council skill partially installed ($council_n/4 scan roots)"
-    fi
-  else
-    log_and_print "    [WARN] herdr-council source missing: $council_src"
-    WARNINGS=$((WARNINGS+1))
-  fi
-
-  if ! command -v herdr >/dev/null 2>&1; then
-    log_and_print "    [SKIP] herdr base skill — herdr not installed"
-    return 0
-  fi
-  local skill_md
-  if ! skill_md="$(herdr --skill 2>/dev/null)" || [ -z "$skill_md" ]; then
-    log_and_print "    [WARN] herdr --skill unavailable; base skill not generated"
-    WARNINGS=$((WARNINGS+1))
-    return 0
-  fi
-
-  # One real SKILL.md per runtime scan root (GJC refuses symlinked skills outside
-  # its scan root, unlike the registry.yaml symlink flow, so never symlink here):
+  # Repository-managed Herdr skills, one real SKILL.md per runtime scan root (GJC
+  # refuses symlinked skills outside its scan root, so never symlink here):
   #   GJC     -> ~/.gjc/agent/skills   (verified: gjc skills discover)
   #   Claude  -> ~/.claude/skills      ($CONFIG_DIR; Claude Code convention)
   #   Codex   -> ~/.codex/skills       (Codex's own skill dir; it does NOT read ~/.agents/skills)
   #   OMO/pi  -> ~/.agents/skills      (pi/omo global skill dir; OMO also reads ~/.claude/skills)
+  # herdr-app covers the herdr-app/hc generation. The base `herdr` skill used to be
+  # generated from `herdr --skill` (legacy 0.8 CLI, HERDR_ENV=1 only); agents read it
+  # as "Herdr is unavailable" inside herdr-app terminals, so it is removed instead.
+  local gjc_dir="${GJC_CODING_AGENT_DIR:-$HOME/.gjc/agent}"
+  local claude_dir="${CONFIG_DIR:-$HOME/.claude}"
+  local codex_dir="${CODEX_DIR:-$HOME/.codex}"
+  local agents_dir="${AGENTS_DIR:-$HOME/.agents}"
+  local root skill src dst n
+
   for root in "$gjc_dir/skills" "$claude_dir/skills" "$codex_dir/skills" "$agents_dir/skills"; do
-    if ! mkdir -p "$root/herdr"; then
-      log_and_print "    [WARN] cannot create $root/herdr"
-      WARNINGS=$((WARNINGS+1))
-      continue
-    fi
-    local base_dst="$root/herdr/SKILL.md"
-    if [ -L "$base_dst" ] && ! rm -f "$base_dst"; then
-      log_and_print "    [WARN] cannot replace linked herdr base skill under $root"
-      WARNINGS=$((WARNINGS+1))
-      continue
-    fi
-    if [ -d "$base_dst" ]; then
-      log_and_print "    [WARN] herdr base skill target is a directory under $root"
-      WARNINGS=$((WARNINGS+1))
-      continue
-    fi
-    if printf '%s\n' "$skill_md" > "$base_dst" && [ -f "$base_dst" ] && [ ! -L "$base_dst" ]; then
-      base_n=$((base_n+1))
-    else
-      log_and_print "    [WARN] cannot generate herdr base skill under $root"
-      WARNINGS=$((WARNINGS+1))
+    # Only the generated file: a user-authored sibling in the directory is kept.
+    if [ -f "$root/herdr/SKILL.md" ] || [ -L "$root/herdr/SKILL.md" ]; then
+      rm -f "$root/herdr/SKILL.md" && rmdir "$root/herdr" 2>/dev/null
+      log_and_print "    [CLEAN] removed generated legacy herdr skill under $root"
     fi
   done
-  if [ "$base_n" -eq 4 ]; then
-    log_and_print "    [OK] herdr skill generated from binary (4 scan roots: gjc/claude/codex/agents)"
-  elif [ "$base_n" -gt 0 ]; then
-    log_and_print "    [WARN] herdr skill partially generated ($base_n/4 scan roots)"
+
+  for skill in herdr-council herdr-app; do
+    src="$SCRIPT_DIR/skills/$skill/SKILL.md"
+    n=0
+    if [ ! -f "$src" ]; then
+      log_and_print "    [WARN] $skill source missing: $src"
+      WARNINGS=$((WARNINGS+1))
+      continue
+    fi
+    for root in "$gjc_dir/skills" "$claude_dir/skills" "$codex_dir/skills" "$agents_dir/skills"; do
+      if ! mkdir -p "$root/$skill"; then
+        log_and_print "    [WARN] cannot create $root/$skill"
+        WARNINGS=$((WARNINGS+1))
+        continue
+      fi
+      dst="$root/$skill/SKILL.md"
+      if [ -L "$dst" ] && ! rm -f "$dst"; then
+        log_and_print "    [WARN] cannot replace linked $skill skill under $root"
+        WARNINGS=$((WARNINGS+1))
+        continue
+      fi
+      if [ -d "$dst" ]; then
+        log_and_print "    [WARN] $skill target is a directory under $root"
+        WARNINGS=$((WARNINGS+1))
+        continue
+      fi
+      if cp "$src" "$dst" && [ -f "$dst" ] && [ ! -L "$dst" ]; then
+        n=$((n+1))
+      else
+        log_and_print "    [WARN] cannot install $skill under $root"
+        WARNINGS=$((WARNINGS+1))
+      fi
+    done
+    if [ "$n" -eq 4 ]; then
+      log_and_print "    [OK] $skill skill installed (4 scan roots: gjc/claude/codex/agents)"
+    elif [ "$n" -gt 0 ]; then
+      log_and_print "    [WARN] $skill skill partially installed ($n/4 scan roots)"
+    fi
+  done
+}
+
+sync_herdr_app() {
+  # herdr-app (Mac GUI + `hc` on every machine) status helpers from runtimes/herdr-app:
+  #   bin         -> ~/.local/bin links (repo stays the single source)
+  #   agy hooks   -> ~/.gemini/config/hooks.json group "herdr-agy-app" (other groups kept)
+  #   tmux        -> ~/.tmux.conf marker block; OMS panel mains report via herdr-tmux-osc
+  #   mod, layout -> ~/.config/herdr-app, Mac only, copied: herdr-app writes next to them
+  local src="$SCRIPT_DIR/runtimes/herdr-app" app_dir="$HOME/.config/herdr-app"
+  [ -d "$src" ] || return 0
+  mkdir -p "$HOME/.local/bin"
+  make_link "$src/bin/agy-app-herdr" "$HOME/.local/bin/agy-app-herdr"
+  make_link "$src/bin/herdr-tmux-osc" "$HOME/.local/bin/herdr-tmux-osc"
+  if command -v herdr-app >/dev/null 2>&1; then
+    make_link "$src/bin/herdr-keep-missing" "$HOME/.local/bin/herdr-keep-missing"
+    if mkdir -p "$app_dir/mods/my-agents" "$app_dir/layouts" \
+      && cp -f "$src/mods/my-agents/main.js" "$src/mods/my-agents/mod.json" "$app_dir/mods/my-agents/" \
+      && cp -f "$src/layouts/my-layout.json" "$app_dir/layouts/"; then
+      log_and_print "    [OK] herdr-app my-agents mod + my-layout installed -> $app_dir"
+    else
+      log_and_print "    [FAIL] herdr-app mod/layout install"
+      ERRORS=$((ERRORS+1))
+    fi
   fi
+
+  if [ -d "$HOME/.gemini" ]; then
+    python3 - "$HOME/.gemini/config/hooks.json" "$HOME/.local/bin/agy-app-herdr" <<'PY' \
+      || { log_and_print "    [FAIL] agy hooks merge"; ERRORS=$((ERRORS+1)); }
+import json, os, sys
+from pathlib import Path
+target, cmd = Path(sys.argv[1]), sys.argv[2]
+text = target.read_text() if target.exists() else ""
+data = json.loads(text) if text.strip() else {}
+if not isinstance(data, dict):
+    sys.exit(f"    [FAIL] {target} is not a JSON object")
+def hook(ev):
+    return {"type": "command", "command": f"{cmd} hook {ev}", "timeout": 10}
+group = {ev: [hook(ev)] for ev in ("SessionStart", "PreInvocation", "Stop")}
+group.update({ev: [{"matcher": "*", "hooks": [hook(ev)]}] for ev in ("PreToolUse", "PostToolUse")})
+if data.get("herdr-agy-app") == group:
+    print(f"    [OK] {target} herdr-agy-app hooks already current")
+    sys.exit(0)
+data["herdr-agy-app"] = group
+target.parent.mkdir(parents=True, exist_ok=True)
+tmp = target.with_name(f".{target.name}.{os.getpid()}")
+tmp.write_text(json.dumps(data, indent=2) + "\n")
+os.replace(tmp, target)
+print(f"    [OK] merged herdr-agy-app hooks into {target}")
+PY
+  fi
+
+  command -v tmux >/dev/null 2>&1 || return 0
+  python3 - "$HOME/.tmux.conf" "$src/tmux.conf" <<'PY' \
+    || { log_and_print "    [FAIL] tmux.conf merge"; ERRORS=$((ERRORS+1)); return 0; }
+import os, sys
+from pathlib import Path
+target, managed = Path(sys.argv[1]), Path(sys.argv[2]).read_text().strip()
+begin, end = "# >>> oh-my-agent-env:herdr-app >>>", "# <<< oh-my-agent-env:herdr-app <<<"
+old = target.read_text() if target.exists() else ""
+managed_lines = set(managed.splitlines())
+lines, inside = [], False
+for line in old.splitlines():
+    if line == begin:
+        inside = True
+    elif line == end:
+        inside = False
+    elif not inside and line.strip() not in managed_lines:
+        lines.append(line)  # unmarked copies of managed lines (hand install) are dropped
+body = "\n".join(lines).rstrip()
+new = (body + "\n\n" if body else "") + f"{begin}\n{managed}\n{end}\n"
+if new == old:
+    print(f"    [OK] {target} herdr-app block already current")
+    sys.exit(0)
+tmp = target.with_name(f".{target.name}.{os.getpid()}")
+tmp.write_text(new)
+os.replace(tmp, target)
+print(f"    [OK] installed herdr-app block in {target}")
+PY
+  # A running server misses ~/.tmux.conf changes: hook it now (no server -> no-op).
+  "$HOME/.local/bin/herdr-tmux-osc" install >/dev/null 2>&1 || true
 }
 
 sync_gjc_settings() {
@@ -565,6 +612,7 @@ sync_agent_cli_configs() {
   sync_omo_settings
   sync_omo_herdr_extension
   sync_herdr_skill
+  sync_herdr_app
   retract_gjc_graft_mcp
   sync_graft_hooks
   sync_graphify_hooks
@@ -631,6 +679,7 @@ sync_agent_cli_install() {
   sync_omo_settings
   sync_omo_herdr_extension
   sync_herdr_skill
+  sync_herdr_app
   retract_gjc_graft_mcp
   sync_graft_hooks
   sync_graphify_hooks
