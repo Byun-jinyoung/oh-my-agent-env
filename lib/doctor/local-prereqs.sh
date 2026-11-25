@@ -3,8 +3,7 @@
 # shellcheck shell=bash   # sourced fragment: no shebang by design
 
 check_herdr_skill_roots() {
-  local _herdr_entry _herdr_label _herdr_root _herdr_installed
-  local _herdr_council_src="$SCRIPT_DIR/skills/herdr-council/SKILL.md"
+  local _herdr_entry _herdr_label _herdr_root _herdr_installed _herdr_skill
   for _herdr_entry in \
     "GJC|${GJC_CODING_AGENT_DIR:-$HOME/.gjc/agent}/skills" \
     "Claude|${CONFIG_DIR:-$HOME/.claude}/skills" \
@@ -12,21 +11,15 @@ check_herdr_skill_roots() {
     "OMO|${AGENTS_DIR:-$HOME/.agents}/skills"; do
     _herdr_label="${_herdr_entry%%|*}"
     _herdr_root="${_herdr_entry#*|}"
-    _herdr_installed="$_herdr_root/herdr-council/SKILL.md"
-    if [ -f "$_herdr_installed" ] && cmp -s "$_herdr_council_src" "$_herdr_installed"; then
-      echo "  [OK]   herdr-council skill ($_herdr_label scan root)"
-    else
-      echo "  [MISS] herdr-council skill ($_herdr_label scan root; run setup.sh sync)"
-      WARNINGS=$((WARNINGS+1))
-    fi
-    if command -v herdr >/dev/null 2>&1; then
-      if [ -f "$_herdr_root/herdr/SKILL.md" ]; then
-        echo "  [OK]   herdr skill ($_herdr_label scan root)"
+    for _herdr_skill in herdr-council herdr-app; do
+      _herdr_installed="$_herdr_root/$_herdr_skill/SKILL.md"
+      if [ -f "$_herdr_installed" ] && cmp -s "$SCRIPT_DIR/skills/$_herdr_skill/SKILL.md" "$_herdr_installed"; then
+        echo "  [OK]   $_herdr_skill skill ($_herdr_label scan root)"
       else
-        echo "  [MISS] herdr skill ($_herdr_label scan root; run setup.sh sync)"
+        echo "  [MISS] $_herdr_skill skill ($_herdr_label scan root; run setup.sh sync)"
         WARNINGS=$((WARNINGS+1))
       fi
-    fi
+    done
   done
   # Mirrors sync_omo_herdr_extension: only expected once OMO created ~/.omo/agent.
   local _herdr_ext_src="$SCRIPT_DIR/runtimes/omo/extensions/herdr-omp-agent-state.ts"

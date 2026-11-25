@@ -18,7 +18,7 @@
 
 ## 3. 비목표
 
-- 기본 `herdr` skill 또는 `herdr --skill` 내용을 복제하거나 대체하지 않는다.
+- `herdr-app` skill 또는 `herdr --skill` 내용을 복제하거나 대체하지 않는다.
 - 일반적인 단일-agent 작업을 자동으로 council 작업으로 변경하지 않는다.
 - 사용자 승인 없이 council session을 생성하거나 기존 session에 prompt하지 않는다.
 - 조사·설계·검토를 runtime별 lens나 역할로 분할하지 않는다.
@@ -396,11 +396,11 @@ Recommended Action
 
 ## 18. 기본 Herdr Skill과의 관계
 
-- 기본 `herdr` skill은 CLI 조작법의 source of truth다.
-- 기본 skill은 설치된 binary의 `herdr --skill`에서 생성한다.
+- CLI 조작법의 source of truth는 repository가 관리하는 `herdr-app` skill(herdr-app + `hc`)이다. legacy `herdr` CLI(`HERDR_ENV=1`)에서는 `herdr --skill`을 직접 읽는다.
+- `herdr --skill`로 생성하던 기본 `herdr` skill은 더 이상 배포하지 않는다. herdr-app 터미널 안의 agent가 그것을 근거로 "Herdr 불가"라고 답했기 때문이다. sync는 남은 생성본을 제거한다.
 - `herdr-council`은 CLI 문법을 복제하거나 추측하지 않는다.
 - `herdr-council`은 repository가 관리하는 정적 companion workflow다.
-- 기본 skill 생성 실패와 council source 배포는 서로 독립적이어야 한다.
+- `herdr-app`과 council 배포는 서로 독립적이어야 한다.
 
 ## 19. 배포 요구사항
 
@@ -450,7 +450,7 @@ Recommended Action
 
 - 네 scan root에 council `SKILL.md`가 존재한다.
 - 네 배포본이 canonical source와 일치한다.
-- 기본 `herdr --skill` 실패 시에도 council source는 배포된다.
+- 이전 sync가 남긴 생성본 `herdr/SKILL.md`는 제거된다.
 - partial deployment가 false `[OK]`를 만들지 않는다.
 - doctor가 네 root와 source drift를 탐지한다.
 - sync가 idempotent하다.

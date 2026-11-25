@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Let an agent in an OMS panel main (inside tmux) report its herdr status as it does outside.
+
+Agents (agy, ...) first ask the terminal `OSC 7501;?` and report states only if it answers.
+tmux neither answers nor passes OSC 7501, so a panel main never reports blocked (question,
+permission) to herdr. A tmux pipe on the main pane answers the query like herdr does and copies
+each report to the session's client ttys (the herdr terminal), as OMS herdr_state.rs does for
+its own working/idle reports, keeping @oms_agent_state for OMS's re-attach replay.
+
+  herdr-tmux-osc install       add tmux hooks (running server) that scan new panes
+  herdr-tmux-osc scan          pipe every unpiped OMS panel main pane
+  herdr-tmux-osc bridge PANE [SOCKET]  the pipe program (pane output on stdin, pane input on stdout)
+
+Worker panes (OMS_HARNESS_CHILD=1) are skipped: their reports would overwrite the main's.
+Only an agent started after the pipe is attached is covered; it asks once at startup.
+"""
+import os, re, shlex, subprocess, sys
+
+PREFIX = b'\x1b]7501;'
+# herdr's answer, captured from a herdr-app terminal (2026-11-25)
+CAPS = b'?:states=idle,working,done,blocked,error:kinds=permission,question,auth'
+TOKEN = re.compile(rb'[A-Za-z0-9._-]{1,64}\Z')
+HOOKS = ('session-created', 'after-new-window', 'after-split-window')  # tmux 3.6a has no respawn hook
+SELF = os.path.abspath(__file__)
+
+
+SOCKET = []  # `-S path` of the server whose pane is bridged; hook-run pipes may lack $TMUX
+
+
+def tmux(*args):
+    r = subprocess.run(['tmux', *SOCKET, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    return r.stdout if r.returncode == 0 else ''
+
+
+def write_tty(tty, data):
+    if not tty.startswith('/dev/'):
+        return
+    try:
+        fd = os.open(tty, os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return
+    try:
+        os.write(fd, data)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def report(pane, payload):
+    """Forward a state report rebuilt from validated fields only: pane output is untrusted."""
+    fields = dict(f.split(b'=', 1) for f in payload.split(b':') if b'=' in f)
+    keep = [(k, fields[k]) for k in (b'state', b'kind', b'app') if k in fields and TOKEN.match(fields[k])]
+    if not keep or keep[0][0] != b'state':
+        return
+    seq = PREFIX + b':'.join(k + b'=' + v for k, v in keep) + b'\x1b\\'
+    if b'app' in fields and TOKEN.match(fields[b'app']):
+        tmux('set-option', '-p', '-t', pane, '@oms_agent_state',
+             f"{fields[b'state'].decode()}:{fields[b'app'].decode()}")
+    session = tmux('display-message', '-p', '-t', pane, '#{session_name}').strip()
+    for tty in tmux('list-clients', '-t', f'={session}', '-F', '#{client_tty}').split():
+        write_tty(tty, seq)
+
+
+def parse(buf, on_seq):
+    """Consume complete OSC 7501 sequences from buf; return the unconsumed tail."""
+    while True:
+        i = buf.find(PREFIX)
+        if i < 0:
+            return buf[-(len(PREFIX) - 1):]  # a prefix may be split across reads
+        ends = [(j, t) for t in (b'\x07', b'\x1b\\') if (j := buf.find(t, i)) >= 0]
+        if not ends:
+            return buf[i:] if len(buf) - i < 4096 else b''
+        j, term = min(ends)
+        on_seq(buf[i + len(PREFIX):j], term)
+        buf = buf[j + len(term):]
+
+
+def bridge(pane):
+    log = os.environ.get('HERDR_TMUX_OSC_LOG')
+    def on_seq(payload, term):
+        if log:
+            with open(log, 'ab') as f:
+                f.write(payload + b'\n')
+        if payload == b'?':
+            os.write(1, PREFIX + CAPS + term)
+        else:
+            report(pane, payload)
+    buf = b''
+    while chunk := os.read(0, 65536):
+        buf = parse(buf + chunk, on_seq)
+    return 0
+
+
+def scan():
+    fmt = '#{pane_id}\t#{pane_pipe}\t#{session_name}\t#{pane_start_command}'
+    for line in tmux('list-panes', '-a', '-F', fmt).splitlines():
+        pane, piped, session, start = (line.split('\t', 3) + [''] * 4)[:4]
+        main = session.startswith('oms-') and re.search(r"['\s]--launch['\s]", start)
+        if piped == '1' or not main or 'OMS_HARNESS_CHILD=1' in start:
+            continue
+        # tmux strftime-expands the command (`%1` -> `1`): pass ids as formats it fills in
+        tmux('pipe-pane', '-IOo', '-t', pane, f"exec {shlex.quote(SELF)} bridge '#{{pane_id}}' '#{{socket_path}}'")
+    return 0
+
+
+def install():
+    for hook in HOOKS:
+        tmux('set-hook', '-g', f'{hook}[77]', f'run-shell -b {shlex.quote(shlex.quote(SELF) + " scan")}')
+    return scan()
+
+
+def selftest():
+    seen = []
+    tail = parse(b'x\x1b]7501;?\x07y\x1b]75', lambda p, t: seen.append((p, t)))
+    tail = parse(tail + b'01;state=blocked:kind=question:app=antigravity\x1b\\z', lambda p, t: seen.append((p, t)))
+    assert seen == [(b'?', b'\x07'), (b'state=blocked:kind=question:app=antigravity', b'\x1b\\')], seen
+    assert tail == b'z', tail
+    print('ok')
+    return 0
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ''
+    if cmd == 'bridge' and len(sys.argv) > 2:
+        if len(sys.argv) > 3:
+            SOCKET[:] = ['-S', sys.argv[3]]
+        return bridge(sys.argv[2])
+    if cmd in ('install', 'scan', 'selftest'):
+        return {'install': install, 'scan': scan, 'selftest': selftest}[cmd]()
+    print(__doc__)
+    return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main())

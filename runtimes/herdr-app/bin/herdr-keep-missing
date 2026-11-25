@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Put every live sub-agent (hc `parent` set) into tree + its own tab + no sidebar duplicate.
+Contract: ~/.claude/rules/herdr-agent-tree.md.
+
+  layout  must be my-layout (its my-agents mod hides the top-level duplicate);
+          --apply switches once and shows the sidebar right after.
+  keep    sub-agent without a pane: space.select <parent space> -> terminal.keep.
+  move    sub-agent whose pane shares a tab with its parent or a sibling, or sits in another
+          space: terminal.park -> space.select <parent space> -> terminal.keep.
+          park is used only as the first half of this move, never left parked.
+  panel   an oms-panel (name oms-panel or agent oms) is not given its own tab: it is placed in its
+          parent's tab as a split to the LEFT of the parent. Already in the parent's tab = done.
+  adopt   a peer made by hand (herdr-app new tab) has no `parent` and none can be set later, so it
+          is missing from the tree. It gets the label herdr.parent=<main of its space>, which the
+          my-agents mod reads. Main = the one parentless agent the space's other terminals name as
+          parent; unclear -> skipped. Tabs are not touched. --no-adopt turns this off.
+
+Usage: herdr-keep-missing [--apply] [--no-adopt] [--skip ADDR|NAME]... [--only ADDR|NAME]...
+Dry run by default. Exit 1 if anything is still wrong after --apply."""
+import json, subprocess, sys, time
+
+LAYOUT = 'my-layout'
+
+
+def is_panel(t):
+    return str(t.get('name')).startswith('oms-panel') or t.get('agent') == 'oms'
+
+
+def args(flag):
+    a = sys.argv
+    return {a[i + 1] for i in range(len(a) - 1) if a[i] == flag}
+
+
+APPLY, SKIP, ONLY = '--apply' in sys.argv, args('--skip'), args('--only')
+
+
+def j(*cmd):
+    return json.loads(subprocess.run(cmd, capture_output=True, text=True, check=True).stdout)
+
+
+def do(*cmd):
+    r = subprocess.run(['herdr-app', 'do', *cmd], capture_output=True, text=True)
+    return r.returncode, (r.stdout or r.stderr).strip().replace('\n', ' ')[:120]
+
+
+def state():
+    ls = j('hc', 'ls', '--json')
+    by = {t['address']: t for t in (ls if isinstance(ls, list) else ls.get('terminals', []))}
+    d = j('herdr-app', 'ls')
+    loc, members = {}, {}
+    for s in d['spaces']:
+        for tb in s['tabs']:
+            members[tb['id']] = {t['terminal'] for t in tb['terminals']}
+            for t in tb['terminals']:
+                loc[t['terminal']] = (s['id'], s['name'], tb['id'], tb['name'], t.get('pane'))
+    active = next((s['id'] for s in d['spaces'] if s.get('active')), None)
+    return by, loc, members, active
+
+
+def problem(a, by, loc, members):
+    """None if `a` is fine, else (action, reason). Only for live sub-agents whose parent has a pane."""
+    p = by[a]['parent']
+    if is_panel(by[a]):
+        if a in loc and loc[a][2] == loc[p][2]:
+            return None
+        return 'panel', 'no pane' if a not in loc else f'pane in tab "{loc[a][3]}", parent in tab "{loc[p][3]}"'
+    if a not in loc:
+        return 'keep', 'no pane'
+    if loc[a][0] != loc[p][0]:
+        return 'move', f'tab in space {loc[a][1]}, parent in {loc[p][1]}'
+    mates = members[loc[a][2]] - {a}
+    sib = sum(1 for m in mates if by.get(m, {}).get('parent') == p and not is_panel(by[m]))
+    if p in mates or sib:
+        return 'move', f'shares tab "{loc[a][3]}" with' + (' parent' if p in mates else '') + (f' {sib} sibling(s)' if sib else '')
+    return None
+
+
+def subs(by):
+    return [a for a, t in sorted(by.items()) if t.get('parent') and t.get('state') == 'live']
+
+
+def wait(pred, tries=20):
+    for _ in range(tries):
+        s = state()
+        if pred(s):
+            return s
+        time.sleep(1)
+    return None
+
+
+def select(sid):
+    for _ in range(3):
+        do('space.select', json.dumps({'id': sid}))
+        if wait(lambda s: s[3] == sid, 5):
+            return True
+    return False
+
+
+# 1. layout
+st = j('herdr-app', 'status')
+if st.get('layout') != LAYOUT:
+    print(f'LAYOUT is {st.get("layout")}, want {LAYOUT}')
+    if APPLY:
+        print('  layout.switch', do('layout.switch', json.dumps({'name': LAYOUT})))
+        print('  layout.show sidebar', do('layout.show', json.dumps({'id': 'sidebar'})))
+else:
+    print(f'layout {LAYOUT} ok')
+if st.get('errors'):
+    print(f'app errors: {st["errors"]}')
+
+def full(a, p):
+    """`p` as an address on a's machine ('t54' -> 'remote/t54')."""
+    cut = a.rfind('/')
+    return p if '/' in p or cut < 0 else a[:cut + 1] + p
+
+
+def adopt(by, loc):
+    cand = [a for a, t in by.items() if t.get('state') == 'live' and not t.get('parent')
+            and t.get('agent') not in (None, 'bash') and not is_panel(t) and a in loc]
+    lab = {a: j('hc', 'get', a).get('labels') or {} for a in cand}
+    named = {t['parent'] for t in by.values() if t.get('parent')}
+    named |= {full(a, l['herdr.parent']) for a, l in lab.items() if l.get('herdr.parent')}
+    todo = [a for a in cand if 'herdr.parent' not in lab[a]]
+    for sid in sorted({loc[a][0] for a in todo}):
+        here = [a for a in todo if loc[a][0] == sid]
+        roots = [a for a in here if a in named]
+        if len(roots) != 1:
+            if len(here) > 1:
+                print(f'SKIP adopt in {loc[here[0]][1]}: main unclear, candidates {here}')
+            continue
+        main = roots[0]
+        val = main.rsplit('/', 1)[-1]
+        for a in here:
+            name = by[a].get('name')
+            if a == main or a in SKIP or name in SKIP or (ONLY and a not in ONLY and name not in ONLY):
+                continue
+            print(f'ADOPT {a:18} {str(name):24} herdr.parent={val}  (main {main}, space {loc[a][1]})')
+            if APPLY:
+                r = subprocess.run(['hc', 'label', a, f'herdr.parent={val}'], capture_output=True, text=True)
+                if r.returncode:
+                    print(f'  FAIL {a}: {r.stderr.strip()[:100]}')
+
+
+# 2. plan
+by, loc, members, active = state()
+if '--no-adopt' not in sys.argv:
+    adopt(by, loc)
+work = []
+for a in subs(by):
+    name, p = by[a].get('name'), by[a]['parent']
+    if a in SKIP or name in SKIP or (ONLY and a not in ONLY and name not in ONLY):
+        continue
+    if p not in loc:
+        print(f'SKIP {a} {name}: parent {p} has no pane, space unknown')
+        continue
+    pr = problem(a, by, loc, members)
+    if pr:
+        work.append(a)
+        print(f'{pr[0].upper():4} {a:18} {str(name):24} parent={p} space={loc[p][1]}  ({pr[1]})')
+if not work:
+    print('nothing to do')
+if not APPLY or not work:
+    sys.exit(0)
+
+# 3. apply, one terminal at a time; re-check each since an earlier move can fix a later one
+for a in work:
+    by, loc, members, _ = state()
+    if a not in by or by[a].get('state') != 'live' or by[a]['parent'] not in loc:
+        print(f'gone/skip {a}')
+        continue
+    pr = problem(a, by, loc, members)
+    if not pr:
+        print(f'ok now {a}')
+        continue
+    p = by[a]['parent']
+    sid, ppane = loc[p][0], loc[p][4]
+    parked = a in loc and pr[0] in ('move', 'panel')
+    if parked:
+        print(f'park {a}:', do('terminal.park', '--terminal', a))
+        if not wait(lambda s: a not in s[1]):
+            print(f'FAIL {a}: pane still there after park; not kept')
+            continue
+    if not select(sid):
+        print(f'FAIL {a}: could not make {sid} active' + ('; IT IS PARKED, keep it by hand' if parked else ''))
+        continue
+    if pr[0] == 'panel':
+        # split the parent's pane to the right, then trade places so the panel is on the left
+        print(f'focus parent pane:', do('pane.focus', json.dumps({'pane': ppane})))
+        time.sleep(1)
+        print(f'keep {a} right of parent:', do('terminal.keep', json.dumps({'terminal': a, 'place': 'right'})))
+        s = wait(lambda s: a in s[1] and s[1][a][2] == s[1][p][2])
+        if not s:
+            print(f'FAIL {a}: not in the parent\'s tab after keep (parked={parked})')
+            continue
+        print(f'swap {a} <-> parent:', do('pane.swap', json.dumps({'pane': s[1][a][4], 'target': ppane})))
+        print(f'  -> {s[1][a][1]} / tab "{s[1][a][3]}" (left of {p})')
+        continue
+    print(f'keep {a}:', do('terminal.keep', '--terminal', a))
+    s = wait(lambda s: a in s[1])
+    print(f'  -> {s[1][a][1]} / tab "{s[1][a][3]}"' if s else f'FAIL {a}: no pane after keep (parked={parked})')
+
+# 4. restore the active space, then verify everything (not just this run's work)
+if active:
+    select(active)
+    fp = st.get('focused_pane')
+    if fp and fp in {v[4] for v in state()[1].values()}:
+        do('pane.focus', json.dumps({'pane': fp}))
+s = wait(lambda s: not [a for a in subs(s[0]) if s[0][a]['parent'] in s[1] and problem(a, s[0], s[1], s[2])], 6) or state()
+by, loc, members, now = s
+bad = [a for a in subs(by) if by[a]['parent'] in loc and a not in SKIP and by[a].get('name') not in SKIP
+       and (not ONLY or a in ONLY or by[a].get('name') in ONLY) and problem(a, by, loc, members)]
+print(f'verify: sub-agents={len(subs(by))} bad={bad} layout={j("herdr-app", "status").get("layout")} '
+      f'active_restored={now == active}')
+sys.exit(1 if bad else 0)
