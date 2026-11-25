@@ -173,10 +173,9 @@ PY
 
   echo ""
   echo "[ Symlinks ]"
-  for f in "$CONFIG_DIR/commands/analyze-paper.md"; do
-    if [ -L "$f" ] || [ -f "$f" ]; then echo "  [OK] $(basename "$f")"
-    else echo "  [MISS] $f"; WARNINGS=$((WARNINGS+1)); fi
-  done
+  f="$CONFIG_DIR/commands/analyze-paper.md"
+  if [ -L "$f" ] || [ -f "$f" ]; then echo "  [OK] $(basename "$f")"
+  else echo "  [MISS] $f"; WARNINGS=$((WARNINGS+1)); fi
 
   echo ""
   echo "[ Global rules (OMS-owned) ]"
