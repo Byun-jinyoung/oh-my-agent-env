@@ -1,4 +1,4 @@
-# oh-my-agent-env: cmd_doctor loader (sourced by setup.sh)
+# oh-my-env: cmd_doctor loader (sourced by setup.sh)
 # Not standalone — relies on globals defined in setup.sh and helpers from
 # lib/common.sh (must be sourced first).
 #

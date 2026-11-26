@@ -1,4 +1,4 @@
-# oh-my-agent-env: sync domain - external-tools.sh
+# oh-my-env: sync domain - external-tools.sh
 # Sourced by lib/sync.sh; not standalone.
 # shellcheck shell=bash   # sourced fragment: no shebang by design
 

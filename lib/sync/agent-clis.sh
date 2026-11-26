@@ -1,4 +1,4 @@
-# oh-my-agent-env: GJC / OMO / Herdr install and portable configuration
+# oh-my-env: GJC / OMO / Herdr install and portable configuration
 # Sourced by lib/sync.sh; not standalone.
 # shellcheck shell=bash
 
@@ -117,6 +117,8 @@ from pathlib import Path
 
 target, tag, body = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 target.parent.mkdir(parents=True, exist_ok=True)
+# Markers keep the pre-rename name (oh-my-agent-env): files on every machine
+# already carry it, and a new name would insert a second block.
 begin = f"# >>> oh-my-agent-env:{tag} >>>"
 end = f"# <<< oh-my-agent-env:{tag} <<<"
 body = body or """# Herdr-aware wrappers are vanilla-equivalent outside Herdr.

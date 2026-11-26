@@ -1,4 +1,4 @@
-# oh-my-agent-env: cmd_sync orchestrator (sourced by setup.sh)
+# oh-my-env: cmd_sync orchestrator (sourced by setup.sh)
 # Not standalone — relies on globals defined in setup.sh and helpers from
 # lib/common.sh (must be sourced first).
 #
@@ -38,11 +38,11 @@ sync_closing_line() {
 }
 
 cmd_sync() {
-  log "=== oh-my-agent-env sync started ==="
+  log "=== oh-my-env sync started ==="
   log "  Platform: $(uname -s) $(uname -m)"
   log "  Shell: $SHELL"
   log "  PATH: $PATH"
-  echo "=== oh-my-agent-env sync ==="
+  echo "=== oh-my-env sync ==="
   echo "  Log: $LOG_FILE"
   echo ""
   # Dependencies

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Single verification gate for oh-my-agent-env. Run locally before committing;
+# Single verification gate for oh-my-env. Run locally before committing;
 # CI runs the same entry point so local green and CI green mean the same thing.
 #
 #   scripts/check.sh              lint + tests

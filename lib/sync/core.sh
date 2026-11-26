@@ -1,4 +1,4 @@
-# oh-my-agent-env: sync domain - core.sh
+# oh-my-env: sync domain - core.sh
 # Sourced by lib/sync.sh; not standalone.
 # shellcheck shell=bash   # sourced fragment: no shebang by design
 

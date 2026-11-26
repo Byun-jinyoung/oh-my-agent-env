@@ -1,4 +1,4 @@
-# oh-my-agent-env: doctor domain - agent-mcp.sh
+# oh-my-env: doctor domain - agent-mcp.sh
 # Sourced by lib/doctor.sh; not standalone.
 # shellcheck shell=bash   # sourced fragment: no shebang by design
 

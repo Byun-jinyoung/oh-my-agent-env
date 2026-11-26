@@ -88,7 +88,7 @@ fi
 block_content() {
   local style="$1"
   local template="$2"
-  printf '> Project rules — oh-my-agent-env `%s` template (inlined by apply-project-template.sh).\n' "$style"
+  printf '> Project rules — oh-my-env `%s` template (inlined by apply-project-template.sh).\n' "$style"
   printf '> Read `PROJECT.md` before starting work; project rules override global defaults.\n\n'
   cat "$template"
 }

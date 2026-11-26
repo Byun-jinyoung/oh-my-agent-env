@@ -73,5 +73,5 @@ Check: `hc get <addr>` status, `herdr-app ls` (pane, space), `herdr-app status`.
 
 ## Managed files
 
-All of the above is installed by oh-my-agent-env `setup.sh sync` from
+All of the above is installed by oh-my-env `setup.sh sync` from
 `runtimes/herdr-app/`; edit there, not in the installed copies.

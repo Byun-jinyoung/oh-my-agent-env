@@ -1,17 +1,17 @@
-# oh-my-agent-env: doctor domain - frameworks.sh
+# oh-my-env: doctor domain - frameworks.sh
 # Sourced by lib/doctor.sh; not standalone.
 # shellcheck shell=bash   # sourced fragment: no shebang by design
 
 doctor_framework_surfaces() {
   echo "[ Managed skills ]"
-  # graphify is checked separately below (CLI-owned, not a oh-my-agent-env symlink).
+  # graphify is checked separately below (CLI-owned, not a oh-my-env symlink).
   for sk in triangle-review codebase-scan; do
     dst="$CONFIG_DIR/skills/$sk"
     if [ -L "$dst" ] && [ -e "$dst" ]; then echo "  [OK] $sk symlink"
-    elif [ -e "$dst" ]; then echo "  [WARN] $sk exists but not symlinked from oh-my-agent-env"
+    elif [ -e "$dst" ]; then echo "  [WARN] $sk exists but not symlinked from oh-my-env"
     else echo "  [MISS] $sk"; WARNINGS=$((WARNINGS+1)); fi
   done
-  # graphify is managed by the graphify CLI itself (not oh-my-agent-env).
+  # graphify is managed by the graphify CLI itself (not oh-my-env).
   # claude side = real dir with SKILL.md; agents side = symlink to it.
   if [ -f "$CONFIG_DIR/skills/graphify/SKILL.md" ]; then echo "  [OK] graphify claude SKILL"
   else echo "  [MISS] graphify claude SKILL (run: graphify install --platform claude)"; WARNINGS=$((WARNINGS+1)); fi

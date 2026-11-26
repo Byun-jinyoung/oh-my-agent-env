@@ -1,4 +1,4 @@
-# oh-my-agent-env: doctor domain - claude.sh
+# oh-my-env: doctor domain - claude.sh
 # Sourced by lib/doctor.sh; not standalone.
 # shellcheck shell=bash   # sourced fragment: no shebang by design
 
