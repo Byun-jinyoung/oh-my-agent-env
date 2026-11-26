@@ -208,8 +208,11 @@ EOF
 # npm is not a supported codex install (it shadows the standalone one by PATH
 # order), so every user-writable npm copy is uninstalled. Prints
 # "<path><TAB>removed|failed"; sudo-only copies stay in codex_duplicates' report.
+# Does nothing until the standalone install exists, so a failed install never
+# leaves the machine without a working codex.
 codex_remove_npm_copies() {
   local p cmd real
+  codex_standalone || return 0
   codex_duplicates | while IFS="$(printf '\t')" read -r p cmd; do
     case "$cmd" in "npm uninstall"*) ;; *) continue ;; esac
     real="$(readlink -f "$p" 2>/dev/null || echo "$p")"

@@ -109,8 +109,10 @@ sync_external_tools() {
   else
     log_and_print "    Installing codex CLI with the official installer ($CODEX_INSTALL_CMD)..."
     # NON_INTERACTIVE: no prompts, and the installer leaves other installs in place.
+    # Download first: in `curl | sh < /dev/null` the redirect replaces the pipe,
+    # so sh runs an empty script and curl dies with exit 56.
     run_with_timeout "codex standalone install" \
-      "set -o pipefail; curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh < /dev/null" \
+      'f="$(mktemp)"; curl -fsSL https://chatgpt.com/codex/install.sh -o "$f" && CODEX_NON_INTERACTIVE=1 sh "$f" < /dev/null; rc=$?; rm -f "$f"; exit $rc' \
       | tail -3 || true
     hash -r
     if codex_standalone; then
