@@ -12,7 +12,6 @@ cmd_doctor() {
   doctor_local_prereqs
   doctor_claude_surfaces
   doctor_codex_integrity
-  doctor_lazycodex
   doctor_agent_mcp_surfaces
   doctor_framework_surfaces
 

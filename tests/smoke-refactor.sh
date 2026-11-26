@@ -61,7 +61,6 @@ for f in \
   "$ROOT/lib/doctor/local-prereqs.sh" \
   "$ROOT/lib/doctor/claude.sh" \
   "$ROOT/lib/doctor/codex-integrity.sh" \
-  "$ROOT/lib/doctor/lazycodex.sh" \
   "$ROOT/lib/doctor/agent-mcp.sh" \
   "$ROOT/lib/doctor/frameworks.sh" \
   "$ROOT/lib/doctor/main.sh"; do
@@ -74,7 +73,6 @@ grep -q '^cmd_doctor()' "$ROOT/lib/doctor/main.sh"
 grep -q '^sync_external_tools()' "$ROOT/lib/sync/external-tools.sh"
 grep -q '^sync_plugins_mcp()' "$ROOT/lib/sync/plugins-mcp.sh"
 grep -q '^sync_agent_mcp_frameworks()' "$ROOT/lib/sync/frameworks.sh"
-grep -q '^doctor_lazycodex()' "$ROOT/lib/doctor/lazycodex.sh"
 grep -q '^doctor_agent_mcp_surfaces()' "$ROOT/lib/doctor/agent-mcp.sh"
 
 echo "[5] isolated HOME validate"
