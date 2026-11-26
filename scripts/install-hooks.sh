@@ -81,7 +81,7 @@ cmd_status() {
   if [ ! -e "$HOOK" ]; then
     echo "pre-push: not installed"
   elif is_ours "$HOOK"; then
-    echo "pre-push: installed (oh-my-agent-env) -> $HOOK"
+    echo "pre-push: installed (oh-my-env) -> $HOOK"
   else
     echo "pre-push: present but NOT ours -> $HOOK"
   fi

@@ -1,12 +1,12 @@
-# oh-my-agent-env
+# oh-my-env
 
 One-command Claude Code environment setup for multiple machines.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/Byun-jinyoung/oh-my-agent-env.git
-cd oh-my-agent-env
+git clone https://github.com/Byun-jinyoung/oh-my-env.git
+cd oh-my-env
 bash setup.sh
 ```
 
@@ -68,7 +68,7 @@ oh-my-env/
 ├── gjc/                                  # GJC config bundle (top-level): keybindings, default-profile,
 │                                          #   settings.conf, hooks/ (attitude-gate) — deployed to ~/.gjc by `setup.sh sync`
 ├── rules/                                # SRP-split global rule modules (Layer A)
-├── skills/                               # Shared oh-my-agent-env skills (codebase-scan, triangle-review, ...)
+├── skills/                               # Shared oh-my-env skills (codebase-scan, triangle-review, ...)
 ├── scripts/                              # Helper shell scripts
 │   ├── check.sh                          #   verification gate (lint + tests); CI runs this
 │   ├── journal.sh                        #   Obsidian work-journal entries

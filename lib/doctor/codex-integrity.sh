@@ -1,4 +1,4 @@
-# oh-my-agent-env: doctor domain - codex-integrity.sh
+# oh-my-env: doctor domain - codex-integrity.sh
 # Sourced by lib/doctor.sh; not standalone.
 # shellcheck shell=bash   # sourced fragment: no shebang by design
 

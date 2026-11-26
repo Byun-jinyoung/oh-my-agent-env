@@ -1,4 +1,4 @@
-# oh-my-agent-env: sync domain - skills.sh
+# oh-my-env: sync domain - skills.sh
 # Sourced by lib/sync.sh; not standalone.
 # shellcheck shell=bash   # sourced fragment: no shebang by design
 
@@ -48,9 +48,9 @@ for name, info in reg.items():
         os.symlink(src, dst)
         print(f"    [LINK] {rt}/{name} → {src}")
 
-# Prune stale oh-my-agent-env symlinks no longer in the registry, so that
+# Prune stale oh-my-env symlinks no longer in the registry, so that
 # dropping a runtime from registry.yaml self-cleans on every machine.
-# Only oh-my-agent-env-managed symlinks are removed; real dirs / foreign
+# Only oh-my-env-managed symlinks are removed; real dirs / foreign
 # links are left untouched.
 skills_root = os.path.realpath(os.path.join("$SCRIPT_DIR", "skills"))
 desired = {(rt, name) for name, info in reg.items()

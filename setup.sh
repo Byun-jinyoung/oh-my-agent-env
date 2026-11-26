@@ -1,7 +1,7 @@
 #!/bin/bash
-# oh-my-agent-env: AI development environment bootstrap
+# oh-my-env: AI development environment bootstrap
 # Usage:
-#   git clone https://github.com/Byun-jinyoung/oh-my-agent-env.git ~/.oh-my-env
+#   git clone https://github.com/Byun-jinyoung/oh-my-env.git ~/.oh-my-env
 #   cd ~/.oh-my-env && ./setup.sh sync
 #
 # Subcommands:
@@ -65,7 +65,7 @@ STEP_TIMEOUT=120  # seconds per step
 . "$SCRIPT_DIR/lib/doctor.sh"
 
 cmd_validate() {
-  echo "=== oh-my-agent-env validate ==="
+  echo "=== oh-my-env validate ==="
   for skill_dir in "$SCRIPT_DIR/skills/"*/; do
     [ -d "$skill_dir" ] || continue
     name="$(basename "$skill_dir")"
@@ -81,7 +81,7 @@ cmd_validate() {
 }
 
 cmd_update() {
-  echo "=== oh-my-agent-env update ==="
+  echo "=== oh-my-env update ==="
   echo "[1/4] git pull"
   git -C "$SCRIPT_DIR" pull --ff-only 2>&1 | sed 's/^/  /'
   echo "[2/4] validate" && cmd_validate
@@ -90,7 +90,7 @@ cmd_update() {
 }
 
 cmd_install() {
-  echo "=== oh-my-agent-env install (legacy copy mode) ==="
+  echo "=== oh-my-env install (legacy copy mode) ==="
   mkdir -p "$CONFIG_DIR/commands" "$CONFIG_DIR/hud" "$CODEX_DIR" "$GEMINI_DIR"
   cp "$SCRIPT_DIR/runtimes/claude/commands/"*.md "$CONFIG_DIR/commands/" 2>/dev/null || true
   cp "$SCRIPT_DIR/ui/statusline/my-statusline.mjs" "$CONFIG_DIR/hud/" 2>/dev/null || true
@@ -124,7 +124,7 @@ cmd_init_project() {
   }
   local project_name
   project_name="$(basename "$project_path")"
-  echo "=== oh-my-agent-env init-project: $project_name ==="
+  echo "=== oh-my-env init-project: $project_name ==="
   echo "  Path: $project_path"
   echo ""
 
@@ -247,7 +247,7 @@ cmd_oma() {
     exit 1
   }
   local oma_version="${OMA_VERSION:-latest}"
-  echo "=== oh-my-agent-env oma: $(basename "$project_path") ==="
+  echo "=== oh-my-env oma: $(basename "$project_path") ==="
   echo "  Path: $project_path  (oma@$oma_version)"
 
   # OMA rewrites project CLAUDE.md and .claude/settings.json. A tracked copy is

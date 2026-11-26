@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # own mktemp dir and re-registered an EXIT trap, so the later trap replaced the
 # earlier one; and step [5] wrote to a fixed /tmp path that collided between
 # concurrent runs and was never cleaned.
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-agent-env-smoke.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/oh-my-env-smoke.XXXXXX")"
 TMP="$(cd "$TMP" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 
@@ -78,7 +78,7 @@ grep -q '^doctor_agent_mcp_surfaces()' "$ROOT/lib/doctor/agent-mcp.sh"
 echo "[5] isolated HOME validate"
 tmp_home="$TMP/home"; mkdir -p "$tmp_home"
 HOME="$tmp_home" bash "$ROOT/setup.sh" validate >"$TMP/validate.out"
-grep -q '=== oh-my-agent-env validate ===' "$TMP/validate.out"
+grep -q '=== oh-my-env validate ===' "$TMP/validate.out"
 
 echo "[6] oma subcommand isolated smoke (stubbed bunx, no network)"
 oma_tmp="$TMP/oma"

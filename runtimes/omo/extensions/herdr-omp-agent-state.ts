@@ -1,4 +1,4 @@
-// VENDORED by oh-my-agent-env. Source of truth for OMO's herdr agent-state
+// VENDORED by oh-my-env. Source of truth for OMO's herdr agent-state
 // reporting. Deployed to ~/.omo/agent/extensions/herdr-omp-agent-state.ts by
 // lib/sync/agent-clis.sh (sync_omo_herdr_extension).
 //
