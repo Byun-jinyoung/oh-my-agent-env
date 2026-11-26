@@ -57,6 +57,7 @@ cmd_sync() {
   # other users on the box. Anything under /usr/local|/opt|/usr would be 0755
   # by default (world-readable+exec). Sets USER_NPM_PREFIX + NPM_USER_ENV.
   ensure_user_npm_prefix
+  lock_credential_dirs
 
   # Ensure the user prefix bin is on PATH for this sync run, so later checks
   # like `command -v context-mode` succeed even on shells that haven't added

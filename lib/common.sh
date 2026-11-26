@@ -90,10 +90,8 @@ run_with_timeout() {
 #   - Indirectly: any future package that this script installs globally.
 #
 # Out of scope (NOT protected by this function — handled elsewhere/by user):
-#   - Credential dirs: ~/.codex, ~/.gemini, ~/.claude. These are user-owned
-#     state not created by this script; doctor() WARNs if they are readable
-#     by other users, but never chmods them automatically (that would
-#     overstep — those dirs may have user-chosen sharing).
+#   - Credential dirs: ~/.codex, ~/.gemini, ~/.claude — lock_credential_dirs
+#     below sets them to 0700.
 #
 # Decision rule for prefix location:
 #   - If `npm config get prefix` is already under $HOME (covers nvm, volta,
@@ -142,6 +140,27 @@ ensure_user_npm_prefix() {
   # shellcheck disable=SC2090
   export USER_NPM_PREFIX NPM_USER_ENV
   log "  USER_NPM_PREFIX=$USER_NPM_PREFIX (npm reported: ${cur:-<unset>}, mode locked to 0700)"
+}
+
+# The agent CLIs keep tokens and session transcripts in these dirs, and a
+# umask of 002/022 leaves them group/world-readable on shared servers. Lock
+# them to 0700 on every sync. Symlinks and dirs owned by another uid are left
+# alone (doctor still reports them). Same list as the doctor check in
+# lib/doctor/local-prereqs.sh.
+lock_credential_dirs() {
+  local d mode uid
+  uid="$(id -u)"
+  for d in "$HOME/.claude" "$HOME/.codex" "$HOME/.gemini" "$HOME/.config/codex"; do
+    [ -d "$d" ] && [ ! -L "$d" ] || continue
+    [ "$(stat -c '%u' "$d" 2>/dev/null || stat -f '%u' "$d" 2>/dev/null)" = "$uid" ] || continue
+    mode="$(stat -c '%a' "$d" 2>/dev/null || stat -f '%Lp' "$d" 2>/dev/null)"
+    [ "$mode" = "700" ] && continue
+    if chmod 700 "$d" 2>/dev/null; then
+      log_and_print "  [FIX] $d mode $mode -> 700 (owner-only tokens/sessions)"
+    else
+      log_and_print "  [WARN] could not chmod 700 $d (mode $mode)"
+    fi
+  done
 }
 
 make_link() {
