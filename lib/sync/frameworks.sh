@@ -415,7 +415,7 @@ PYEOF
   # the doctor RTK-hook check WARNs forever. rtk has no self-update subcommand,
   # so re-running the upstream install.sh is the upgrade path.
   RTK_BIN="$HOME/.local/bin/rtk"
-  RTK_MIN_VERSION="0.38.0"
+  RTK_MIN_VERSION="${RTK_VERSION:-0.38.0}"  # pinned in tool-versions.env
   # Returns 0 if "$1" >= RTK_MIN_VERSION (sort -V: lowest of {min,ver} == min ⇒ ver>=min).
   rtk_version_ok() {
     local ver="$1"
@@ -424,7 +424,7 @@ PYEOF
   }
   rtk_install_upstream() {
     run_with_timeout "RTK install" \
-      "curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/master/install.sh | sh" \
+      "curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/master/install.sh | RTK_VERSION=v$RTK_MIN_VERSION sh" \
       | tail -3 || true
     export PATH="$HOME/.local/bin:$PATH"
   }
@@ -494,8 +494,11 @@ PYEOF
   # The graphify CLI is the source of truth for ~/.claude/skills/graphify/SKILL.md
   # (each machine's graphifyy version differs — repo-level SKILL.md would drift).
   export PATH="$HOME/.local/bin:$PATH"
-  if command -v graphify &>/dev/null; then
-    log_and_print "    [OK] Graphify CLI installed ($(command -v graphify))"
+  # Version of the uv-managed install; empty when graphify came from elsewhere
+  # (pip, pipx), which is then left as is.
+  _gfy_cur="$(uv tool list 2>/dev/null | awk '$1=="graphifyy"{sub(/^v/,"",$2); print $2}')"
+  if command -v graphify &>/dev/null && { [ -z "$_gfy_cur" ] || version_ok "$_gfy_cur" "$GRAPHIFY_VERSION"; }; then
+    log_and_print "    [OK] Graphify CLI ${_gfy_cur:+$_gfy_cur }installed ($(command -v graphify))"
   elif command -v uv &>/dev/null; then
     # A dangling ~/.local/bin/graphify (uv tool removed, link left) is invisible
     # to `command -v` yet makes uv refuse with "Executable already exists".
@@ -503,16 +506,17 @@ PYEOF
       rm -f "$HOME/.local/bin/graphify"
       log_and_print "    [FIX] removed dangling ~/.local/bin/graphify symlink"
     fi
-    log_and_print "    Installing Graphify (uv tool install graphifyy)..."
-    run_with_timeout "Graphify install (uv)" "uv tool install graphifyy < /dev/null" \
+    log_and_print "    Installing Graphify $GRAPHIFY_VERSION (uv tool install graphifyy)${_gfy_cur:+, replacing $_gfy_cur}..."
+    run_with_timeout "Graphify install (uv)" "uv tool install --force graphifyy==$GRAPHIFY_VERSION < /dev/null" \
       | tail -2 || true
-    if command -v graphify &>/dev/null; then
-      log_and_print "    [OK] Graphify installed: $(command -v graphify)"
+    _gfy_cur="$(uv tool list 2>/dev/null | awk '$1=="graphifyy"{sub(/^v/,"",$2); print $2}')"
+    if command -v graphify &>/dev/null && version_ok "$_gfy_cur" "$GRAPHIFY_VERSION"; then
+      log_and_print "    [OK] Graphify $_gfy_cur installed: $(command -v graphify)"
     else
       log_and_print "    [WARN] Graphify install via uv failed — see $LOG_FILE"
     fi
   else
-    log_and_print "    [WARN] Graphify missing. Install uv first, then run: uv tool install graphifyy"
+    log_and_print "    [WARN] Graphify missing. Install uv first, then run: uv tool install graphifyy==$GRAPHIFY_VERSION"
   fi
   # Sync the Claude skill from the freshly installed graphify, so the SKILL.md
   # always matches the graphifyy package version on this machine (fixes the

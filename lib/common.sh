@@ -180,6 +180,11 @@ make_link() {
 # shellcheck disable=SC2034  # read by lib/sync and lib/doctor, sourced after this file
 CODEX_INSTALL_CMD='curl -fsSL https://chatgpt.com/codex/install.sh | sh'
 
+# version_ok CUR PIN: CUR is set and not older than PIN (sort -V order).
+version_ok() {
+  [ -n "$1" ] && [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]
+}
+
 # Succeeds when ~/.local/bin/codex is the standalone installer's link.
 codex_standalone() {
   local target home

@@ -2502,5 +2502,29 @@ done
 m="$(stat -c '%a' "$t37/elsewhere" 2>/dev/null || stat -f '%Lp' "$t37/elsewhere")"
 [ "$m" = 755 ] || fail "[37] a symlinked credential dir was chmodded through the link ($m)"
 grep -q '^  lock_credential_dirs$' "$ROOT/lib/sync.sh" || fail "[37] cmd_sync no longer calls lock_credential_dirs"
+echo "[38] tool-versions.env pins reach their installers; older versions are upgraded"
+(
+  SCRIPT_DIR="$ROOT"; LOG_FILE="$TMP/t38.log"
+  # shellcheck disable=SC1091
+  source "$ROOT/lib/common.sh" 2>/dev/null || true
+  # shellcheck disable=SC1091
+  . "$ROOT/tool-versions.env"
+  for v in RTK_VERSION GRAPHIFY_VERSION CODEX_VERSION OMO_VERSION HC_VERSION; do
+    eval "val=\${$v:-}"
+    printf '%s\n' "$val" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "$v is not x.y.z: '$val'"; exit 1; }
+  done
+  version_ok 0.38.0 0.38.0 || { echo "equal version rejected"; exit 1; }
+  version_ok 0.9.120 0.9.97 || { echo "0.9.120 >= 0.9.97 rejected (not numeric order)"; exit 1; }
+  version_ok 5.1.48 5.1.83 && { echo "5.1.48 passed a 5.1.83 pin"; exit 1; }
+  version_ok "" 0.1.22 && { echo "missing version passed"; exit 1; }
+  version_ok 1.2.1 "$RTK_VERSION" && ! version_ok 0.37.9 "$RTK_VERSION" || { echo "RTK pin below 0.38.0"; exit 1; }
+  exit 0
+) || fail "[38] version pins or version_ok are broken"
+grep -q '^\. "\$SCRIPT_DIR/tool-versions.env"$' "$ROOT/lib/sync.sh" || fail "[38] sync no longer loads tool-versions.env"
+grep -q 'RTK_VERSION=v\$RTK_MIN_VERSION sh' "$ROOT/lib/sync/frameworks.sh" || fail "[38] rtk installer ignores the pin"
+grep -q 'graphifyy==\$GRAPHIFY_VERSION' "$ROOT/lib/sync/frameworks.sh" || fail "[38] graphify install ignores the pin"
+grep -q "CODEX_RELEASE='\"\$CODEX_VERSION\"'" "$ROOT/lib/sync/external-tools.sh" || fail "[38] codex installer ignores the pin"
+grep -q 'omo-ai@\$OMO_VERSION' "$ROOT/lib/sync/agent-clis.sh" || fail "[38] omo install ignores the pin"
+grep -q 'hc update --version \$HC_VERSION' "$ROOT/lib/sync/agent-clis.sh" || fail "[38] hc update ignores the pin"
 
 echo "smoke-refactor OK"
