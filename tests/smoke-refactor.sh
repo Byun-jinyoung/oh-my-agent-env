@@ -2426,23 +2426,36 @@ ln -s "$ROOT/runtimes/codex/instructions.md" "$t35/codex/instructions.md"
 [ ! -e "$t35/gemini/GEMINI.md" ] || fail "[35] a file holding only the env block was not removed"
 [ ! -e "$t35/codex/instructions.md" ] || fail "[35] the instructions.md link into the repo was not removed"
 
-echo "[36] codex: the standalone install is canonical and other copies are reported with a removal command"
+echo "[36] codex: the standalone install is canonical; npm copies (incl. off-PATH nvm) are found and uninstalled"
 t36="$TMP/codex-home"
 rel="$t36/.codex/packages/standalone/releases/0.1.0-test/bin"
 npmp="$t36/.npm-global"
-mkdir -p "$rel" "$t36/.local/bin" "$npmp/bin" "$npmp/lib/node_modules/@openai/codex/bin"
-printf '#!/bin/sh\n' > "$rel/codex"; printf '#!/bin/sh\n' > "$npmp/lib/node_modules/@openai/codex/bin/codex.js"
-chmod +x "$rel/codex" "$npmp/lib/node_modules/@openai/codex/bin/codex.js"
+nvmp="$t36/.nvm/versions/node/v0.0.1"
+mkdir -p "$rel" "$t36/.local/bin"
+printf '#!/bin/sh\n' > "$rel/codex"; chmod +x "$rel/codex"
+for pfx in "$npmp" "$nvmp"; do
+  mkdir -p "$pfx/bin" "$pfx/lib/node_modules/@openai/codex/bin"
+  printf '#!/bin/sh\n' > "$pfx/lib/node_modules/@openai/codex/bin/codex.js"
+  chmod +x "$pfx/lib/node_modules/@openai/codex/bin/codex.js"
+  ln -s ../lib/node_modules/@openai/codex/bin/codex.js "$pfx/bin/codex"
+done
 ln -s "$rel/codex" "$t36/.local/bin/codex"
-ln -s ../lib/node_modules/@openai/codex/bin/codex.js "$npmp/bin/codex"
 out36="$(
-  HOME="$t36"; USER_NPM_PREFIX="$npmp"; unset CODEX_HOME
+  HOME="$t36"; USER_NPM_PREFIX="$npmp"; unset CODEX_HOME NVM_DIR
   PATH="$t36/.local/bin:$npmp/bin:/usr/bin:/bin"
-  npm() { echo "$npmp"; }
+  # stub: `npm config get prefix` and `npm uninstall -g --prefix P pkg`
+  npm() {
+    case "$1" in
+      config) echo "$npmp" ;;
+      uninstall) rm -rf "$4/lib/node_modules/$5" "$4/bin/codex" ;;
+    esac
+  }
   # shellcheck disable=SC1091
   source "$ROOT/lib/common.sh"
   codex_standalone && echo "standalone=yes"
   codex_duplicates
+  codex_remove_npm_copies
+  [ -z "$(codex_duplicates)" ] && echo "after-remove=clean"
   rm "$t36/.local/bin/codex"; printf '#!/bin/sh\n' > "$t36/.local/bin/codex"; chmod +x "$t36/.local/bin/codex"
   codex_standalone || echo "wrapper=rejected"
 )"
@@ -2450,6 +2463,13 @@ case "$out36" in *standalone=yes*) ;; *) fail "[36] the standalone link was not 
 case "$out36" in *wrapper=rejected*) ;; *) fail "[36] a plain ~/.local/bin/codex file passed as standalone: $out36" ;; esac
 printf '%s\n' "$out36" | grep -qF "$npmp/bin/codex	npm uninstall -g --prefix '$npmp' @openai/codex" \
   || fail "[36] the npm copy was not reported with its uninstall command: $out36"
+printf '%s\n' "$out36" | grep -qF "$nvmp/bin/codex	npm uninstall -g --prefix '$nvmp' @openai/codex" \
+  || fail "[36] the off-PATH nvm copy was not reported: $out36"
+for pfx in "$npmp" "$nvmp"; do
+  printf '%s\n' "$out36" | grep -qF "$pfx/bin/codex	removed" \
+    || fail "[36] npm copy under $pfx was not uninstalled: $out36"
+done
+case "$out36" in *after-remove=clean*) ;; *) fail "[36] duplicates remained after removal: $out36" ;; esac
 printf '%s\n' "$out36" | grep -qF "$t36/.local/bin/codex	" \
   && fail "[36] the canonical ~/.local/bin/codex was reported as a duplicate"
 

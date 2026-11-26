@@ -71,7 +71,10 @@ doctor_codex_integrity() {
   if [ -n "$_codex_dups" ]; then
     echo "  [WARN] other codex installs (PATH order decides which runs) — remove:"
     while IFS="$(printf '\t')" read -r _codex_p _codex_cmd; do
-      echo "          • $_codex_p  →  $_codex_cmd"
+      case "$_codex_cmd" in
+        *"npm uninstall"*) echo "  [FAIL] npm codex is unsupported: $_codex_p  →  $_codex_cmd (or 'setup.sh sync')" ;;
+        *) echo "          • $_codex_p  →  $_codex_cmd" ;;
+      esac
     done <<EOF
 $_codex_dups
 EOF

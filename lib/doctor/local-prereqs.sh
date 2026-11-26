@@ -64,9 +64,9 @@ doctor_local_prereqs() {
     for pkg in @donghae0414/codex-gemini-mcp @openai/codex; do
       if [ -d "$p/$pkg" ]; then
         echo "  [WARN] $pkg installed under system path: $p/$pkg"
-        echo "         Other users on this host can read its contents. Re-run"
-        echo "         'setup.sh sync' to reinstall into $USER_NPM_PREFIX, then remove"
-        echo "         the system copy: npm uninstall -g --prefix ${p%/lib/node_modules} $pkg"
+        echo "         Other users on this host can read its contents. Remove the system"
+        echo "         copy: npm uninstall -g --prefix ${p%/lib/node_modules} $pkg"
+        [ "$pkg" = @openai/codex ] || echo "         then re-run 'setup.sh sync' to reinstall into $USER_NPM_PREFIX"
         WARNINGS=$((WARNINGS+1))
       fi
     done
