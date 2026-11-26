@@ -104,17 +104,6 @@ doctor_local_prereqs() {
     if command -v $cmd &>/dev/null; then echo "  [OK] $cmd"
     else echo "  [MISS] $cmd"; WARNINGS=$((WARNINGS+1)); fi
   done
-  # LazyCodex CLI: 5.x links omo-agent-toolkit; 4.x linked omo. Plain `omo`
-  # on PATH is now the standalone omo-ai (senpi) edition, not LazyCodex.
-  if [ -x "$HOME/.local/bin/omo-agent-toolkit" ]; then
-    echo "  [OK] omo-agent-toolkit ($HOME/.local/bin/omo-agent-toolkit)"
-  elif [ -x "$HOME/.local/bin/omo" ]; then
-    echo "  [OK] omo ($HOME/.local/bin/omo — LazyCodex 4.x wrapper)"
-  else
-    echo "  [MISS] omo-agent-toolkit (installed by LazyCodex; run setup.sh sync)"
-    WARNINGS=$((WARNINGS+1))
-  fi
-
   echo ""
   echo "[ GJC / OMO / Herdr portable configuration ]"
   local _portable_ok=0

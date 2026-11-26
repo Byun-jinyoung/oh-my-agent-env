@@ -13,8 +13,6 @@
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/doctor/codex-integrity.sh"
 # shellcheck disable=SC1091
-. "$SCRIPT_DIR/lib/doctor/lazycodex.sh"
-# shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/doctor/agent-mcp.sh"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/doctor/frameworks.sh"

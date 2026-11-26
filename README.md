@@ -19,7 +19,6 @@ bash setup.sh
 | **Global agent rules** | Not installed: OMS (`~/.oh-my-setting`) owns `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`. `sync` removes the rule block earlier versions wrote; `rules/*.md` stays here for reference only |
 | **User agent rules** | `runtimes/claude/rules/*.md` → `~/.claude/rules/`, `runtimes/omo/AGENTS.md` → OMO agent dir (herdr tree/tab rules loaded beside OMS) |
 | **Shared shell** | `shell/bashrc.sh`, sourced from a marker block in `~/.bashrc` and `~/.bash_profile`; adds only aliases a machine has not defined. Machine-only lines and secrets stay outside the block |
-| **LazyCodex** | Codex plugin `omo@sisyphuslabs` installed via `npx lazycodex-ai@latest install --no-tui` |
 | **Herdr + GJC + OMO** | Installs all three CLIs and merges portable Herdr recognition, Emacs keybindings, aliases, and the GJC `claude-custom` profile (`anthropic/claude-opus-4-8` by default) |
 | **oh-my-agent (oma)** | Per-project multi-agent harness (first-fluke/oh-my-agent), installed via `setup.sh oma <path>` |
 | **Graphify** | Knowledge graph CLI (`graphifyy` package, `graphify` command), Claude/Codex skills, and project hooks |
@@ -37,7 +36,7 @@ oh-my-env/
 │   │   ├── rules.sh                      #   Codex/Gemini dirs + retire old global rules
 │   │   ├── skills.sh                     #   registry.yaml skill links + statusline
 │   │   ├── agent-clis.sh                 #   Herdr/GJC/OMO install + portable config merge
-│   │   ├── external-tools.sh             #   context-mode, Codex CLI, LazyCodex, fork install
+│   │   ├── external-tools.sh             #   context-mode, Codex CLI, fork install
 │   │   ├── plugins-mcp.sh                #   Claude plugins + Claude MCP registration
 │   │   └── frameworks.sh                 #   Codex/Antigravity MCPs, Serena, GSD/RTK/Graphify/CRG/codegraph
 │   ├── doctor.sh                         #   cmd_doctor loader
@@ -45,7 +44,6 @@ oh-my-env/
 │       ├── local-prereqs.sh              #   npm prefix, state dirs, CLI tools, symlinks
 │       ├── claude.sh                     #   Claude plugins + Claude MCP surfaces
 │       ├── codex-integrity.sh            #   codex-gemini-mcp fork and codex CLI integrity
-│       ├── lazycodex.sh                  #   LazyCodex / omo@sisyphuslabs plugin check
 │       ├── agent-mcp.sh                  #   Codex/Antigravity MCP and context-mode checks
 │       ├── frameworks.sh                 #   managed skills, GSD, RTK, Graphify, CRG
 │       └── main.sh                       #   cmd_doctor orchestration
@@ -169,26 +167,6 @@ than blocking whatever called it.
 - Claude Code CLI
 - (Optional) Antigravity (agy): see https://antigravity.google.com — gemini-cli successor
 - Codex CLI: installed by `setup.sh sync` with the official installer, `curl -fsSL https://chatgpt.com/codex/install.sh | sh` (other copies are reported by `setup.sh doctor`)
-
-## LazyCodex for Codex
-
-`setup.sh sync` installs LazyCodex on each machine through its upstream npx
-installer:
-
-```bash
-npx --yes lazycodex-ai@latest install --no-tui
-```
-
-LazyCodex registers in Codex as `omo@sisyphuslabs`, so the expected verification
-surface is:
-
-```bash
-codex plugin list | grep 'omo@sisyphuslabs'
-~/.local/bin/omo-agent-toolkit --version   # LazyCodex >= 5; 4.x linked it as ~/.local/bin/omo
-```
-
-After the first sync on a new machine, restart Codex App/CLI and approve the
-`omo@sisyphuslabs` hooks when Codex asks.
 
 ## Herdr, GJC, and OMO
 
