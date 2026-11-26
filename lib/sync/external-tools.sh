@@ -98,100 +98,35 @@ sync_external_tools() {
   else
     log_and_print "    [SKIP] semantica — uv not found (install uv, then re-run sync)"
   fi
-  # @openai/codex CLI — REQUIRED by codex-mcp (the MCP spawns `codex` from PATH).
-  # Without this, codex-mcp connects but every request fails on first spawn.
-  #
-  # DETERMINISTIC install policy (avoids "different machine, different path"):
-  #   1. SCAN all known bin locations for existing `codex` binaries.
-  #   2. If MULTIPLE installs exist → list them, identify PATH winner, WARN
-  #      (do not auto-install; let user resolve to one canonical location).
-  #   3. If EXACTLY ONE exists → record path, skip install.
-  #   4. If NONE → install via `npm install -g @openai/codex`, then re-scan.
-  local _codex_cands=()
-  local _seg _npm_prefix
-  _npm_prefix="$(npm config get prefix 2>/dev/null)"
-  # User prefix first — that's where we install into. Then the currently-
-  # configured npm prefix (read-only on shared systems), then standard paths.
-  for _seg in "$USER_NPM_PREFIX/bin" \
-              "${_npm_prefix:+${_npm_prefix}/bin}" \
-              "$HOME/.npm-global/bin" \
-              /usr/local/bin /opt/homebrew/bin /usr/bin; do
-    [ -n "$_seg" ] || continue
-    if [ -x "$_seg/codex" ]; then
-      # Resolve symlinks; de-dup by resolved path so symlinks that all point
-      # to the same target don't get counted as separate installs.
-      local _resolved
-      _resolved="$(readlink -f "$_seg/codex" 2>/dev/null || echo "$_seg/codex")"
-      local _dup=0 _existing
-      for _existing in "${_codex_cands[@]}"; do
-        [ "$(readlink -f "$_existing" 2>/dev/null || echo "$_existing")" = "$_resolved" ] && _dup=1 && break
-      done
-      [ "$_dup" = "1" ] || _codex_cands+=("$_seg/codex")
-    fi
-  done
-
-  if [ "${#_codex_cands[@]}" -gt 1 ]; then
-    log_and_print "    [codex] [WARN] multiple codex installs detected — non-deterministic across machines:"
-    for _seg in "${_codex_cands[@]}"; do
-      log_and_print "             • $_seg  →  $(readlink -f "$_seg" 2>/dev/null || echo "$_seg")"
-    done
-    if command -v codex &>/dev/null; then
-      log_and_print "             PATH winner: $(command -v codex)"
-    fi
-    log_and_print "             Keep ONE (recommended: $USER_NPM_PREFIX/bin/codex)."
-    log_and_print "             Remove others with: npm uninstall -g @openai/codex (per prefix) or 'sudo rm <path>' for legacy /usr/bin."
-  elif [ "${#_codex_cands[@]}" -eq 1 ] && [ "${_codex_cands[0]}" = "$USER_NPM_PREFIX/bin/codex" ]; then
-    log_and_print "    [OK] codex CLI present -> $USER_NPM_PREFIX/bin/codex"
-  elif [ "${#_codex_cands[@]}" -eq 1 ]; then
-    # Single install but OUTSIDE the canonical user prefix (e.g. /usr/local,
-    # /opt/homebrew, /usr) — world-readable system path, policy violation.
-    # Auto-RELOCATE (not just warn): uninstall the stray from its own prefix,
-    # then force-reinstall into $USER_NPM_PREFIX via NPM_USER_ENV. We use the
-    # env override rather than `npm config set prefix` to honor the policy in
-    # ensure_user_npm_prefix (never mutate the user's global ~/.npmrc).
-    local _stray="${_codex_cands[0]}"
-    local _stray_prefix="${_stray%/bin/codex}"
-    log_and_print "    [codex] relocating codex from $_stray_prefix to $USER_NPM_PREFIX (policy: user-owned, mode 0700)"
-    run_with_timeout "codex uninstall (stray $_stray_prefix)" \
-      "npm uninstall -g --prefix '$_stray_prefix' @openai/codex < /dev/null" | tail -2 || true
-    local _relocate_warn=0
-    if [ -e "$_stray" ]; then
-      _relocate_warn=1
-      log_and_print "    [codex] [WARN] could not remove $_stray (rc!=0; likely root-owned system prefix)"
-      case "$_stray_prefix" in
-        /usr/*|/opt/*) log_and_print "             Manual: sudo npm uninstall -g --prefix '$_stray_prefix' @openai/codex" ;;
-      esac
-    fi
-    run_with_timeout "@openai/codex reinstall (user prefix)" \
-      "$NPM_USER_ENV npm install -g @openai/codex < /dev/null" | tail -3 || true
-    if [ -x "$USER_NPM_PREFIX/bin/codex" ]; then
-      if [ "$_relocate_warn" = "1" ]; then
-        log_and_print "    [codex] [WARN] codex installed -> $USER_NPM_PREFIX/bin/codex, but stray at $_stray still present — duplicate until you remove it (sudo)"
-      else
-        log_and_print "    [OK] codex relocated -> $USER_NPM_PREFIX/bin/codex"
-      fi
-    else
-      log_and_print "    [codex] [WARN] relocation failed — see $LOG_FILE; manual: npm_config_prefix='$USER_NPM_PREFIX' npm install -g @openai/codex"
-    fi
+  # Codex CLI — REQUIRED by codex-mcp (the MCP spawns `codex` from PATH).
+  # One install on every machine: the official standalone installer (see
+  # CODEX_INSTALL_CMD in lib/common.sh); `oms update --tools` keeps it current.
+  # Other copies (npm, Homebrew, old wrappers) are reported, never removed —
+  # PATH order would otherwise decide which codex runs.
+  if codex_standalone; then
+    log_and_print "    [OK] codex CLI (standalone) -> $HOME/.local/bin/codex"
   else
-    log_and_print "    Installing @openai/codex to user prefix ($USER_NPM_PREFIX)..."
-    run_with_timeout "@openai/codex install" "$NPM_USER_ENV npm install -g @openai/codex < /dev/null" \
+    log_and_print "    Installing codex CLI with the official installer ($CODEX_INSTALL_CMD)..."
+    # NON_INTERACTIVE: no prompts, and the installer leaves other installs in place.
+    run_with_timeout "codex standalone install" \
+      "set -o pipefail; curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh < /dev/null" \
       | tail -3 || true
-    # Re-scan after install. USER_NPM_PREFIX is where we forced the write.
-    local _after=""
-    if [ -x "$USER_NPM_PREFIX/bin/codex" ]; then
-      _after="$USER_NPM_PREFIX/bin/codex"
-    elif command -v codex &>/dev/null; then
-      _after="$(command -v codex)"
-    fi
-    if [ -n "$_after" ]; then
-      log_and_print "    [OK] @openai/codex installed -> $_after"
-      if [ "$_after" = "$USER_NPM_PREFIX/bin/codex" ] && ! command -v codex &>/dev/null; then
-        log_and_print "         (note: $USER_NPM_PREFIX/bin not on live PATH; codex-mcp PATH injection below handles it)"
-      fi
+    hash -r
+    if codex_standalone; then
+      log_and_print "    [OK] codex CLI installed -> $HOME/.local/bin/codex"
     else
-      log_and_print "    [WARN] @openai/codex install failed — codex-mcp will not function. See $LOG_FILE"
+      log_and_print "    [WARN] codex standalone install failed — codex-mcp will not function. See $LOG_FILE; manual: $CODEX_INSTALL_CMD"
     fi
+  fi
+  local _codex_dups _codex_p _codex_cmd
+  _codex_dups="$(codex_duplicates)"
+  if [ -n "$_codex_dups" ]; then
+    log_and_print "    [codex] [WARN] other codex installs besides $HOME/.local/bin/codex — remove them:"
+    while IFS="$(printf '\t')" read -r _codex_p _codex_cmd; do
+      log_and_print "             • $_codex_p  →  $_codex_cmd"
+    done <<EOF
+$_codex_dups
+EOF
   fi
 
   # LazyCodex — Codex agent harness installed via npx. The public package is
