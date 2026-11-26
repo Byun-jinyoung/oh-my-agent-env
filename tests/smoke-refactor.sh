@@ -2482,4 +2482,25 @@ case "$out36" in *after-remove=clean*) ;; *) fail "[36] duplicates remained afte
 printf '%s\n' "$out36" | grep -qF "$t36/.local/bin/codex	" \
   && fail "[36] the canonical ~/.local/bin/codex was reported as a duplicate"
 
+
+echo "[37] sync locks the agent credential dirs to 0700"
+# Tokens and transcripts live there; umask 002/022 left them readable on the
+# shared servers. A symlinked dir is not ours to chmod and must be left alone.
+t37="$TMP/t37"; mkdir -p "$t37/.claude" "$t37/.codex" "$t37/elsewhere"
+chmod 775 "$t37/.claude" "$t37/.codex"; chmod 755 "$t37/elsewhere"
+ln -s "$t37/elsewhere" "$t37/.gemini"
+(
+  HOME="$t37"; LOG_FILE="$TMP/t37.log"; SCRIPT_DIR="$ROOT"
+  # shellcheck disable=SC1091
+  source "$ROOT/lib/common.sh" 2>/dev/null || true
+  lock_credential_dirs >/dev/null
+)
+for d in .claude .codex; do
+  m="$(stat -c '%a' "$t37/$d" 2>/dev/null || stat -f '%Lp' "$t37/$d")"
+  [ "$m" = 700 ] || fail "[37] $d left at mode $m"
+done
+m="$(stat -c '%a' "$t37/elsewhere" 2>/dev/null || stat -f '%Lp' "$t37/elsewhere")"
+[ "$m" = 755 ] || fail "[37] a symlinked credential dir was chmodded through the link ($m)"
+grep -q '^  lock_credential_dirs$' "$ROOT/lib/sync.sh" || fail "[37] cmd_sync no longer calls lock_credential_dirs"
+
 echo "smoke-refactor OK"

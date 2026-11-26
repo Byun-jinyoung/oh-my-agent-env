@@ -87,7 +87,7 @@ doctor_local_prereqs() {
       _mode="$(stat -c '%a' "$d" 2>/dev/null || stat -f '%Lp' "$d" 2>/dev/null)"
       if [ -n "$_mode" ] && [ "$_mode" != "700" ]; then
         echo "  [WARN] $d  mode=$_mode  (other users may read tokens/sessions)"
-        echo "         Lock manually: chmod 700 $d   (setup.sh does NOT auto-chmod user state)"
+        echo "         Fix: setup.sh sync (locks dirs you own), or chmod 700 $d"
         WARNINGS=$((WARNINGS+1))
       else
         echo "  [OK]   $d  mode=$_mode"
