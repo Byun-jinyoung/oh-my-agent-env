@@ -154,6 +154,56 @@ make_link() {
   log_and_print "    [LINK] $(basename "$dst") → $src"
 }
 
+# Codex CLI: the one supported install is the official standalone installer
+# (openai/codex README, "Installing and running Codex CLI"). It links
+# ~/.local/bin/codex into $CODEX_HOME/packages/standalone/releases/, the layout
+# `oms update --tools` recognises and refreshes with `codex update`.
+# shellcheck disable=SC2034  # read by lib/sync and lib/doctor, sourced after this file
+CODEX_INSTALL_CMD='curl -fsSL https://chatgpt.com/codex/install.sh | sh'
+
+# Succeeds when ~/.local/bin/codex is the standalone installer's link.
+codex_standalone() {
+  local target home
+  target="$(readlink -f "$HOME/.local/bin/codex" 2>/dev/null)" || return 1
+  home="$(readlink -f "${CODEX_HOME:-$HOME/.codex}" 2>/dev/null)" || return 1
+  case "$target" in
+    "$home/packages/standalone/releases/"*/bin/codex) [ -x "$target" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# Prints "<path><TAB><removal command>" for every other codex on PATH or in a
+# known npm/system bin dir. Report-only: removing installs is the user's call.
+codex_duplicates() {
+  local canon seg p real cmd seen=" "
+  canon="$(readlink -f "$HOME/.local/bin/codex" 2>/dev/null)"
+  while IFS= read -r seg; do
+    p="$seg/codex"
+    [ -n "$seg" ] && [ "$p" != "$HOME/.local/bin/codex" ] && [ -x "$p" ] || continue
+    real="$(readlink -f "$p" 2>/dev/null || echo "$p")"
+    [ "$real" = "$canon" ] && continue
+    case "$seen" in *" $real "*) continue ;; esac
+    seen="$seen$real "
+    case "$real" in
+      */lib/node_modules/@openai/codex/*)
+        cmd="npm uninstall -g --prefix '${real%%/lib/node_modules/*}' @openai/codex" ;;
+      */Caskroom/codex/*) cmd="brew uninstall --cask codex" ;;
+      */.bun/*) cmd="bun remove -g @openai/codex" ;;
+      *) cmd="rm '$p'" ;;
+    esac
+    case "$cmd" in brew*) ;; *) [ -w "${p%/codex}" ] || cmd="sudo $cmd" ;; esac
+    printf '%s\t%s\n' "$p" "$cmd"
+  done <<EOF
+${USER_NPM_PREFIX:+$USER_NPM_PREFIX/bin}
+$(npm config get prefix 2>/dev/null)/bin
+$HOME/.npm-global/bin
+/usr/local/bin
+/opt/homebrew/bin
+/usr/bin
+$(printf '%s' "$PATH" | tr ':' '\n')
+EOF
+}
+
 # Verify Byun-jinyoung fork of codex-gemini-mcp is installed (not upstream).
 # Fork distinguishing facts (vs donghae0414 upstream):
 #   - bin: codex-mcp + antigravity-mcp  (upstream: codex-mcp + gemini-mcp)

@@ -56,34 +56,26 @@ doctor_codex_integrity() {
       WARNINGS=$((WARNINGS+1))
     fi
   done
-  # codex CLI scan — surface ALL installs (deterministic policy: exactly one)
-  _doctor_cands=()
-  for _seg in "$(npm config get prefix 2>/dev/null)/bin" "$HOME/.npm-global/bin" /usr/local/bin /opt/homebrew/bin /usr/bin; do
-    if [ -x "$_seg/codex" ]; then
-      _resolved="$(readlink -f "$_seg/codex" 2>/dev/null || echo "$_seg/codex")"
-      _dup=0
-      for _existing in "${_doctor_cands[@]}"; do
-        [ "$(readlink -f "$_existing" 2>/dev/null || echo "$_existing")" = "$_resolved" ] && _dup=1 && break
-      done
-      [ "$_dup" = "1" ] || _doctor_cands+=("$_seg/codex")
-    fi
-  done
-  if [ "${#_doctor_cands[@]}" -eq 0 ]; then
-    echo "  [FAIL] codex CLI missing — install: npm i -g @openai/codex"
+  # codex CLI — exactly one install, from the official standalone installer
+  local _codex_dups _codex_p _codex_cmd
+  if codex_standalone; then
+    echo "  [OK] codex CLI standalone ($HOME/.local/bin/codex → $(readlink -f "$HOME/.local/bin/codex"))"
+  elif [ -e "$HOME/.local/bin/codex" ] || command -v codex &>/dev/null; then
+    echo "  [WARN] codex CLI not from the official installer — run 'setup.sh sync' or: $CODEX_INSTALL_CMD"
     WARNINGS=$((WARNINGS+1))
-  elif [ "${#_doctor_cands[@]}" -eq 1 ]; then
-    if command -v codex &>/dev/null; then
-      echo "  [OK] codex CLI on PATH (${_doctor_cands[0]})"
-    else
-      echo "  [OK] codex CLI at ${_doctor_cands[0]} (not on live PATH; codex-mcp PATH env will resolve it)"
-    fi
   else
-    echo "  [WARN] multiple codex installs (non-deterministic):"
-    for _existing in "${_doctor_cands[@]}"; do
-      echo "          • $_existing → $(readlink -f "$_existing" 2>/dev/null || echo "$_existing")"
-    done
+    echo "  [FAIL] codex CLI missing — run 'setup.sh sync' or: $CODEX_INSTALL_CMD"
+    WARNINGS=$((WARNINGS+1))
+  fi
+  _codex_dups="$(codex_duplicates)"
+  if [ -n "$_codex_dups" ]; then
+    echo "  [WARN] other codex installs (PATH order decides which runs) — remove:"
+    while IFS="$(printf '\t')" read -r _codex_p _codex_cmd; do
+      echo "          • $_codex_p  →  $_codex_cmd"
+    done <<EOF
+$_codex_dups
+EOF
     command -v codex &>/dev/null && echo "          PATH winner: $(command -v codex)"
-    echo "          Keep one (recommended: \$(npm config get prefix)/bin/codex); remove rest."
     WARNINGS=$((WARNINGS+1))
   fi
 

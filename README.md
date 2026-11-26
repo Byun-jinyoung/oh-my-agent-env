@@ -168,7 +168,7 @@ than blocking whatever called it.
 - git, npm
 - Claude Code CLI
 - (Optional) Antigravity (agy): see https://antigravity.google.com — gemini-cli successor
-- (Optional) Codex CLI: `npm install -g @openai/codex`
+- Codex CLI: installed by `setup.sh sync` with the official installer, `curl -fsSL https://chatgpt.com/codex/install.sh | sh` (other copies are reported by `setup.sh doctor`)
 
 ## LazyCodex for Codex
 
