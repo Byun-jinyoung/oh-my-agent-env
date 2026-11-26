@@ -7,6 +7,8 @@
 # shellcheck shell=bash   # sourced fragment: no shebang by design
 
 # shellcheck disable=SC1091
+. "$SCRIPT_DIR/tool-versions.env"
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/sync/core.sh"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/sync/rules.sh"

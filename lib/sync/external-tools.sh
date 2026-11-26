@@ -104,19 +104,22 @@ sync_external_tools() {
   # npm copies are uninstalled on every sync (they reappear when a tool or a
   # manual `npm i -g` installs them); other copies (Homebrew, old wrappers)
   # are reported — PATH order would otherwise decide which codex runs.
-  if codex_standalone; then
-    log_and_print "    [OK] codex CLI (standalone) -> $HOME/.local/bin/codex"
+  local _codex_ver=""
+  codex_standalone && _codex_ver="$("$HOME/.local/bin/codex" --version 2>/dev/null | awk '{print $NF}')"
+  if codex_standalone && version_ok "$_codex_ver" "$CODEX_VERSION"; then
+    log_and_print "    [OK] codex CLI $_codex_ver (standalone) -> $HOME/.local/bin/codex"
   else
-    log_and_print "    Installing codex CLI with the official installer ($CODEX_INSTALL_CMD)..."
+    log_and_print "    Installing codex CLI $CODEX_VERSION with the official installer${_codex_ver:+ (replacing $_codex_ver)}..."
     # NON_INTERACTIVE: no prompts, and the installer leaves other installs in place.
     # Download first: in `curl | sh < /dev/null` the redirect replaces the pipe,
     # so sh runs an empty script and curl dies with exit 56.
     run_with_timeout "codex standalone install" \
-      'f="$(mktemp)"; curl -fsSL https://chatgpt.com/codex/install.sh -o "$f" && CODEX_NON_INTERACTIVE=1 sh "$f" < /dev/null; rc=$?; rm -f "$f"; exit $rc' \
+      'f="$(mktemp)"; curl -fsSL https://chatgpt.com/codex/install.sh -o "$f" && CODEX_NON_INTERACTIVE=1 CODEX_RELEASE='"$CODEX_VERSION"' sh "$f" < /dev/null; rc=$?; rm -f "$f"; exit $rc' \
       | tail -3 || true
     hash -r
-    if codex_standalone; then
-      log_and_print "    [OK] codex CLI installed -> $HOME/.local/bin/codex"
+    _codex_ver="$("$HOME/.local/bin/codex" --version 2>/dev/null | awk '{print $NF}')"
+    if codex_standalone && version_ok "$_codex_ver" "$CODEX_VERSION"; then
+      log_and_print "    [OK] codex CLI $_codex_ver installed -> $HOME/.local/bin/codex"
     else
       log_and_print "    [WARN] codex standalone install failed — codex-mcp will not function. See $LOG_FILE; manual: $CODEX_INSTALL_CMD"
     fi

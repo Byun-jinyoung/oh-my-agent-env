@@ -663,14 +663,34 @@ sync_agent_cli_install() {
     WARNINGS=$((WARNINGS+1))
   fi
 
-  if command -v omo >/dev/null 2>&1; then
-    log_and_print "    [OK] OMO installed -> $(command -v omo)"
+  local _omo_ver _hc_ver
+  _omo_ver="$(omo --version 2>/dev/null | awk '{print $2}')"
+  if command -v omo >/dev/null 2>&1 && version_ok "$_omo_ver" "$OMO_VERSION"; then
+    log_and_print "    [OK] OMO $_omo_ver -> $(command -v omo)"
   else
-    log_and_print "    Installing OMO (npm package omo-ai)..."
-    run_with_timeout "OMO install" "$NPM_USER_ENV npm install -g omo-ai < /dev/null" | tail -3 || true
-    command -v omo >/dev/null 2>&1 \
-      && log_and_print "    [OK] OMO installed -> $(command -v omo)" \
-      || { log_and_print "    [WARN] OMO install failed"; WARNINGS=$((WARNINGS+1)); }
+    log_and_print "    Installing OMO $OMO_VERSION (npm package omo-ai)${_omo_ver:+, replacing $_omo_ver}..."
+    run_with_timeout "OMO install" "$NPM_USER_ENV npm install -g omo-ai@$OMO_VERSION < /dev/null" | tail -3 || true
+    hash -r
+    _omo_ver="$(omo --version 2>/dev/null | awk '{print $2}')"
+    version_ok "$_omo_ver" "$OMO_VERSION" \
+      && log_and_print "    [OK] OMO $_omo_ver -> $(command -v omo) (restart running omo sessions)" \
+      || { log_and_print "    [WARN] OMO is ${_omo_ver:-missing} after install (want $OMO_VERSION; check PATH for another omo)"; WARNINGS=$((WARNINGS+1)); }
+  fi
+
+  # hc (herdr-core) arrives with herdr-app (`hc machine add --install`); sync
+  # only raises its version. `hc update` restarts hc but keeps terminals running.
+  if command -v hc >/dev/null 2>&1; then
+    _hc_ver="$(hc --version 2>/dev/null | awk '{print $2}')"
+    if version_ok "$_hc_ver" "$HC_VERSION"; then
+      log_and_print "    [OK] hc $_hc_ver"
+    else
+      log_and_print "    Updating hc ${_hc_ver:-unknown} -> $HC_VERSION (terminals keep running)..."
+      run_with_timeout "hc update" "hc update --version $HC_VERSION < /dev/null" | tail -3 || true
+      _hc_ver="$(hc --version 2>/dev/null | awk '{print $2}')"
+      version_ok "$_hc_ver" "$HC_VERSION" \
+        && log_and_print "    [OK] hc $_hc_ver" \
+        || { log_and_print "    [WARN] hc still ${_hc_ver:-unknown} (want $HC_VERSION)"; WARNINGS=$((WARNINGS+1)); }
+    fi
   fi
 
   if ! command -v bun >/dev/null 2>&1; then
