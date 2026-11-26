@@ -924,7 +924,9 @@ report_stale_sessions() {
       echo "  [STALE] pid $pid started $(date -d "@$start_e" +%H:%M 2>/dev/null || date -r "$start_e" +%H:%M) < settings.json $(date -d "@$reg" +%H:%M 2>/dev/null || date -r "$reg" +%H:%M) — ${cwd/#$HOME/~}"
       stale=$((stale+1))
     fi
-  done < <({ pgrep -x claude 2>/dev/null; pgrep -f '(^|/)claude( |$)' 2>/dev/null; } | sort -un)
+  # Own sessions only: on a shared server other users' claude processes are
+  # neither restartable nor bound by this settings.json.
+  done < <({ pgrep -u "$(id -u)" -x claude 2>/dev/null; pgrep -u "$(id -u)" -f '(^|/)claude( |$)' 2>/dev/null; } | sort -un)
   if [ "$stale" -gt 0 ]; then
     echo "         $stale of $live live session(s) will not run hooks registered after they started — restart them (/exit, then resume)"
     return 1
