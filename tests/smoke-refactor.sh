@@ -2081,7 +2081,7 @@ echo "[33] doctor names the live sessions that started before the hook registrat
 # machine running this suite — no live process is touched.
 t33="$TMP/stale-sessions"; mkdir -p "$t33"
 printf '{}\n' > "$t33/settings.json"
-if pgrep -x claude >/dev/null 2>&1 || pgrep -f '(^|/)claude( |$)' >/dev/null 2>&1; then
+if pgrep -u "$(id -u)" -x claude >/dev/null 2>&1 || pgrep -u "$(id -u)" -f '(^|/)claude( |$)' >/dev/null 2>&1; then
   # settings newer than every live session -> every one is stale
   touch -t "$(( $(date +%Y) + 1 ))01010000" "$t33/settings.json"
   # `set -e` would end the suite on the non-zero return this branch EXPECTS.
@@ -2104,6 +2104,10 @@ else
 fi
 # The doctor section and the sync closing line both call it; assert the
 # wiring, since a helper nobody calls is the shape this harness keeps finding.
+# Other users' sessions on a shared server were listed as [STALE] (23 of 26 on
+# one cluster): both pgrep calls must stay scoped to the current uid.
+[ "$(grep -o 'pgrep -u "\$(id -u)"' "$ROOT/lib/common.sh" | wc -l)" -ge 2 ] \
+  || fail "[33] report_stale_sessions pgrep is not scoped to the current user"
 grep -q 'report_stale_sessions "\$CONFIG_DIR/settings.json"' "$ROOT/lib/doctor/claude.sh" \
   || fail "[33] doctor does not call report_stale_sessions"
 grep -q 'report_stale_sessions "\$CONFIG_DIR/settings.json"' "$ROOT/lib/sync.sh" \
