@@ -2458,7 +2458,14 @@ out36="$(
   [ -z "$(codex_duplicates)" ] && echo "after-remove=clean"
   rm "$t36/.local/bin/codex"; printf '#!/bin/sh\n' > "$t36/.local/bin/codex"; chmod +x "$t36/.local/bin/codex"
   codex_standalone || echo "wrapper=rejected"
+  # without the standalone install, npm copies must be kept (the only codex left)
+  mkdir -p "$npmp/lib/node_modules/@openai/codex/bin"
+  printf '#!/bin/sh\n' > "$npmp/lib/node_modules/@openai/codex/bin/codex.js"
+  chmod +x "$npmp/lib/node_modules/@openai/codex/bin/codex.js"
+  ln -s ../lib/node_modules/@openai/codex/bin/codex.js "$npmp/bin/codex"
+  [ -z "$(codex_remove_npm_copies)" ] && [ -e "$npmp/bin/codex" ] && echo "no-standalone=kept"
 )"
+case "$out36" in *no-standalone=kept*) ;; *) fail "[36] npm copies were removed while the standalone install was missing: $out36" ;; esac
 case "$out36" in *standalone=yes*) ;; *) fail "[36] the standalone link was not recognised: $out36" ;; esac
 case "$out36" in *wrapper=rejected*) ;; *) fail "[36] a plain ~/.local/bin/codex file passed as standalone: $out36" ;; esac
 printf '%s\n' "$out36" | grep -qF "$npmp/bin/codex	npm uninstall -g --prefix '$npmp' @openai/codex" \
