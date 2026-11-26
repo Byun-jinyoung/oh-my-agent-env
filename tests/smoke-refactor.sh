@@ -1341,11 +1341,20 @@ languages:
   - python
 '
 printf 'projects:\n- %s\n' "$t24/regproj" > "$reghome24/.serena/serena_config.yml"
-out="$(HOME="$reghome24" py24 "$t24/fake_yml" --registered)"
+# The registry is read with `import yaml`, present in serena's own interpreter
+# but not in a bare python3 (CI's setup-python has none). Without it the reader
+# returns no roots and this passed locally while failing in CI with empty
+# output. A stand-in placed FIRST on the path makes both runs read the same way.
+mkdir -p "$t24/yamlstub"
+cat > "$t24/yamlstub/yaml.py" <<'PYEOF'
+def safe_load(fh):
+    return {"projects": [l.strip()[2:] for l in fh if l.strip().startswith("- ")]}
+PYEOF
+out="$(HOME="$reghome24" py24 "$t24/yamlstub:$t24/fake_yml" --registered)"
 printf '%s\n' "$out" | grep -q "$t24/regproj" \
   || fail "[24] --registered did not reach a project outside the given paths: $out"
 # And it is opt-in: without the flag the same call sees nothing.
-out="$(HOME="$reghome24" py24 "$t24/fake_yml")"
+out="$(HOME="$reghome24" py24 "$t24/yamlstub:$t24/fake_yml")"
 printf '%s\n' "$out" | grep -q "$t24/regproj" \
   && fail "[24] the registry was read without --registered"
 
