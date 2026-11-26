@@ -2510,7 +2510,7 @@ echo "[38] tool-versions.env pins reach their installers; older versions are upg
   # shellcheck disable=SC1091
   . "$ROOT/tool-versions.env"
   for v in RTK_VERSION GRAPHIFY_VERSION CODEX_VERSION OMO_VERSION HC_VERSION; do
-    eval "val=\${$v:-}"
+    val="${!v:-}"
     printf '%s\n' "$val" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "$v is not x.y.z: '$val'"; exit 1; }
   done
   version_ok 0.38.0 0.38.0 || { echo "equal version rejected"; exit 1; }
