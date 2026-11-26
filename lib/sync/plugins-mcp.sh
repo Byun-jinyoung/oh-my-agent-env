@@ -468,7 +468,7 @@ PYEOF
       done
     fi
     if [ -z "$_codex_resolved" ]; then
-      log_and_print "    [codex-mcp] [WARN] \`codex\` CLI not findable. Install with: npm i -g @openai/codex"
+      log_and_print "    [codex-mcp] [WARN] \`codex\` CLI not findable. Install with: $CODEX_INSTALL_CMD"
     else
       log_and_print "    [codex-mcp] codex CLI resolved: $_codex_resolved"
     fi

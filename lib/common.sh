@@ -173,7 +173,7 @@ codex_standalone() {
 }
 
 # Prints "<path><TAB><removal command>" for every other codex on PATH or in a
-# known npm/system bin dir. Report-only: removing installs is the user's call.
+# known npm/nvm/system bin dir. codex_remove_npm_copies acts on the npm ones.
 codex_duplicates() {
   local canon seg p real cmd seen=" "
   canon="$(readlink -f "$HOME/.local/bin/codex" 2>/dev/null)"
@@ -201,7 +201,25 @@ $HOME/.npm-global/bin
 /opt/homebrew/bin
 /usr/bin
 $(printf '%s' "$PATH" | tr ':' '\n')
+$(for seg in "${NVM_DIR:-$HOME/.nvm}"/versions/node/*/bin; do printf '%s\n' "$seg"; done)
 EOF
+}
+
+# npm is not a supported codex install (it shadows the standalone one by PATH
+# order), so every user-writable npm copy is uninstalled. Prints
+# "<path><TAB>removed|failed"; sudo-only copies stay in codex_duplicates' report.
+codex_remove_npm_copies() {
+  local p cmd real
+  codex_duplicates | while IFS="$(printf '\t')" read -r p cmd; do
+    case "$cmd" in "npm uninstall"*) ;; *) continue ;; esac
+    real="$(readlink -f "$p" 2>/dev/null || echo "$p")"
+    if npm uninstall -g --prefix "${real%%/lib/node_modules/*}" @openai/codex >/dev/null 2>&1 \
+       && [ ! -e "$p" ]; then
+      printf '%s\tremoved\n' "$p"
+    else
+      printf '%s\tfailed\n' "$p"
+    fi
+  done
 }
 
 # Verify Byun-jinyoung fork of codex-gemini-mcp is installed (not upstream).

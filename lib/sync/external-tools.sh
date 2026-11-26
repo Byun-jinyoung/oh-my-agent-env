@@ -101,8 +101,9 @@ sync_external_tools() {
   # Codex CLI — REQUIRED by codex-mcp (the MCP spawns `codex` from PATH).
   # One install on every machine: the official standalone installer (see
   # CODEX_INSTALL_CMD in lib/common.sh); `oms update --tools` keeps it current.
-  # Other copies (npm, Homebrew, old wrappers) are reported, never removed —
-  # PATH order would otherwise decide which codex runs.
+  # npm copies are uninstalled on every sync (they reappear when a tool or a
+  # manual `npm i -g` installs them); other copies (Homebrew, old wrappers)
+  # are reported — PATH order would otherwise decide which codex runs.
   if codex_standalone; then
     log_and_print "    [OK] codex CLI (standalone) -> $HOME/.local/bin/codex"
   else
@@ -118,7 +119,18 @@ sync_external_tools() {
       log_and_print "    [WARN] codex standalone install failed — codex-mcp will not function. See $LOG_FILE; manual: $CODEX_INSTALL_CMD"
     fi
   fi
-  local _codex_dups _codex_p _codex_cmd
+  local _codex_dups _codex_p _codex_cmd _codex_st
+  while IFS="$(printf '\t')" read -r _codex_p _codex_st; do
+    [ -n "$_codex_p" ] || continue
+    if [ "$_codex_st" = removed ]; then
+      log_and_print "    [codex] removed npm copy: $_codex_p"
+    else
+      log_and_print "    [codex] [WARN] could not remove npm copy: $_codex_p"
+    fi
+  done <<EOF
+$(codex_remove_npm_copies)
+EOF
+  hash -r
   _codex_dups="$(codex_duplicates)"
   if [ -n "$_codex_dups" ]; then
     log_and_print "    [codex] [WARN] other codex installs besides $HOME/.local/bin/codex — remove them:"
