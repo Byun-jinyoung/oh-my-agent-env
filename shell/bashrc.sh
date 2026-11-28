@@ -18,6 +18,8 @@ if ! command -v node >/dev/null 2>&1 && [ -s "$HOME/.nvm/nvm.sh" ]; then
   # shellcheck source=/dev/null
   . "$NVM_DIR/nvm.sh"
 fi
+# Headless Linux has no unlockable Secret Service; agy otherwise waits up to 5s on it before using its token file.
+[ "$(uname -s)" = Linux ] && export AGY_CLI_FORCE_FILE_TOKEN_STORAGE=1
 
 case $- in *i*) ;; *) return 0 ;; esac   # the rest is for interactive shells
 
